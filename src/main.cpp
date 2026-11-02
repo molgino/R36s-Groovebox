@@ -1407,7 +1407,10 @@ static void setupPaths() {
     printf("%d Samples geladen aus %s\n", ns, sdir);
 }
 
+int runDhcpd(const char* ifname);
+
 int main(int argc, char** argv) {
+    if (argc >= 3 && !strcmp(argv[1], "--dhcpd")) return runDhcpd(argv[2]);   // Hilfsdienst fuer den PC-Modus
     bool learn = false, windowed = false;
     const char* shot = nullptr; const char* renderOut = nullptr; float renderSecs = 8; int shotPage = 0;
     for (int i = 1; i < argc; i++) {

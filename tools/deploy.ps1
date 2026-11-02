@@ -68,8 +68,11 @@ Expand-Archive -Path $Zip -DestinationPath $ex
 
 # Groovebox beenden, Dateien kopieren (Projekte, Samples, Einstellungen bleiben unberuehrt)
 Write-Host "Kopiere auf den R36S ..."
-Remote "pkill -TERM -x groovebox; sleep 1; true"
-& scp @SshOpts (Join-Path $ex "groovebox\groovebox") (Join-Path $ex "groovebox\pc-modus.sh") (Join-Path $ex "groovebox\groovebox.service") (Join-Path $ex "groovebox\LIESMICH.md") (Join-Path $ex "groovebox\VERSION") "${Target}:$GbDir/"
+Remote 'for p in $(pgrep -x groovebox); do grep -q -- --dhcpd /proc/$p/cmdline || kill -TERM $p; done; sleep 1; true'
+& scp @SshOpts (Join-Path $ex "groovebox\groovebox") "${Target}:$GbDir/groovebox.new"
+if ($LASTEXITCODE -ne 0) { throw "scp fehlgeschlagen" }
+Remote "mv -f $GbDir/groovebox.new $GbDir/groovebox"
+& scp @SshOpts (Join-Path $ex "groovebox\pc-modus.sh") (Join-Path $ex "groovebox\groovebox.service") (Join-Path $ex "groovebox\LIESMICH.md") (Join-Path $ex "groovebox\VERSION") "${Target}:$GbDir/"
 if ($LASTEXITCODE -ne 0) { throw "scp fehlgeschlagen" }
 $scripts = Get-ChildItem $ex -Filter "*.sh" | ForEach-Object { $_.FullName }
 & scp @SshOpts $scripts "${Target}:$Ports/"

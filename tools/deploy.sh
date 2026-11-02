@@ -22,8 +22,10 @@ if [ -z "$ZIP" ]; then
   ZIP="$TMP/pkg.zip"; curl -fL -o "$ZIP" "https://github.com/$REPO/releases/download/nightly/r36s-groovebox-arkos.zip"
 fi
 unzip -q "$ZIP" -d "$TMP/pkg"
-ssh "${OPTS[@]}" "$T" "pkill -TERM -x groovebox; sleep 1; true"
-scp "${OPTS[@]}" "$TMP"/pkg/groovebox/{groovebox,pc-modus.sh,groovebox.service,LIESMICH.md,VERSION} "$T:$GB/"
+ssh "${OPTS[@]}" "$T" 'for p in $(pgrep -x groovebox); do grep -q -- --dhcpd /proc/$p/cmdline || kill -TERM $p; done; sleep 1; true'
+scp "${OPTS[@]}" "$TMP"/pkg/groovebox/groovebox "$T:$GB/groovebox.new"
+ssh "${OPTS[@]}" "$T" "mv -f $GB/groovebox.new $GB/groovebox"
+scp "${OPTS[@]}" "$TMP"/pkg/groovebox/{pc-modus.sh,groovebox.service,LIESMICH.md,VERSION} "$T:$GB/"
 scp "${OPTS[@]}" "$TMP"/pkg/*.sh "$T:$(dirname "$GB")/"
 ssh "${OPTS[@]}" "$T" "chmod +x $GB/groovebox $GB/pc-modus.sh $(dirname "$GB")/Groovebox*.sh; sync"
 echo "Aufgespielt: Version $(cat "$TMP/pkg/groovebox/VERSION")"

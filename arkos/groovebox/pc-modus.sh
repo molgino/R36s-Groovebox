@@ -127,20 +127,26 @@ aus)
       ip addr add 169.254.77.1/16 dev "$IF" 2>/dev/null || ifconfig "$IF" 169.254.77.1 netmask 255.255.0.0
       ip addr add 192.168.77.1/24 dev "$IF" 2>/dev/null || ifconfig "$IF:1" 192.168.77.1 netmask 255.255.255.0
       IP=169.254.77.1
-      if command -v dnsmasq >/dev/null 2>&1; then
-        dnsmasq --interface="$IF" --bind-interfaces --port=0 --dhcp-range=192.168.77.10,192.168.77.50,12h \
-                --dhcp-option=3 --dhcp-option=6 --pid-file=/run/groovebox-dhcp.pid && IP=192.168.77.1
-      elif command -v udhcpd >/dev/null 2>&1 || busybox udhcpd --help >/dev/null 2>&1; then
-        printf "start 192.168.77.10\nend 192.168.77.50\ninterface %s\noption subnet 255.255.255.0\npidfile /run/groovebox-dhcp.pid\nlease_file /tmp/gb-udhcpd.leases\n" "$IF" > /tmp/gb-udhcpd.conf
-        touch /tmp/gb-udhcpd.leases
-        (command -v udhcpd >/dev/null 2>&1 && udhcpd /tmp/gb-udhcpd.conf || busybox udhcpd /tmp/gb-udhcpd.conf) && IP=192.168.77.1
+      # eigener DHCP-Server (in der Groovebox eingebaut): PC bekommt sofort 192.168.77.10
+      if [ -x "$GBDIR/groovebox" ]; then
+        "$GBDIR/groovebox" --dhcpd "$IF" >> "$LOG" 2>&1 &
+        echo $! > /run/groovebox-dhcp.pid
+        sleep 0.3
+        kill -0 "$(cat /run/groovebox-dhcp.pid)" 2>/dev/null && IP=192.168.77.1
       fi
       echo "$IP" > "$GBDIR/netmidi.ip"
       echo "Netzwerk: $IF  R36S-Adresse: $IP (ohne DHCP: PC bekommt nach ~1 min eine 169.254.x.x-Adresse)"
       IPINFO=" $IP:5004"
       # SSH fuer Aufspielen/Debugging ueber das Kabel
-      (systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || service ssh start 2>/dev/null) \
-        && echo "SSH laeuft: ssh ark@$IP" || echo "SSH-Dienst nicht gefunden (ArkOS: Options > Enable Remote Services)"
+      # (ArkOS verlangt dafuer im Menue WLAN - hier starten wir SSH direkt)
+      ssh-keygen -A >/dev/null 2>&1; mkdir -p /run/sshd
+      systemctl unmask ssh >/dev/null 2>&1
+      if systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || service ssh start 2>/dev/null \
+         || { [ -x /usr/sbin/sshd ] && /usr/sbin/sshd; }; then
+        echo "SSH laeuft: ssh ark@$IP (Passwort ark)"
+      else
+        echo "SSH konnte nicht gestartet werden (openssh-server fehlt?)"
+      fi
     fi
     say "OK: PC-Modus aktiv: ${MIDIOK:-kein MIDI}${IPINFO} ${AUDOK}"
     echo "R36S mit dem PC verbinden (am besten USB-A-auf-USB-C-Kabel)"

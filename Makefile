@@ -7,7 +7,7 @@ SDL_CFLAGS ?= $(shell sdl2-config --cflags)
 SDL_LIBS   ?= $(shell sdl2-config --libs)
 CXXFLAGS += -DWITH_MIDI -O2 -Wall -Wextra -Wno-unused-parameter -fno-exceptions -fno-rtti -fno-threadsafe-statics $(SDL_CFLAGS)
 LDFLAGS  +=
-SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp
+SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp src/dhcpd.cpp
 OBJ = $(SRC:.cpp=.o)
 OUT ?= groovebox
 

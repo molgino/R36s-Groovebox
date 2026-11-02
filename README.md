@@ -187,8 +187,8 @@ Audio zum PC ist mit diesem Kernel nicht möglich.
 **Windows**
 
 1. **rtpMIDI** (Tobias Erichsen) installieren.
-2. Auf dem R36S auf der SYS-Seite **USB = PC** stellen. Die App zeigt die Adresse des R36S an, z. B. `IP 192.168.77.1` (oder `169.254.77.1`).
-3. Den R36S per USB verbinden. Windows richtet „Remote NDIS“ automatisch ein. Ohne DHCP-Server auf dem R36S dauert es bis zu einer Minute, bis Windows sich eine 169.254-Adresse gibt.
+2. Auf dem R36S auf der SYS-Seite **USB = PC** stellen. Die App zeigt die Adresse des R36S an: `IP 192.168.77.1`.
+3. Den R36S per USB verbinden. Windows richtet „Remote NDIS“ automatisch ein und bekommt vom R36S die Adresse 192.168.77.10.
 4. In rtpMIDI unter *My Sessions* mit **+** eine Session anlegen und aktivieren.
 5. Unter *Directory* mit **+** einen Eintrag anlegen: Name „R36S“, Host = die angezeigte IP, Port **5004**. Den Eintrag wählen und **Connect** drücken.
 6. Unter *Participants* erscheint „R36S Groovebox“. Auf der SYS-Seite steht bei MIDI „PC (NETZ-MIDI)“.
@@ -255,8 +255,8 @@ Ab dann bootet der R36S direkt in die Groovebox.
 
 ## Aufspielen und Debuggen per Kabel (ohne SD-Karte)
 
-Im PC-Modus ist der R36S per USB-Netzwerk unter **192.168.77.1** erreichbar (ohne DHCP unter 169.254.77.1), und SSH wird automatisch gestartet.
-Einmalig in ArkOS *Options → Enable Remote Services* aktivieren. Zugang: `ark` / `ark`.
+Im PC-Modus ist der R36S per USB-Netzwerk unter **192.168.77.1** erreichbar. Ein eingebauter DHCP-Server gibt dem PC sofort `192.168.77.10`.
+SSH startet die Groovebox selbst, „Enable Remote Services“ in ArkOS (das WLAN verlangt) brauchst du nicht. Zugang: `ark` / `ark`.
 
 **Windows** (PowerShell, im Ordner `tools`):
 
