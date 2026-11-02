@@ -5,7 +5,7 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 
 ## Aufbau
 - `src/engine.*` Sequencer + 7 Engines (KICK SNARE HAT CLAP SYNTH FM SMPL), Insert-FX, Delay/Reverb, Kompressor mit Sidechain
-- `src/params.h` alle Parameter. Speicherseiten je Spur (TRG SRC FLT AMP LFO INS SRC2, je 8) und UI-Seiten `PG_*` (TRG SRC SRC2 FLT AMP LFO INS | MIX FX CMP | PRJ MST SYS), Mapping `PG_STORE`; FM = 4 OP/8 Algorithmen (`FM_MODS/FM_CARRIERS/FM_LAYOUT`); globale Skala `mst[MS_SCALE]`
+- `src/params.h` alle Parameter. Speicherseiten je Spur (TRG SRC FLT AMP LFO INS SRC2, je 8) und UI-Seiten `PG_*` (TRG SRC SRC2 FLT AMP LFO INS | MIX FX CMP | PRJ MST SET); SET (=PG_SYS) ist eine Listen-Seite (`SetItem`, `drawSettings`), Mapping `PG_STORE`; FM = 4 OP/8 Algorithmen (`FM_MODS/FM_CARRIERS/FM_LAYOUT`); globale Skala `mst[MS_SCALE]`
 - `src/main.cpp` UI (640x480, Grafiken/Animationen), Bedienung, Einstellungen, PC-Modus-Steuerung
 - `src/midi.cpp` ALSA-Seq + rawmidi + USB-Seriell + RTP-MIDI (Port 5004/5005); `src/dhcpd.cpp` Mini-DHCP (`groovebox --dhcpd usb0`)
 - `arkos/` Ports-Skripte, `arkos/groovebox/pc-modus.sh` (USB-Gadget: RNDIS + DHCP + SSH), `dtb-otg/` gepatchte DTBs

@@ -17,9 +17,9 @@ enum { NO_LOCK = 255 };
 
 enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_COUNT };
 static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL"};
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SRC", "SRC2", "FLT", "AMP", "LFO", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SYS"};
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SRC", "SRC2", "FLT", "AMP", "LFO", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SET"};
 static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "KLANG", "KLANG 2", "FILTER", "VERSTAERKER", "LFO", "INSERT-FX",
-                                                 "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "MASTER", "SYSTEM"};
+                                                 "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "MASTER", "EINSTELLUNGEN"};
 
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,

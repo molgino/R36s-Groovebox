@@ -51,7 +51,7 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * **MIX**: Mixer mit Mute/Solo (siehe unten)
 * **PRJ**: Projekte und Presets (siehe unten)
 * **MST**: BPM, Swing, Gesamtlautstärke, DRIVE (Sättigung der Summe) und die globale Tonskala SCALE
-* **SYS**: Audio-Ausgang, Puffergröße, MIDI und USB-Modus (wird in `settings.cfg` gespeichert)
+* **SET**: Einstellungen als Liste (siehe unten, wird in `settings.cfg` gespeichert)
 
 ## Tonskala (global)
 
@@ -60,6 +60,18 @@ Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im 
 
 * NOTE (auch als Lock) springt nur zwischen Skalentönen.
 * Sequencer, MIDI-Eingang und Aufnahme rasten in die Skala ein.
+
+## Einstellungen (SET-Seite)
+
+Über das SELECT-Menü (Gruppe PROJEKT) oder mit dem rechten Stick erreichst du die Einstellungsliste:
+
+* **PATTERN:** Pattern wählen, Länge der Spur bzw. aller Spuren, Tempo, Swing, Tonskala, Pattern kopieren/einfügen/leeren
+* **AUDIO:** Ausgang (interner Lautsprecher, S-1, USB-Interface …), Puffer mit Latenz in ms, Lautstärke
+* **MIDI:** Eingang, Noten ausgeben, Clock (senden/empfangen), Eingangskanäle
+* **USB:** HOST (Geräte am R36S) oder PC (Netz-MIDI, SSH) und die IP-Adresse
+* **SYSTEM:** Tasten neu lernen, Info, Beenden
+
+Steuerkreuz ↑/↓ wählt, ←/→ (oder X/Y) ändert, **A** führt aus, **B** springt zurück zur vorherigen Seite.
 
 ## Mixer (MIX-Seite)
 
