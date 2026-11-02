@@ -46,8 +46,8 @@ static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm; };
-static Settings cfg = {"", 1, 1, 0, 0, 0};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0};
 static char setPath[600];
 static int bufOverride = 0;
 static int devCount = 0;
@@ -97,14 +97,15 @@ static void loadSettings() {
         else if (!strcmp(line, "midi_notes_out")) cfg.notesOut = atoi(v) != 0;
         else if (!strcmp(line, "midi_clock")) cfg.clk = clampi(atoi(v), 0, 2);
         else if (!strcmp(line, "midi_channels")) cfg.chm = atoi(v) != 0;
+        else if (!strcmp(line, "usb_mode")) cfg.usb = clampi(atoi(v), 0, 2);
     }
     fclose(f);
 }
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -1387,6 +1388,7 @@ static void applyUsbMode() {
         msgUntil = SDL_GetTicks() + 4000;
     } else toast("USB: HOST-MODUS");
     usbMode = now;
+    if (cfg.usb != usbMode) { cfg.usb = usbMode; saveSettings(); }   // ueber Neustarts merken
     readNetIp();
     refreshDevices();
 }
@@ -1501,7 +1503,7 @@ int main(int argc, char** argv) {
             char m[32] = "";
             if (!fgets(m, sizeof m, f)) m[0] = 0;
             fclose(f);
-            if (!usbMode && strncmp(m, "host", 4) && strncmp(m, "UNKNOWN", 7)) {
+            if (!usbMode && !cfg.usb && strncmp(m, "host", 4) && strncmp(m, "UNKNOWN", 7)) {
                 char cmd[700];
                 snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' aus nosleep", basePath);
                 printf("OTG-Port im Modus '%.*s' - stelle auf Host\n", (int)strcspn(m, "\n"), m);
@@ -1519,6 +1521,7 @@ int main(int argc, char** argv) {
     midiStart();
     openAudio();
     toast("%d SAMPLES GELADEN", sampleCount());
+    if (cfg.usb && !usbMode) { usbMode = cfg.usb; usbApplyAt = SDL_GetTicks() + 1500; }   // PC-Modus nach Neustart wiederherstellen
     Uint32 lastAuto = SDL_GetTicks();
 
     Uint32 last = SDL_GetTicks();

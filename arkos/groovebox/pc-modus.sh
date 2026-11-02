@@ -22,6 +22,16 @@ teardown() {
   rmdir "$G"/functions/*/os_desc/* 2>/dev/null
   rmdir "$G"/configs/c.1/strings/0x409 "$G"/configs/c.1 "$G"/functions/* "$G"/strings/0x409 "$G" 2>/dev/null
 }
+# USB-Controller (dwc2) nach dem Umschalten frisch starten - sonst haengt er beim Wechsel
+# ("dwc2_core_reset() HANG"). Geht nur, wenn dwc2 ein Modul ist (ArkOS: ja).
+reload_dwc2() {
+  lsmod | grep -q '^dwc2 ' || return 0
+  modprobe -r dwc2 2>/dev/null || rmmod dwc2 2>/dev/null || { echo "dwc2 konnte nicht entladen werden"; return 0; }
+  sleep 0.5
+  modprobe dwc2 2>/dev/null || insmod "/lib/modules/$(uname -r)/kernel/drivers/usb/dwc2/dwc2.ko"
+  for i in 1 2 3 4 5 6 7 8 9 10; do [ -n "$(ls /sys/class/udc 2>/dev/null)" ] && break; sleep 0.5; done
+  echo "dwc2 neu geladen"
+}
 setrole() {   # $1 = host | peripheral
   for f in $(find /sys/devices/platform -name otg_mode 2>/dev/null); do echo "$1" > "$f" 2>/dev/null && echo "otg_mode=$1: $f"; done
   local r=host; [ "$1" = peripheral ] && r=device
@@ -34,6 +44,7 @@ case "$1" in
 aus)
   teardown
   setrole host
+  reload_dwc2
   say "PC-Modus aus - OTG-Port ist wieder Host (Keyboards, DACs, S-1 ...)"
   ;;
 *)
@@ -44,7 +55,9 @@ aus)
   fi
   teardown
   setrole peripheral
-  sleep 1
+  sleep 0.5
+  reload_dwc2
+  sleep 0.5
   # Port im Device Tree fest auf Host? (ArkOS R36S: "No support otg", 5V-Boost dauerhaft an)
   OTGM=$(cat /sys/devices/platform/*/*usb2-phy*/otg_mode 2>/dev/null | head -1)
   if [ "$OTGM" = "UNKNOWN" ] || dmesg 2>/dev/null | tail -n 30 | grep -q "No support otg"; then
@@ -163,7 +176,15 @@ aus)
   fi
   ;;
 esac
-echo "--- UDC: $(ls /sys/class/udc 2>/dev/null)  Zustand: $(cat /sys/class/udc/*/state 2>/dev/null)"
+# bis zu 6 s auf die Verbindung zum PC warten
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  case "$(cat /sys/class/udc/*/state 2>/dev/null)" in configured|addressed|default|powered) break;; esac
+  [ "$1" = aus ] && break
+  sleep 0.5
+done
+ST=$(cat /sys/class/udc/*/state 2>/dev/null)
+echo "--- UDC: $(ls /sys/class/udc 2>/dev/null)  Zustand: $ST"
+[ "$1" != aus ] && [ "$ST" = "not attached" ] && echo "Hinweis: Kabel einmal ab- und wieder anstecken"
 } >> "$LOG" 2>&1
 RC=$?
 pause 3
