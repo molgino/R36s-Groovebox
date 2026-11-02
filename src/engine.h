@@ -74,6 +74,11 @@ struct Voice {
     float denv = 0, ddco = 0, penv = 0, pco = 0, nenv = 0, nco = 0, cenv = 0, cco = 0;
     int clapLeft = 0, clapTimer = 0, clapInterval = 1; float burst = 0, bco = 0; bool clapTail = false;
     float menv = 0, mco = 0;
+    // FM mit 4 Operatoren
+    float fmPh[4] = {0}, fmEnv[4] = {0}, fmDco[4] = {1, 1, 1, 1}, fmInc[4] = {0}, fmMod[4] = {0}, fmCar[4] = {0};
+    float fmFbAmt = 0, fmFbPrev = 0;
+    int fmAlgo = 0;
+    int scaleVal = 0;   // globale Tonskala (vom Engine gesetzt)
     ADSR aenv, fenv;
     SVF filt, aux;
     float lfoPh = 0, lfoSH = 0, lfoVal = 0;
@@ -126,6 +131,12 @@ public:
     double clock = 0, nextStepAt = 0;
     bool mute[NTRACKS] = {false};
     volatile float dj = 0;     // -1..1 DJ-Filter (rechter Stick)
+    bool solo[NTRACKS] = {false};
+    bool audible(int t) const {   // Mute/Solo
+        if (mute[t]) return false;
+        for (int i = 0; i < NTRACKS; i++) if (solo[i]) return solo[t];
+        return true;
+    }
     float djSm = 0;
     volatile float peakL = 0, peakR = 0;
     volatile float grPeak = 0;   // Gain-Reduktion in dB (fuer die Anzeige)
@@ -146,6 +157,7 @@ public:
     void defaultProject();
     void initPattern(Pattern& p);
     static void setMachine(Pattern& p, int t, int m);
+    static void initTrack(Pattern& p, int t, int m);   // Klang einer Spur auf Grundwerte der Engine
     void start();
     void stop();
     void preview(int t, const Step* s);

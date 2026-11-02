@@ -13,7 +13,7 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 | HAT   | TUNE, DCAY, TONE (Hochpass), METL (Metall/Rauschen) |
 | CLAP  | TUNE, DCAY, SPRD (Abstand), RPTS (Anzahl Schläge) |
 | SYNTH | WAV1, WAV2 (SAW/SQR/TRI/SIN), DETN, MIX, SUB, NOIS, PW, GLID |
-| FM    | RATI, INDX, FBK, M.DEC, FINE, NOIS |
+| FM    | **4 Operatoren, 8 Algorithmen.** SRC: ALGO, FBK (Feedback OP4), RAT1–RAT4, FINE, NOIS. SRC2: LVL2–LVL4 (Mod-Index bzw. Pegel), DEC1–DEC4 (INF = halten), VELO (Anschlagdynamik) |
 | SMPL  | SMPL (Sample-Auswahl), TUNE (±24 Halbtöne), FINE, STRT, END (END < STRT = rückwärts), LOOP, GAIN |
 
 Jede Spur ist monophon (wie bei Digitakt und Co.). Ihre **Engine** wählst du auf der TRG-Seite mit dem Regler **ENGINE**: KICK, SNARE, HAT, CLAP, SYNTH, FM oder SMPL. Beim Drehen erscheint eine Auswahlleiste.
@@ -21,8 +21,11 @@ Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regle
 
 Jede Spur hat diese Seiten:
 
-* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE, **SCALE**
-* **SRC**: Regler der Maschine (siehe Tabelle). Bei SYNTH zeigt die Seite die Oszillator-Wellenformen, bei SMPL die Wellenform des Samples mit Start, Ende und Abspielposition.
+* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE
+* **SRC** (und **SRC2** bei FM): Regler der Engine (siehe Tabelle). Grafisch dargestellt werden:
+  * bei SYNTH die tatsächlich klingende, gemischte Wellenform
+  * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten
+  * bei SMPL die Sample-Wellenform mit Start, Ende und Abspielposition
 * **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve.
 * **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
 * **LFO** (Welle mit laufender Phase): Tempo, Tiefe, Ziel (Pitch/Freq/Vol/Pan/Reso/Crush), Wellenform, Retrigger, Bitcrusher, Samplerate-Reduktion, Drive
@@ -45,18 +48,36 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
   * Delay: D.TIME (1/32 bis 1/2, im Songtempo), D.FBK, D.TONE, D.PING (0 = mono, 127 = volles Ping-Pong)
   * Reverb: R.SIZE, R.DAMP, R.PRE (Predelay bis 250 ms), R.WIDE (Stereobreite)
 * **CMP**: Master-Kompressor mit **Sidechain** (siehe unten)
-* **MST**: BPM, Swing, Gesamtlautstärke und DRIVE (Sättigung der Summe)
+* **MIX**: Mixer mit Mute/Solo (siehe unten)
+* **PRJ**: Projekte und Presets (siehe unten)
+* **MST**: BPM, Swing, Gesamtlautstärke, DRIVE (Sättigung der Summe) und die globale Tonskala SCALE
 * **SYS**: Audio-Ausgang, Puffergröße, MIDI und USB-Modus (wird in `settings.cfg` gespeichert)
 
-## Tonskalen pro Spur
+## Tonskala (global)
 
-Der Regler **SCALE** auf der TRG-Seite wählt Grundton und Skala der Spur.
-Zur Wahl stehen CHROM (aus), Dur, Moll, Dorisch, Phrygisch, Lydisch, Mixolydisch, Harmonisch Moll, Pentatonik Dur/Moll und Blues, jeweils auf allen 12 Grundtönen.
-Beim Drehen zeigt eine Mini-Tastatur die Skalentöne, der Grundton ist weiß.
+Auf der MST-Seite wählt **SCALE** Grundton und Skala für das ganze Projekt: CHROM (aus), Dur, Moll, Dorisch, Phrygisch, Lydisch, Mixolydisch, Harmonisch Moll, Pentatonik Dur/Moll und Blues.
+Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im Header neben dem Swing.
 
-* NOTE (auch als Lock) springt nur noch zwischen Skalentönen.
-* Alle gespielten Noten rasten in die Skala ein: Sequencer, MIDI-Eingang und Aufnahme. Bestehende Melodien folgen also sofort einer neuen Skala.
-* Die Skala lässt sich wie alles andere pro Step locken.
+* NOTE (auch als Lock) springt nur zwischen Skalentönen.
+* Sequencer, MIDI-Eingang und Aufnahme rasten in die Skala ein.
+
+## Mixer (MIX-Seite)
+
+Hier siehst du alle 8 Spuren als Kanalzüge mit Fader, Pegelanzeige, Panorama, Delay- und Reverb-Send.
+
+* Steuerkreuz ↑/↓ oder linker Stick ←/→ wählt den Kanal.
+* Linker Stick ↑/↓ oder L1/R1 wählt die Zeile (VOL, PAN, DLY, REV).
+* Rechter Stick ↑/↓ oder X/Y ändert den Wert.
+* **A = Mute, B = Solo.** Sind mehrere Spuren auf Solo, klingen alle Solo-Spuren.
+
+## Projekte und Presets (PRJ-Seite)
+
+* **SONG** (32 Plätze) mit **LADEN**, **SPEICHERN** und **NEU** (legt das Projekt im nächsten freien Platz an).
+  Gespeichert wird in `groovebox/projects/songNN.gbx`. Der aktive Platz wird gemerkt, und das automatische Speichern landet dort.
+* **PRESET** (32 Plätze pro Engine) mit **P.LADEN** und **P.SPEICHERN**. Ein Preset enthält den kompletten Klang der Spur: Engine und alle Seiten außer den Steps.
+  Gespeichert wird in `groovebox/presets/<ENGINE>/NN.gbp`.
+* **INIT** setzt den Klang der gewählten Spur auf die Grundwerte der Engine zurück.
+* Aktionen startest du mit **A** (oder X). Laden, Überschreiben, Neu und Init fragen vorher nach: **A = Ja, B = Nein**.
 
 ## Kompressor und Sidechain (CMP-Seite)
 
@@ -127,18 +148,18 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | Steuerkreuz ←/→ | Step-Cursor |
 | Steuerkreuz ↑/↓ | Spur wählen |
 | A | Trig setzen oder löschen |
-| **A halten** + X/Y oder linker Stick | **Parameter-Lock** auf diesen Step (gelb) |
+| **A halten** + X/Y oder rechter Stick | **Parameter-Lock** auf diesen Step (gelb) |
 | A halten + B | alle Locks des Steps löschen |
 | B | Spur vorhören |
-| X / Y | Wert + / − (halten = Wiederholung, nach 1 s schneller) |
-| Linker Stick ↑/↓ | Wert stufenlos ändern |
-| **Linker Stick ←/→** | **Regler wählen** (leise, statt L1/R1) |
-| **Rechter Stick ←/→** | **Seite wechseln** (leise, statt L2/R2) |
-| Rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass |
-| L1 / R1 | Regler wählen (alternativ) |
-| L2 / R2 | Seite wählen (alternativ) (TRG SRC FLT AMP LFO INS, global: FX CMP MST SYS) |
+| **Linker Stick** | **direkt auf einen Regler zeigen**: links oben = Regler 1 … rechts oben = 4, links unten = 5 … rechts unten = 8 |
+| **Rechter Stick ↑/↓** | **Wert stufenlos ändern** |
+| **Rechter Stick ←/→** | **Seite wechseln** |
+| X / Y | Wert + / − in Einzelschritten (halten = Wiederholung) |
+| **SELECT kurz antippen** | **Seitenmenü**: alle Seiten nach Gruppen (SPUR / MIX & FX / PROJEKT), Steuerkreuz wählt, A öffnet |
+| SELECT halten | Hilfe-Einblendung |
+| SELECT + rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass |
+| L1/R1, L2/R2 | Regler bzw. Seite (alternativ zu den Sticks) |
 | START | Play / Stop |
-| **SELECT halten** | Hilfe-Einblendung |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
 | SELECT + ↑ | Aufnahme an/aus (für MIDI-Eingabe) |
 | SELECT + ↓ | Tap-Tempo (mehrmals im Takt tippen) |

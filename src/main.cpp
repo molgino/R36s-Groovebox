@@ -40,14 +40,21 @@ static Uint32 editAt = 0, msgAt = 0;
 static int editSlot = 0;
 static Pattern clip;
 static bool haveClip = false;
+static int prjSel = 0, presetSel = 0, mixRow = 0;
+static const uint8_t MIX_P[4] = {P_VOL, P_PAN, P_DLY, P_REV};
+static const char* const MIX_NAMES[4] = {"VOL", "PAN", "DLY", "REV"};
+static bool menuOpen = false; static int menuSel = 0;
+static bool confirmOpen = false; static char confirmText[80]; static int confirmAct = 0, confirmArg = 0;
+static Uint32 selDownAt = 0;
 static bool quitReq = false;
 static volatile float cpuLoad = 0;
 static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0};
+static bool projFromArg = false;
 static char setPath[600];
 static int bufOverride = 0;
 static int devCount = 0;
@@ -98,14 +105,15 @@ static void loadSettings() {
         else if (!strcmp(line, "midi_clock")) cfg.clk = clampi(atoi(v), 0, 2);
         else if (!strcmp(line, "midi_channels")) cfg.chm = atoi(v) != 0;
         else if (!strcmp(line, "usb_mode")) cfg.usb = clampi(atoi(v), 0, 2);
+        else if (!strcmp(line, "song")) cfg.song = clampi(atoi(v), 0, 31);
     }
     fclose(f);
 }
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -316,6 +324,15 @@ static void animate() {
 static Pattern& curP() { return eng.proj.pat[eng.curPat]; }
 static Step& holdS() { return eng.proj.pat[holdPat].s[holdTrack][holdStep]; }
 
+// Seiten: Spurseiten haben eine Speicherseite (je 8 Parameter), globale nicht
+static bool trackPage(int p) { return p < FIRST_GLOBAL_PAGE; }
+static int sp() { return PG_STORE[page]; }
+static bool pageAvail(int p) { return p != PG_SRC2 || machineHasSrc2(curP().machine[track]); }
+static void gotoPage(int dir) {
+    for (int i = 0; i < NUI_PAGES; i++) { page = (page + dir + NUI_PAGES) % NUI_PAGES; if (pageAvail(page)) break; }
+}
+static int curScale() { return eng.proj.mst[MS_SCALE]; }
+
 static bool stepHasLock(const Step& s) {
     for (int i = 0; i < NPARAMS; i++) if (s.lock[i] != NO_LOCK) return true;
     return false;
@@ -363,6 +380,7 @@ static void drawHeader() {
     }
     snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]);
     text(84, 21, b, C_DIM);
+    if (curScale() && !eng.recording) { fmtParam(MST_DEFS[MS_SCALE], curScale(), b, sizeof b); text(140, 21, b, dimC(C_ACC, 0.8f)); }
     if (eng.recording) {
         float pl = 0.5f + 0.5f * sinf(animTime * 6.f);
         rrect(140, 24, 9, 9, 4, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
@@ -370,17 +388,23 @@ static void drawHeader() {
     }
     snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
     text(196, 4, b, eng.mute[track] ? C_DIM : mix(tc, C_PLAY, flash[track] * 0.35f), 2);
-    for (int p = 0; p < NUI_PAGES; p++) {
-        int x = 330 + p * 28;
-        if (p == page) { rrect(x - 1, 3, 29, 18, 4, C_ACC); textC(x + 14, 4, PAGE_NAMES[p], C_BG); }
-        else textC(x + 14, 4, PAGE_NAMES[p], p >= PAGE_FX ? dimC(C_DIM, 0.8f) : C_DIM);
+    {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
+        int g = PG_GROUP[page], x = 334;
+        for (int p = 0; p < NUI_PAGES; p++) {
+            if (PG_GROUP[p] != g || !pageAvail(p)) continue;
+            int w = textW(PAGE_NAMES[p]) + 8;
+            if (p == page) { rrect(x, 3, w, 18, 4, C_ACC); text(x + 4, 4, PAGE_NAMES[p], C_BG); }
+            else text(x + 4, 4, PAGE_NAMES[p], C_DIM);
+            x += w + 2;
+        }
     }
     if (aHeld) {
         snprintf(b, sizeof b, "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
         text(332, 23, b, C_LOCK);
     } else {
-        snprintf(b, sizeof b, "CPU %2d%%  LEN %d", (int)(cpuLoad * 100), curP().len[track]);
-        text(332, 23, b, C_DIM);
+        text(334, 23, GROUP_NAMES[PG_GROUP[page]], dimC(C_ACC, 0.8f));
+        snprintf(b, sizeof b, "CPU %d%%", (int)(cpuLoad * 100));
+        text(334 + textW(GROUP_NAMES[PG_GROUP[page]]) + 10, 23, b, C_DIM);
         if (strcmp(midiBackend(), "AUS")) {
             bool act = SDL_GetTicks() - midiActivity < 150;
             rrect(462, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
@@ -399,6 +423,9 @@ static void drawHeader() {
     if (mr) rrect(629, 37 - mr, 6, mr, 2, eng.peakR > 0.95f ? C_TRIG : C_GREEN);
 }
 
+static bool songExists(int i);
+static bool presetExists(int m, int i);
+
 // Wert + Anzeige eines Reglers der aktuellen Seite ermitteln
 static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, char* label, int ln) {
     const Pattern& P = curP();
@@ -406,6 +433,17 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
     if (page == PAGE_MST) {
         d = MST_DEFS[k];
         val = k == MS_BPM ? eng.proj.bpm : eng.proj.mst[k];
+    } else if (page == PG_PRJ) {
+        static const ParamDef PRJ_DEFS[8] = {
+            {"SONG", K_SLOT, 0, 31}, {"LADEN", K_ACT, 0, 0}, {"SPEICHERN", K_ACT, 0, 0}, {"NEU", K_ACT, 0, 0},
+            {"PRESET", K_SLOT, 0, 31}, {"P.LADEN", K_ACT, 0, 0}, {"P.SPEICHERN", K_ACT, 0, 0}, {"INIT", K_ACT, 0, 0}};
+        d = PRJ_DEFS[k];
+        val = k == 0 ? prjSel : (k == 4 ? presetSel : 0);
+        if (k == 0) snprintf(label, ln, "SONG %02d %s", prjSel + 1, prjSel == cfg.song ? "(AKTIV)" : (songExists(prjSel) ? "" : "(LEER)"));
+        if (k == 4) snprintf(label, ln, "%s %02d%s", MACHINE_NAMES[P.machine[track]], presetSel + 1, presetExists(P.machine[track], presetSel) ? "" : " (LEER)");
+    } else if (page == PG_MIX) {
+        d = PDEF_NONE;
+        val = 0;
     } else if (page == PAGE_FX) {
         d = FX_DEFS[k];
         val = eng.proj.fx[k];
@@ -434,7 +472,7 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         }
         if (k == SY_BUF && bufOverride) snprintf(label, ln, "--buffer %d", bufOverride);
     } else {
-        int idx = page * 8 + k;
+        int idx = sp() * 8 + k;
         d = paramDef(P.machine[track], idx);
         val = P.p[track][idx];
         if (d.kind == K_MACH) val = P.machine[track];
@@ -445,8 +483,7 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
             else if (k <= 3) snprintf(label, ln, "%s", INS_PNAMES[ty][k - 1]);
         }
         if (idx == P_NOTE) {   // Note in die Skala der Spur einrasten
-            int sv = (aHeld && holdS().lock[P_T7] != NO_LOCK) ? holdS().lock[P_T7] : P.p[track][P_T7];
-            val = quantizeNote(val, sv);
+            val = quantizeNote(val, curScale());
         }
         if (d.kind == K_SCALE && val > 0) snprintf(label, ln, "%s %s", NOTE_NAMES[(val - 1) % 12], SCALE_LONG[((val - 1) / 12) % NSCALES]);
         if (d.kind == K_SMPL) {
@@ -454,21 +491,21 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
             snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
         }
     }
-    baseVal = (page < PAGE_FX && d.kind != K_MACH) ? P.p[track][page * 8 + k] : val;
+    baseVal = (trackPage(page) && d.kind != K_MACH) ? P.p[track][sp() * 8 + k] : val;
     return d.kind != K_NONE;
 }
 
 static float envSec(int v) { return 0.0005f * exp2f(v * (15.f / 127.f)); }
 static bool isEnvTime(int k) {
-    return (page == 3 && (k == 0 || k == 1 || k == 3)) || (page == 2 && (k == 4 || k == 5 || k == 7));
+    return (page == PG_AMP && (k == 0 || k == 1 || k == 3)) || (page == PG_FLT && (k == 4 || k == 5 || k == 7));
 }
-static bool isEnvSus(int k) { return (page == 3 && k == 2) || (page == 2 && k == 6); }
+static bool isEnvSus(int k) { return (page == PG_AMP && k == 2) || (page == PG_FLT && k == 6); }
 
 static void knobText(const ParamDef& d, int val, char* b, int n, int k = -1) {
-    if (k >= 0 && page < PAGE_FX && isEnvTime(k)) {
+    if (k >= 0 && trackPage(page) && isEnvTime(k)) {
         float s = envSec(val);
         if (s < 1.f) snprintf(b, n, "%.0fms", s * 1000.f); else snprintf(b, n, "%.1fs", s);
-    } else if (k >= 0 && page < PAGE_FX && isEnvSus(k)) snprintf(b, n, "%d%%", val * 100 / 127);
+    } else if (k >= 0 && trackPage(page) && isEnvSus(k)) snprintf(b, n, "%d%%", val * 100 / 127);
     else if (d.kind == K_GR) snprintf(b, n, "-%.1f", grDisp);
     else if (d.kind == K_SMPL) snprintf(b, n, "%d", val + 1);
     else if (d.kind == K_DEV) { if (val) snprintf(b, n, "#%d", val); else snprintf(b, n, "STD"); }
@@ -626,23 +663,72 @@ static void lfoGraph(int gx, int gy, int gw, int gh, int spd, int dep, int wave,
     text(gx + gw - 10 - textW(b), gy + 6, b, dimC(c, 0.8f));
 }
 
-// Oszillatoren: OSC1, OSC2 und Mischung (OSC2 driftet mit der Verstimmung)
-static void oscGraph(int gx, int gy, int gw, int gh, int w1, int w2, int det, int mixv, int pwv, int sel, Col c) {
+// Oszillator: eine gemischte Wellenform (OSC1 + OSC2 + SUB) wie sie klingt; Verstimmung = Bewegung
+static void oscGraph(int gx, int gy, int gw, int gh, int w1, int w2, int det, int mixv, int pwv, int subv, int sel, Col c) {
     graphBox(gx, gy, gw, gh);
-    int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 20) / 2;
-    float pw = 0.5f + (pwv - 64) / 140.f, m = mixv / 127.f;
-    float drift = oscDrift * (det - 64) / 64.f * 0.6f;
-    static int y1[700], y2[700], ym[700];
+    int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 18) / 2;
+    float pw = 0.5f + (pwv - 64) / 140.f, m = mixv / 127.f, sub = subv / 127.f * 0.8f;
+    float ratio = exp2f((det - 64) / 64.f * 0.5f / 12.f);
+    float drift = oscDrift * (ratio - 1.f) * 40.f;   // sichtbares "Wandern" von OSC2
+    static float v[700]; static int ys[700];
     if (W > 690) W = 690;
+    float mx = 0.001f;
     for (int i = 0; i < W; i++) {
-        float p = (float)i / W * 2.f;
-        float a = waveAt(w1, p, pw), b = waveAt(w2, p + drift, pw);
-        y1[i] = mid - (int)(a * A * 0.9f); y2[i] = mid - (int)(b * A * 0.9f);
-        ym[i] = mid - (int)((a * (1 - m) + b * m) * A * 0.9f);
+        float p = (float)i / W * 2.f;   // 2 Perioden von OSC1
+        float a = waveAt(w1, p, pw), b = waveAt(w2, p * ratio + drift, pw);
+        float sq = waveAt(1, p * 0.5f, 0.5f);
+        v[i] = a * (1.f - m) + b * m + sub * sq;
+        if (fabsf(v[i]) > mx) mx = fabsf(v[i]);
     }
+    for (int i = 0; i < W; i++) ys[i] = mid - (int)(v[i] / mx * A);
     fill(x0, mid, W, 1, C_OFF2);
-    for (int i = 0; i < W; i += 2) { fill(x0 + i, y1[i], 1, 2, dimC(c, sel == 0 ? 0.9f : 0.45f)); fill(x0 + i, y2[i], 1, 2, mix(dimC(c, sel == 1 ? 0.9f : 0.45f), C_PLAY, 0.3f)); }
-    curve(x0, ym, W, mid, c, 30);
+    curve(x0, ys, W, mid, c, 45);
+    static const char* wn[4] = {"SAW", "SQR", "TRI", "SIN"};
+    char b2[48];
+    snprintf(b2, sizeof b2, "%s + %s  MIX %d%%%s", wn[w1 & 3], wn[w2 & 3], mixv * 100 / 127, subv ? "  +SUB" : "");
+    text(gx + gw - 10 - textW(b2), gy + 4, b2, sel >= 0 ? c : dimC(c, 0.8f));
+}
+
+// FM: Algorithmus-Diagramm. Traeger gefuellt (rechts der Ausgang), Modulatoren als Rahmen, leuchten beim Spielen
+static void fmGraph(int gx, int gy, int gw, int gh, int algo, const int* rat, const int* lvl, int selOp, const Voice* vo, Col c) {
+    graphBox(gx, gy, gw, gh);
+    algo &= 7;
+    int bx[4], by[4], bw = 92, bh = 16;
+    for (int k = 0; k < 4; k++) {
+        bx[k] = gx + 30 + FM_LAYOUT[algo][k][0] * 128;
+        by[k] = gy + 5 + FM_LAYOUT[algo][k][1] * 19;
+    }
+    // Verbindungen Modulator -> Ziel
+    for (int k = 0; k < 4; k++)
+        for (int j = 0; j < 4; j++)
+            if (FM_MODS[algo][k] >> j & 1) {
+                int x1 = bx[j] + bw, y1 = by[j] + bh / 2, x2 = bx[k], y2 = by[k] + bh / 2, xm = (x1 + x2) / 2;
+                Col lc = dimC(c, 0.6f);
+                fill(x1, y1, xm - x1, 1, lc);
+                fill(xm, y1 < y2 ? y1 : y2, 1, abs(y2 - y1) + 1, lc);
+                fill(xm, y2, x2 - xm, 1, lc);
+                fill(x2 - 4, y2 - 2, 3, 5, lc);
+            }
+    // Ausgang
+    int ox = gx + gw - 26;
+    fill(ox, gy + 8, 2, gh - 16, c);
+    text(ox - 6, gy + gh - 18, "OUT", dimC(c, 0.8f));
+    for (int k = 0; k < 4; k++) {
+        bool car = FM_CARRIERS[algo] >> k & 1;
+        float glow = (vo && vo->active && vo->machine == M_FM) ? vo->fmEnv[k] : 0.f;
+        float lv = k == 0 ? 1.f : lvl[k] / 127.f;
+        Col bc = car ? mix(dimC(c, 0.35f + 0.65f * lv), C_PLAY, glow * 0.4f) : mix(C_SEL, c, glow * 0.6f);
+        if (k == selOp) { float p = 0.5f + 0.5f * sinf(animTime * 7.f); rrect(bx[k] - 3, by[k] - 3, bw + 6, bh + 6, 6, c, (Uint8)(60 + 60 * p)); }
+        rrect(bx[k], by[k], bw, bh, 4, bc);
+        if (!car) { rrect(bx[k] + 1, by[k] + 1, bw - 2, bh - 2, 3, C_PANEL); fill(bx[k] + 2, by[k] + bh - 3, (int)((bw - 4) * lv), 2, c); }
+        char b[24];
+        snprintf(b, sizeof b, "OP%d x%.2g", k + 1, FM_RATIOS[rat[k] & 15]);
+        text(bx[k] + 6, by[k], b, car ? C_BG : C_TEXT);
+        if (car) { int x1 = bx[k] + bw; fill(x1, by[k] + bh / 2, ox - x1, 1, dimC(c, 0.5f)); }
+        if (k == 3) { rrect(bx[3] + bw - 14, by[3] - 4, 12, 6, 3, dimC(c, 0.6f)); }   // Feedback-Schleife
+    }
+    char b[16]; snprintf(b, sizeof b, "ALGO %d", algo + 1);
+    text(gx + 8, gy + gh - 18, b, selOp == 4 ? C_PLAY : dimC(c, 0.8f));
 }
 
 // Sample-Wellenform mit Start/Ende und Abspielposition
@@ -707,14 +793,16 @@ static void paramChip(int k, int x, int y, Col tc) {
 
 // welche Reihe (0/1) der aktuellen Seite als Grafik erscheint
 static int graphKind(int row) {
-    if (page == 3 && row == 0) return 1;                  // AMP: Huellkurve
-    if (page == 2) return row == 0 ? 2 : 1;               // FLT: Filter + Huellkurve
-    if (page == 4 && row == 0) return 3;                  // LFO
-    if (page == 1 && row == 0) {
+    if (page == PG_AMP && row == 0) return 1;             // AMP: Huellkurve
+    if (page == PG_FLT) return row == 0 ? 2 : 1;          // FLT: Filter + Huellkurve
+    if (page == PG_LFO && row == 0) return 3;             // LFO
+    if (page == PG_SRC && row == 0) {
         int m = curP().machine[track];
         if (m == M_SYNTH) return 4;
         if (m == M_SAMPLE) return 5;
+        if (m == M_FM) return 6;                          // FM: Algorithmus-Diagramm
     }
+    if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_FM) return 6;
     return 0;
 }
 static int pv(int idx) {   // Wert (inkl. Lock beim Halten) eines Spurparameters
@@ -723,11 +811,90 @@ static int pv(int idx) {   // Wert (inkl. Lock beim Halten) eines Spurparameters
     return P.p[track][idx];
 }
 
+// Mixer: 8 Kanalzuege mit Fader, Pegel, Panorama, Sends, Mute/Solo
+static void drawMixer(int ox) {
+    const Pattern& P = curP();
+    char b[16];
+    for (int t = 0; t < NTRACKS; t++) {
+        int x = t * 80 + ox, y = 44;
+        bool sel = t == track;
+        Col tc = eng.audible(t) ? TCOL[t] : dimC(TCOL[t], 0.35f);
+        rrect(x + 2, y + 1, 76, 188, 8, sel ? C_SEL : C_PANEL);
+        snprintf(b, sizeof b, "T%d", t + 1);
+        text(x + 8, y + 4, b, sel ? TCOL[t] : C_TEXT);
+        text(x + 8, y + 20, MACHINE_NAMES[P.machine[t]], C_DIM);
+        // Mute / Solo
+        rrect(x + 50, y + 5, 22, 14, 3, eng.mute[t] ? C_TRIG : C_OFF2); text(x + 57, y + 4, "M", eng.mute[t] ? C_BG : C_DIM);
+        rrect(x + 50, y + 21, 22, 14, 3, eng.solo[t] ? C_LOCK : C_OFF2); text(x + 57, y + 20, "S", eng.solo[t] ? C_BG : C_DIM);
+        // Fader + Pegel
+        int fy = y + 44, fh = 84, vol = P.p[t][P_VOL];
+        int hy = fy + fh - vol * fh / 127;
+        fill(x + 22, fy, 4, fh, C_OFF2);
+        fill(x + 22, hy, 4, fy + fh - hy, dimC(tc, 0.7f));
+        bool rs = sel && mixRow == 0;
+        rrect(x + 12, hy - 4, 24, 9, 3, rs ? C_PLAY : tc);
+        int mh = clampi((int)(sqrtf(meterV[t]) * fh), 0, fh);
+        fill(x + 44, fy, 5, fh, C_OFF);
+        if (mh) fill(x + 44, fy + fh - mh, 5, mh, meterV[t] > 0.9f ? C_TRIG : C_GREEN);
+        snprintf(b, sizeof b, "%d", vol);
+        text(x + 54, fy + fh - 14, b, rs ? C_PLAY : C_DIM);
+        // Panorama + Sends
+        int rowY[3] = {y + 138, y + 154, y + 170};
+        for (int r = 1; r < 4; r++) {
+            int yy = rowY[r - 1], v = P.p[t][MIX_P[r]];
+            bool on = sel && mixRow == r;
+            text(x + 8, yy - 5, MIX_NAMES[r], on ? C_PLAY : C_DIM);
+            int bx = x + 36, bw = 36;
+            fill(bx, yy + 2, bw, 3, C_OFF2);
+            if (r == 1) { int px = bx + v * (bw - 1) / 127; fill(bx + bw / 2, yy, 1, 7, C_DIM); rrect(px - 2, yy, 5, 7, 2, on ? C_PLAY : tc); }
+            else { int w = v * bw / 127; if (w) fill(bx, yy + 2, w, 3, on ? C_PLAY : tc); }
+        }
+    }
+    // Zeilen-Hinweis fuer den gewaehlten Kanal
+    char h[48];
+    int v = P.p[track][MIX_P[mixRow]];
+    if (mixRow == 1) snprintf(h, sizeof h, "T%d  PAN %+d", track + 1, v - 64);
+    else snprintf(h, sizeof h, "T%d  %s %d", track + 1, MIX_NAMES[mixRow], v);
+    text(8, 222, h, TCOL[track]);
+    text(640 - 8 - textW("A=MUTE  B=SOLO"), 222, "A=MUTE  B=SOLO", C_DIM);
+}
+
+// Seitenmenue (SELECT kurz antippen)
+static void drawMenu() {
+    rrect(70, 60, 500, 300, 14, C_ACC);
+    rrect(72, 62, 496, 296, 13, C_BG, 250);
+    textC(320, 72, "SEITE WAEHLEN", C_ACC, 2);
+    for (int g = 0; g < 3; g++) {
+        int y = 128 + g * 72;
+        text(92, y - 20, GROUP_NAMES[g], C_DIM);
+        int x = 92;
+        for (int p = 0; p < NUI_PAGES; p++) {
+            if (PG_GROUP[p] != g || !pageAvail(p)) continue;
+            bool sel = p == menuSel, cur = p == page;
+            int w = textW(PAGE_NAMES[p]) + 22;
+            rrect(x, y, w, 30, 8, sel ? C_ACC : (cur ? C_SEL : C_PANEL));
+            text(x + 11, y + 7, PAGE_NAMES[p], sel ? C_BG : (cur ? C_ACC : C_TEXT));
+            x += w + 8;
+        }
+    }
+    textC(320, 334, PAGE_LONG[menuSel], C_TEXT);
+}
+
+static void drawConfirm() {
+    int w = textW(confirmText) + 48; if (w < 360) w = 360; if (w > 620) w = 620;
+    rrect(320 - w / 2, 170, w, 110, 14, C_ACC);
+    rrect(322 - w / 2, 172, w - 4, 106, 13, C_BG, 250);
+    textC(320, 190, confirmText, C_TEXT);
+    rrect(220, 226, 90, 32, 8, C_GREEN); textC(265, 234, "A = JA", C_BG);
+    rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, "B = NEIN", C_TEXT);
+}
+
 static void drawKnobs() {
     char b[32], label[24];
     Col tc = TCOL[track];
     Uint32 now = SDL_GetTicks();
     int ox = (int)slideOff;
+    if (page == PG_MIX) { drawMixer(ox); goto overlays; }
     for (int row = 0; row < 2; row++) {
         int y = 44 + row * 96;
         int gk = graphKind(row);
@@ -737,9 +904,9 @@ static void drawKnobs() {
             const Voice& v = eng.v[track];
             switch (gk) {
             case 1: {
-                int base = page == 3 ? P_AATK : P_FATK;
+                int base = page == PG_AMP ? P_AATK : P_FATK;
                 envGraph(gx, gy, gw, gh, pv(base), pv(base + 1), pv(base + 2), pv(base + 3), selRel,
-                         v.active ? (page == 3 ? &v.aenv : &v.fenv) : nullptr, tc);
+                         v.active ? (page == PG_AMP ? &v.aenv : &v.fenv) : nullptr, tc);
             } break;
             case 2:
                 filterGraph(gx, gy, gw, gh, pv(P_FREQ), pv(P_RESO), pv(P_FTYP), pv(P_FENV), selRel,
@@ -752,8 +919,15 @@ static void drawKnobs() {
                 lfoGraph(gx, gy, gw, gh, pv(P_LSPD), pv(P_LDEP), pv(P_LWAV), ph, tc);
             } break;
             case 4:
-                oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), selRel, tc);
+                oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), pv(P_S4), selRel, tc);
                 break;
+            case 6: {
+                int rat[4] = {pv(P_S2), pv(P_S3), pv(P_S4), pv(P_S5)}, lvl[4] = {127, pv(P_X0), pv(P_X1), pv(P_X2)};
+                int selOp = -1;
+                if (page == PG_SRC) selOp = selRel == 0 ? 4 : (selRel == 1 ? 3 : (selRel >= 2 ? selRel - 2 : -1));
+                else selOp = selRel >= 0 && selRel < 3 ? selRel + 1 : (selRel == 3 ? 0 : -1);
+                fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, selOp, &v, tc);
+            } break;
             case 5:
                 sampleGraph(gx, gy, gw, gh, pv(P_S0), pv(P_S3), pv(P_S4), pv(P_S5) != 0, selRel, tc);
                 break;
@@ -773,10 +947,17 @@ static void drawKnobs() {
                 textC(cx, cy - 8, "-", C_DIM);
                 continue;
             }
+            if (d.kind == K_ACT) {   // Schaltflaeche
+                float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
+                rrect(cx - 50, cy - 18, 100, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
+                textC(cx, cy - 8, d.name, sel ? C_BG : C_TEXT);
+                textC(cx, y + 70, sel ? "A = START" : "", C_DIM);
+                continue;
+            }
             float target = knobFrac(d, val);
             knobAnim[k] += (target - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
             bool justEdited = sel && editAt && now - editAt < 300;
-            Col kc = locked ? C_LOCK : (sel ? (page >= PAGE_FX ? C_ACC : tc) : C_TEXT);
+            Col kc = locked ? C_LOCK : (sel ? (!trackPage(page) ? C_ACC : tc) : C_TEXT);
             if (d.kind == K_GR) kc = C_TRIG;
             if (justEdited) kc = mix(kc, C_PLAY, 0.5f * (1.f - (now - editAt) / 300.f));
             if (sel) {   // atmender Ring um den gewaehlten Regler
@@ -793,6 +974,7 @@ static void drawKnobs() {
             textC(cx, y + 70, label[0] ? label : d.name, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
         }
     }
+overlays:
     // grosse Werteanzeige beim Drehen bzw. Meldung (die juengste gewinnt)
     bool showEdit = editAt && (now - editAt < 900 || editAt == 1) && editAt >= msgAt;
     bool showMsg = now < msgUntil && msgAt > editAt;
@@ -800,7 +982,7 @@ static void drawKnobs() {
         ParamDef d; int val, baseVal; bool locked;
         if (knobInfo(editSlot, d, val, locked, baseVal, label, sizeof label)) {
             knobText(d, val, b, sizeof b, editSlot);
-            Col c = locked ? C_LOCK : (page >= PAGE_FX ? C_ACC : tc);
+            Col c = locked ? C_LOCK : (!trackPage(page) ? C_ACC : tc);
             float t = editAt == 1 ? 1.f : fminf((now - editAt) / 120.f, 1.f);   // kurzes Aufpoppen
             int oy = 204 + (int)((1.f - t) * 8);
             rrect(150, oy, 340, 34, 8, C_BG);
@@ -893,7 +1075,7 @@ static void drawSteps() {
     char b[8];
     Col tc = eng.mute[track] ? dimC(TCOL[track], 0.35f) : TCOL[track];
     int len = P.len[track];
-    int sv = P.p[track][P_T7];
+    int sv = curScale();
     if (eng.recording) {
         float pl = 0.5f + 0.5f * sinf(animTime * 6.f);
         rrect(2, 388, 628, 54, 8, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
@@ -915,22 +1097,18 @@ static void drawSteps() {
         if (st.on && stepHasLock(st)) rrect(x + 27, y + 11 - lift, 5, 5, 2, C_BG);
         if (st.on && st.lock[P_NOTE] != NO_LOCK) {
             char nb[8];
-            int nsv = st.lock[P_T7] != NO_LOCK ? st.lock[P_T7] : sv;
-            fmtParam(COMMON_DEFS[P_NOTE], quantizeNote(st.lock[P_NOTE], nsv), nb, sizeof nb);
+            fmtParam(COMMON_DEFS[P_NOTE], quantizeNote(st.lock[P_NOTE], sv), nb, sizeof nb);
             textC(x + 18, y + 13 - lift, nb, dimC(C_BG, 0.85f));
         }
         snprintf(b, sizeof b, "%d", s + 1);
         textC(x + 18, y + 27 - lift, b, st.on ? C_BG : C_DIM);
     }
     const char* h;
-    if (aHeld) h = "[X/Y/STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]ENGINE [L1/R1]CPY/PST";
-    else if (page == PAGE_SYS) h = "[X/Y] AENDERN   [L-STICK <>] EINSTELLUNG   [R-STICK <>] SEITE";
-    else if (page == PAGE_INS) h = "[X/Y] WERT  [L-STICK <>] REGLER  [R-STICK <>] SEITE  TYPE, DANN MIX";
-    else if (page == PAGE_FX) h = "[X/Y] WERT  [L-STICK <>] REGLER  [R-STICK <>] SEITE  SENDS: AMP";
-    else if (page == PAGE_CMP) h = "[X/Y] WERT  [L-STICK <>] REGLER   SC=T1 + RATIO HOCH = KICK PUMPT";
-    else if (page == PAGE_MST) h = "[X/Y] WERT  [L-STICK <>] REGLER  [R-STICK <>] SEITE  [SEL+v] TAP";
-    else h = "[A]TRIG [B]HOER [X/Y]WERT [L-STICK]REGLER [R-STICK<>]SEITE [SEL]FUNC";
+    if (aHeld) h = "[X/Y/R-STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
+    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]ENGINE [R-STICK]DJ";
+    else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
+    else if (page == PG_PRJ) h = "[L-STICK]WAEHLEN [R-STICK^v]PLATZ [A/X]AUSFUEHREN [SEL]MENUE";
+    else h = "[A]TRIG [B]HOER [L-STICK]REGLER [R-STICK]WERT/SEITE [SEL]MENUE";
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -952,9 +1130,9 @@ static void drawHelp() {
         "  A halten+X/Y   Parameter-Lock auf Step",
         "  A halten+B     Locks des Steps loeschen",
         "  B              Spur vorhoeren",
-        "  Linker Stick   hoch/runter: Wert  links/rechts: Regler",
-        "  Rechter Stick  links/rechts: Seite  hoch/runter: DJ-Filter",
-        "  L1/R1  L2/R2   Regler / Seite (wie die Sticks)",
+        "  Linker Stick   auf Regler zeigen (oben 1-4, unten 5-8)",
+        "  Rechter Stick  hoch/runter: Wert  links/rechts: Seite",
+        "  SELECT antippen: Seitenmenue  SELECT+R-Stick: DJ-Filter",
         "  START          Play / Stop",
     };
     for (unsigned i = 0; i < sizeof lines / sizeof *lines; i++)
@@ -970,12 +1148,24 @@ static void drawAll(bool help) {
     drawGrid();
     drawSteps();
     if (help) drawHelp();
+    if (menuOpen) drawMenu();
+    if (confirmOpen) drawConfirm();
 }
 
 // ---------------------------------------------------------------- Bedienung
 
 static void editValue(int delta) {
     editAt = SDL_GetTicks(); editSlot = slot;
+    if (page == PG_MIX) {
+        int idx = MIX_P[mixRow];
+        curP().p[track][idx] = (uint8_t)clampi(curP().p[track][idx] + delta, 0, 127);
+        return;
+    }
+    if (page == PG_PRJ) {
+        if (slot == 0) prjSel = clampi(prjSel + delta, 0, 31);
+        else if (slot == 4) presetSel = clampi(presetSel + delta, 0, 31);
+        return;
+    }
     if (page == PAGE_SYS) {
         int d = delta > 0 ? 1 : -1;
         switch (slot) {
@@ -1011,7 +1201,7 @@ static void editValue(int delta) {
         return;
     }
     Pattern& P = curP();
-    int idx = page * 8 + slot;
+    int idx = sp() * 8 + slot;
     ParamDef d = paramDef(P.machine[track], idx);
     if (d.kind == K_NONE) return;
     if (d.kind == K_SMPL) d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
@@ -1029,14 +1219,14 @@ static void editValue(int delta) {
         Step& s = holdS();
         int cur = s.lock[idx] != NO_LOCK ? s.lock[idx] : eng.proj.pat[holdPat].p[holdTrack][idx];
         if (idx == P_NOTE) {   // in Skalenschritten
-            int sv = s.lock[P_T7] != NO_LOCK ? s.lock[P_T7] : eng.proj.pat[holdPat].p[holdTrack][P_T7];
+            int sv = curScale();
             if (sv > 0) { int n = quantizeNote(cur, sv); for (int i = 0; i < abs(delta); i++) n = stepScale(n, delta > 0 ? 1 : -1, sv); s.lock[idx] = (uint8_t)n; }
             else s.lock[idx] = (uint8_t)clampi(cur + delta, 0, d.max);
         } else
         s.lock[idx] = (uint8_t)clampi(cur + delta, 0, d.max);
         aEdited = true;
     } else {
-        int sv = P.p[track][P_T7];
+        int sv = curScale();
         if (idx == P_NOTE && sv > 0) {
             int n = quantizeNote(P.p[track][idx], sv);
             for (int i = 0; i < abs(delta); i++) n = stepScale(n, delta > 0 ? 1 : -1, sv);
@@ -1052,11 +1242,121 @@ static int curMax() {
     if (page == PAGE_SYS) return 1;
     if (page == PAGE_CMP) return CMP_DEFS[slot].max;
     if (page == PAGE_FX) return FX_DEFS[slot].max;
-    return paramDef(curP().machine[track], page * 8 + slot).max;
+    if (!trackPage(page)) return 127;
+    return paramDef(curP().machine[track], sp() * 8 + slot).max;
 }
 
+// ---------------------------------------------------------------- Projekte, Presets, Abfragen
+
+enum { ACT_LOAD = 1, ACT_SAVE, ACT_NEW, ACT_PSAVE, ACT_INIT };
+
+static void songPath(int i, char* out, int n) { snprintf(out, n, "%sprojects/song%02d.gbx", basePath, i + 1); }
+static bool fileExists(const char* p) { struct stat st; return stat(p, &st) == 0; }
+static bool songExists(int i) { char p[700]; songPath(i, p, sizeof p); return fileExists(p); }
+static void presetPath(int m, int i, char* out, int n) { snprintf(out, n, "%spresets/%s/%02d.gbp", basePath, MACHINE_NAMES[m], i + 1); }
+static bool presetExists(int m, int i) { char p[700]; presetPath(m, i, p, sizeof p); return fileExists(p); }
+
+static void askConfirm(int act, int arg, const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt); vsnprintf(confirmText, sizeof confirmText, fmt, ap); va_end(ap);
+    confirmAct = act; confirmArg = arg; confirmOpen = true;
+}
+
+static bool savePreset(int t, int i) {
+    int m = curP().machine[t];
+    char d[700];
+    snprintf(d, sizeof d, "%spresets", basePath); mkdir(d, 0755);
+    snprintf(d, sizeof d, "%spresets/%s", basePath, MACHINE_NAMES[m]); mkdir(d, 0755);
+    char p[700]; presetPath(m, i, p, sizeof p);
+    FILE* f = fopen(p, "wb");
+    if (!f) return false;
+    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 0, 0};
+    bool ok = fwrite(hdr, 8, 1, f) == 1 && fwrite(curP().p[t], NPARAMS, 1, f) == 1;
+    fclose(f);
+    return ok;
+}
+static int loadPreset(int t, int m, int i) {   // 1 ok, 0 leer, -1 Fehler
+    char p[700]; presetPath(m, i, p, sizeof p);
+    FILE* f = fopen(p, "rb");
+    if (!f) return 0;
+    uint8_t hdr[8], prm[NPARAMS];
+    bool ok = fread(hdr, 8, 1, f) == 1 && !memcmp(hdr, "GBP1", 4) && hdr[4] < M_COUNT;
+    int np = ok ? (hdr[5] > NPARAMS ? NPARAMS : hdr[5]) : 0;
+    ok = ok && np > 0 && fread(prm, np, 1, f) == 1;
+    fclose(f);
+    if (!ok) return -1;
+    lockA();
+    Pattern& P = curP();
+    Engine::initTrack(P, t, hdr[4]);
+    memcpy(P.p[t], prm, np);
+    unlockA();
+    return 1;
+}
+
+static void doLoadSong(int i) {
+    char p[700]; songPath(i, p, sizeof p);
+    if (!fileExists(p)) { toast("SONG %02d IST LEER", i + 1); return; }
+    lockA(); eng.stop(); bool ok = eng.load(p); unlockA();
+    if (!ok) { toast("LADEN FEHLGESCHLAGEN"); return; }
+    snprintf(projPath, sizeof projPath, "%s", p);
+    memcpy(&lastSaved, &eng.proj, sizeof(Project));
+    cfg.song = i; saveSettings();
+    toast("SONG %02d GELADEN", i + 1);
+}
+static void doSaveSong(int i) {
+    songPath(i, projPath, sizeof projPath);
+    cfg.song = i; saveSettings();
+    toast(saveProject() ? "IN SONG %02d GESPEICHERT" : "SPEICHERN FEHLGESCHLAGEN", i + 1);
+}
+static void doNewSong() {
+    int j = -1;
+    for (int i = 0; i < 32 && j < 0; i++) if (!songExists(i)) j = i;
+    if (j < 0) { toast("ALLE 32 PLAETZE BELEGT"); return; }
+    lockA(); eng.stop(); eng.defaultProject(); unlockA();
+    prjSel = j;
+    doSaveSong(j);
+    toast("NEUES PROJEKT: SONG %02d", j + 1);
+}
+static void runAction(int act, int arg) {
+    switch (act) {
+    case ACT_LOAD: doLoadSong(arg); break;
+    case ACT_SAVE: doSaveSong(arg); break;
+    case ACT_NEW: doNewSong(); break;
+    case ACT_PSAVE: toast(savePreset(track, arg) ? "PRESET %02d GESPEICHERT" : "PRESET-FEHLER", arg + 1); break;
+    case ACT_INIT: {
+        int m = curP().machine[track];
+        lockA(); Engine::initTrack(curP(), track, m); unlockA();
+        toast("SPUR %d: KLANG ZURUECKGESETZT", track + 1);
+    } break;
+    }
+}
+static void prjTrigger(int k) {   // Aktions-Regler auf der PRJ-Seite ausloesen
+    int m = curP().machine[track];
+    switch (k) {
+    case 1:
+        if (!songExists(prjSel)) toast("SONG %02d IST LEER", prjSel + 1);
+        else askConfirm(ACT_LOAD, prjSel, "SONG %02d LADEN? UNGESPEICHERTES GEHT VERLOREN", prjSel + 1);
+        break;
+    case 2:
+        if (songExists(prjSel) && cfg.song != prjSel) askConfirm(ACT_SAVE, prjSel, "SONG %02d UEBERSCHREIBEN?", prjSel + 1);
+        else doSaveSong(prjSel);
+        break;
+    case 3: askConfirm(ACT_NEW, 0, "NEUES LEERES PROJEKT ANLEGEN?"); break;
+    case 5: {
+        int r = loadPreset(track, m, presetSel);
+        if (r > 0) toast("%s %02d GELADEN", MACHINE_NAMES[m], presetSel + 1);
+        else toast(r == 0 ? "PRESET %02d IST LEER" : "PRESET %02d DEFEKT", presetSel + 1);
+    } break;
+    case 6:
+        if (presetExists(m, presetSel)) askConfirm(ACT_PSAVE, presetSel, "%s-PRESET %02d UEBERSCHREIBEN?", MACHINE_NAMES[m], presetSel + 1);
+        else runAction(ACT_PSAVE, presetSel);
+        break;
+    case 7: askConfirm(ACT_INIT, 0, "KLANG VON SPUR %d ZURUECKSETZEN?", track + 1); break;
+    }
+}
+static bool prjIsAction(int k) { return k == 1 || k == 2 || k == 3 || k >= 5; }
+
 // Stick-"Antippen": ein Schritt pro Auslenkung, beim Halten wiederholt
-static int flLX = 0, flRX = 0; static Uint32 flLXt = 0, flRXt = 0;
+static int flLX = 0, flLY = 0, flRX = 0; static Uint32 flLXt = 0, flLYt = 0, flRXt = 0;
 static int flick(float v, int& state, Uint32& t, Uint32 now) {
     if (fabsf(v) < 0.35f) { state = 0; return 0; }
     if (fabsf(v) < 0.65f) return 0;
@@ -1066,10 +1366,53 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
     return 0;
 }
 
+// Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
+static void stickPointSlot(float lx, float ly) {
+    float mag = sqrtf(lx * lx + ly * ly);
+    if (mag < 0.6f) return;
+    static const float ang[8] = {150, 110, 70, 30, 210, 250, 290, 330};
+    float a = atan2f(ly, lx) * 57.29578f; if (a < 0) a += 360.f;
+    int best = slot; float bd = 999;
+    for (int k = 0; k < 8; k++) {
+        if (fabsf(ly) < 0.3f && k / 4 != slot / 4) continue;   // waagerecht: in der Reihe bleiben
+        float d = fabsf(a - ang[k]); if (d > 180) d = 360 - d;
+        if (d < bd) { bd = d; best = k; }
+    }
+    slot = best;
+}
+
+static void menuInput(Input& I, Uint32 now) {
+    // Seitenmenue: 3 Zeilen (Gruppen), Steuerkreuz/Stick waehlt, A oeffnet
+    int g = PG_GROUP[menuSel];
+    int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + flick(I.lx, flLX, flLXt, now);
+    int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
+    if (dx) {
+        int p = menuSel;
+        for (int i = 0; i < NUI_PAGES; i++) { p = (p + dx + NUI_PAGES) % NUI_PAGES; if (PG_GROUP[p] == g && pageAvail(p)) break; }
+        menuSel = p;
+    }
+    if (dy) {
+        int ng = (g + dy + 3) % 3, col = 0;
+        for (int p = 0; p < menuSel; p++) if (PG_GROUP[p] == g && pageAvail(p)) col++;
+        int best = -1, c = 0;
+        for (int p = 0; p < NUI_PAGES; p++) if (PG_GROUP[p] == ng && pageAvail(p)) { if (c <= col) best = p; c++; }
+        if (best >= 0) menuSel = best;
+    }
+    if (I.pressed(BT_A) || I.pressed(BT_START)) { page = menuSel; menuOpen = false; }
+    if (I.pressed(BT_B) || I.pressed(BT_SELECT)) menuOpen = false;
+}
+
 static void handleInput(Uint32 now, float dt) {
     Input& I = in;
+    if (confirmOpen) {
+        if (I.pressed(BT_A)) { confirmOpen = false; runAction(confirmAct, confirmArg); }
+        else if (I.pressed(BT_B) || I.pressed(BT_SELECT)) { confirmOpen = false; toast("ABGEBROCHEN"); }
+        return;
+    }
+    if (menuOpen) { menuInput(I, now); return; }
     bool func = I.down[BT_SELECT];
-    if (I.pressed(BT_SELECT)) funcUsed = false;
+    if (I.pressed(BT_SELECT)) { funcUsed = false; selDownAt = now; }
+    if (I.released(BT_SELECT) && !funcUsed && now - selDownAt < 400) { menuOpen = true; menuSel = page; return; }
 
     if (func) {
         if (I.pressed(BT_LEFT) || I.pressed(BT_RIGHT)) {
@@ -1111,7 +1454,7 @@ static void handleInput(Uint32 now, float dt) {
             funcUsed = true;
             int m = (curP().machine[track] + (I.pressed(BT_X) ? 1 : M_COUNT - 1)) % M_COUNT;
             lockA(); Engine::setMachine(curP(), track, m); unlockA();
-            toast("MASCHINE: %s", MACHINE_NAMES[m]);
+            toast("ENGINE: %s", MACHINE_NAMES[m]);
         }
         if (I.pressed(BT_L1)) { funcUsed = true; clip = curP(); haveClip = true; toast("PATTERN KOPIERT"); }
         if (I.pressed(BT_R1)) {
@@ -1131,51 +1474,68 @@ static void handleInput(Uint32 now, float dt) {
             toast(ok ? "GESPEICHERT" : "SPEICHERN FEHLGESCHLAGEN");
         }
         if (I.down[BT_START] && I.heldMs(BT_START, now) > 2000) quitReq = true;
+        // SELECT + rechter Stick hoch/runter = DJ-Filter
+        if (fabsf(I.ry) > 0.2f) { funcUsed = true; eng.dj = I.ry > 0 ? (I.ry - 0.2f) / 0.8f : (I.ry + 0.2f) / 0.8f; stickDj = true; }
+        else if (stickDj) { eng.dj = 0.f; stickDj = false; }
     } else {
+        if (stickDj) { eng.dj = 0.f; stickDj = false; }
         if (!aHeld) {
             if (I.repeat(BT_LEFT, now, 250, 70)) cursor = (cursor + NSTEPS - 1) % NSTEPS;
             if (I.repeat(BT_RIGHT, now, 250, 70)) cursor = (cursor + 1) % NSTEPS;
             if (I.repeat(BT_UP, now)) track = (track + NTRACKS - 1) % NTRACKS;
             if (I.repeat(BT_DOWN, now)) track = (track + 1) % NTRACKS;
         }
+        bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
         if (I.pressed(BT_A)) {
-            holdPat = eng.curPat; holdTrack = track; holdStep = cursor;
-            Step& s = holdS();
-            aJustOn = !s.on;
-            if (!s.on) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
-            aHeld = true; aEdited = false;
+            if (mixP) { eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
+            else if (prjAct) prjTrigger(slot);
+            else {
+                holdPat = eng.curPat; holdTrack = track; holdStep = cursor;
+                Step& s = holdS();
+                aJustOn = !s.on;
+                if (!s.on) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
+                aHeld = true; aEdited = false;
+            }
         }
         if (I.pressed(BT_B)) {
             if (aHeld) { memset(holdS().lock, NO_LOCK, NPARAMS); aEdited = true; toast("LOCKS GELOESCHT"); }
+            else if (mixP) { eng.solo[track] = !eng.solo[track]; toast(eng.solo[track] ? "SPUR %d SOLO" : "SPUR %d SOLO AUS", track + 1); }
             else { lockA(); eng.preview(track, &curP().s[track][cursor]); unlockA(); }
         }
-        // leise Bedienung: linker Stick links/rechts = Regler, rechter Stick links/rechts = Seite
-        if (fabsf(I.lx) > fabsf(I.ly)) { int f = flick(I.lx, flLX, flLXt, now); if (f) slot = (slot + 8 + f) % 8; }
-        else flLX = 0;
-        if (fabsf(I.rx) > fabsf(I.ry)) { int f = flick(I.rx, flRX, flRXt, now); if (f) page = (page + NUI_PAGES + f) % NUI_PAGES; }
+        // Linker Stick: auf Regler zeigen (Mixer: hoch/runter = Zeile, links/rechts = Kanal)
+        if (mixP) {
+            int f = flick(I.ly, flLY, flLYt, now); if (f) mixRow = clampi(mixRow - f, 0, 3);
+            int g = flick(I.lx, flLX, flLXt, now); if (g) track = (track + NTRACKS + g) % NTRACKS;
+        } else stickPointSlot(I.lx, I.ly);
+        // Rechter Stick: links/rechts = Seite, hoch/runter = Wert
+        if (fabsf(I.rx) > fabsf(I.ry)) { int f = flick(I.rx, flRX, flRXt, now); if (f) gotoPage(f); }
         else flRX = 0;
-        if (I.repeat(BT_L1, now)) slot = (slot + 7) % 8;
-        if (I.repeat(BT_R1, now)) slot = (slot + 1) % 8;
-        if (I.pressed(BT_L2)) page = (page + NUI_PAGES - 1) % NUI_PAGES;
-        if (I.pressed(BT_R2)) page = (page + 1) % NUI_PAGES;
+        if (I.repeat(BT_L1, now)) { if (mixP) mixRow = (mixRow + 3) % 4; else slot = (slot + 7) % 8; }
+        if (I.repeat(BT_R1, now)) { if (mixP) mixRow = (mixRow + 1) % 4; else slot = (slot + 1) % 8; }
+        if (I.pressed(BT_L2)) gotoPage(-1);
+        if (I.pressed(BT_R2)) gotoPage(1);
         if (I.pressed(BT_START)) {
             lockA();
             if (eng.playing) eng.stop(); else eng.start();
             unlockA();
             if (!eng.playing && eng.clockMode == 2) toast("WARTE AUF MIDI-START");
         }
-        int big = curMax() >= 100;
-        int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
-        if (I.repeat(BT_X, now, 300, 45)) editValue(mul);
-        if (I.repeat(BT_Y, now, 300, 45)) editValue(-mul);
-        float ly = fabsf(I.ly) > fabsf(I.lx) ? I.ly : 0.f;
-        if (fabsf(ly) > 0.25f) {
-            float dz = (fabsf(ly) - 0.25f) / 0.75f;
-            float rate = (big ? 90.f : 8.f) * dz * dz + 2.f;
-            stickAcc += (ly > 0 ? 1.f : -1.f) * rate * dt;
-            int d = (int)stickAcc;
-            if (d) { stickAcc -= d; editValue(d); }
-        } else stickAcc = 0;
+        if (prjAct) {
+            if (I.pressed(BT_X)) prjTrigger(slot);
+        } else {
+            int big = curMax() >= 100;
+            int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
+            if (I.repeat(BT_X, now, 300, 45)) editValue(mul);
+            if (I.repeat(BT_Y, now, 300, 45)) editValue(-mul);
+            float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;
+            if (fabsf(ry) > 0.25f) {
+                float dz = (fabsf(ry) - 0.25f) / 0.75f;
+                float rate = (big ? 90.f : 8.f) * dz * dz + 2.f;
+                stickAcc += (ry > 0 ? 1.f : -1.f) * rate * dt;
+                int d = (int)stickAcc;
+                if (d) { stickAcc -= d; editValue(d); }
+            } else stickAcc = 0;
+        }
     }
     if (I.released(BT_A) && aHeld) {
         Step& s = holdS();
@@ -1183,17 +1543,16 @@ static void handleInput(Uint32 now, float dt) {
         aHeld = false;
     }
     if (aHeld && !I.down[BT_A]) aHeld = false;
-    float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;
-    if (fabsf(ry) > 0.2f) { eng.dj = ry > 0 ? (ry - 0.2f) / 0.8f : (ry + 0.2f) / 0.8f; stickDj = true; }
-    else if (stickDj) { eng.dj = 0.f; stickDj = false; }
+    if (!pageAvail(page)) page = PG_SRC;
     // Zustand fuer MIDI-Eingang / Step-Aufnahme
-    eng.uiTrack = track; eng.uiPage = page; eng.uiCursor = cursor;
+    eng.uiTrack = track; eng.uiPage = trackPage(page) ? sp() : 99; eng.uiCursor = cursor;
     if (eng.stepRecCount != lastStepRec) {
         lastStepRec = eng.stepRecCount;
         int len = curP().len[track] < 1 ? 1 : curP().len[track];
         cursor = (cursor + 1) % len;
     }
-    if (I.pressed(BT_R2) || I.pressed(BT_L2)) if (page == PAGE_SYS) refreshDevices();
+    static int lastPg = -1;
+    if (page != lastPg) { lastPg = page; if (page == PAGE_SYS) refreshDevices(); }
 }
 
 // ---------------------------------------------------------------- Lernmodus
@@ -1419,7 +1778,7 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--learn")) learn = true;
         else if (!strcmp(argv[i], "--windowed")) windowed = true;
         else if (!strcmp(argv[i], "--buffer") && i + 1 < argc) bufOverride = clampi(atoi(argv[++i]), 64, 4096);
-        else if (!strcmp(argv[i], "--project") && i + 1 < argc) snprintf(projPath, sizeof projPath, "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--project") && i + 1 < argc) { snprintf(projPath, sizeof projPath, "%s", argv[++i]); projFromArg = true; }
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) { shot = argv[++i]; if (i + 1 < argc && argv[i + 1][0] != '-') shotPage = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--render") && i + 1 < argc) { renderOut = argv[++i]; if (i + 1 < argc && argv[i + 1][0] != '-') renderSecs = (float)atof(argv[++i]); }
         else { printf("Optionen: --learn --windowed --buffer FRAMES --project DATEI --render WAV [sek] --shot BMP [seite]\n"); return 0; }
@@ -1451,21 +1810,29 @@ int main(int argc, char** argv) {
         eng.start();
         static float tmp[44100];
         for (int k = 0; k < 6; k++) eng.render(tmp, 22050 / 2);
-        // Seiten 0-7, 10 = Hilfe, 11 = P-Lock-Ansicht, 12 = Werte-Overlay
-        page = shotPage % NUI_PAGES; track = page == 1 ? 7 : (page == 0 ? 4 : 0); cursor = 3; slot = page == 1 ? 0 : 1;
+        // 0..12 = Seiten (PG_*), 20 Hilfe, 21 P-Lock, 22 Werte-Overlay, 23 Engine-Leiste, 24 Skala, 25 Menue, 26 Abfrage, 27 FM SRC2
+        page = shotPage < NUI_PAGES ? shotPage : PG_TRG; track = 4; cursor = 3; slot = 1;
         refreshDevices();
-        if (shotPage == 11) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
-        if (page == PAGE_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
-        if (shotPage == 14) { page = 0; slot = 7; track = 4; curP().p[4][P_T7] = 1 + 1 * 12 + 9; editSlot = 7; editAt = 1; }
-        if (shotPage == 13) { page = 0; slot = 6; track = 4; editSlot = 6; editAt = 1; }
-        if (shotPage == 6) {   // Sidechain-Beispiel
+        if (page == PG_SRC) { track = 7; slot = 0; }
+        if (page == PG_SRC || page == PG_SRC2 || shotPage == 27) { }
+        if (shotPage == 27 || page == PG_SRC2) { page = PG_SRC2; track = 6; slot = 0; }
+        if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
+        if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.mute[3] = true; for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
+        if (page == PG_PRJ) { slot = 2; }
+        if (page == PG_CMP) {   // Sidechain-Beispiel
             eng.proj.cmp[CM_SRC] = 1; eng.proj.cmp[CM_THR] = 40; eng.proj.cmp[CM_RAT] = 6; slot = 5;
             for (int k = 0; k < 4; k++) eng.render(tmp, 22050 / 2);
             animate();
         }
-        if (shotPage == 12) { page = 2; slot = 0; track = 4; animate(); editAt = SDL_GetTicks(); editSlot = 0; eng.recording = true; }
+        if (shotPage == 21) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
+        if (shotPage == 22) { page = PG_FLT; slot = 0; track = 4; animate(); editAt = 1; editSlot = 0; eng.recording = true; }
+        if (shotPage == 23) { page = PG_TRG; slot = 6; track = 4; editSlot = 6; editAt = 1; }
+        if (shotPage == 24) { page = PG_MST; slot = MS_SCALE; eng.proj.mst[MS_SCALE] = 1 + 1 * 12 + 9; editSlot = MS_SCALE; editAt = 1; }
+        if (shotPage == 25) { page = PG_AMP; menuOpen = true; menuSel = PG_MIX; }
+        if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
+        if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
         lastPage = page;
-        if (shotPage == 10) { page = 0; drawAll(true); } else drawAll(false);
+        if (shotPage == 20) { page = 0; drawAll(true); } else drawAll(false);
         SDL_RenderPresent(ren);
         SDL_SaveBMP(surf, shot);
         return 0;
@@ -1495,6 +1862,14 @@ int main(int argc, char** argv) {
     if (learn || (!in.haveMap && in.joy && !in.gc)) runLearn();
 
     loadSettings();
+    if (!projFromArg) {   // Projektplatz aus den Einstellungen; altes project1.gbx wird zu song01.gbx
+        char old[700], s1[700];
+        snprintf(old, sizeof old, "%sprojects/project1.gbx", basePath);
+        songPath(0, s1, sizeof s1);
+        if (fileExists(old) && !fileExists(s1)) rename(old, s1);
+        songPath(cfg.song, projPath, sizeof projPath);
+    }
+    prjSel = cfg.song;
     usbMode = detectUsbMode();
     readNetIp();
     {   // freigeschalteter OTG-Port startet evtl. im Automatik-/Geraetemodus: fuer S-1 & Co. auf Host stellen
