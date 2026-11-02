@@ -187,6 +187,39 @@ void Voice::update(int n, float sr, float bpm) {
     crushQ = cr > 0.5f ? exp2f(15.f - cr / 127.f * 13.f) : 0.f;
     srrN = 1 + P(P_SRR) / 6;
 
+    // Insert-Effekt
+    insType = P(P_ITYP);
+    float p1 = P(P_IP1) / 127.f, p2 = P(P_IP2) / 127.f, p3 = P(P_IP3) / 127.f;
+    insMix = P(P_IMIX) / 127.f;
+    insP2 = p2; insP3 = p3;
+    switch (insType) {
+    case INS_CHORUS: case INS_FLANGER: case INS_APAN:
+        insRate = 0.05f * exp2f(p1 * 8.f);
+        insFb = (p3 - 0.5f) * 1.8f;
+        break;
+    case INS_PHASER: {
+        insRate = 0.05f * exp2f(p1 * 8.f);
+        insPh += insRate * n / sr; if (insPh >= 1.f) insPh -= floorf(insPh);
+        insFb = p3 * 0.85f;
+        // zwei Allpass-Koeffizienten (L/R) aus dem LFO
+        for (int c = 0; c < 2; c++) {
+            float lv = sin01(insPh + c * 0.25f);
+            float f = 300.f * exp2f(p2 * 3.5f * (0.5f + 0.5f * lv));
+            float t = tanf(3.14159265f * fminf(f, sr * 0.45f) / sr);
+            apA[c] = (t - 1.f) / (t + 1.f);
+        }
+    } break;
+    case INS_DRIVE:
+        odG = 1.f + p1 * p1 * 40.f;
+        odCo = 1.f - expf(-6.2831853f * (400.f * exp2f(p2 * 5.f)) / sr);
+        odLvl = (0.1f + p3 * 0.9f) * 0.4f;
+        break;
+    case INS_RING:
+        insRate = 20.f * exp2f(p1 * 7.f) * exp2f((p2 - 0.5f) / 12.f * 2.f);
+        break;
+    default: break;
+    }
+
     if (gate > 0) {
         gate -= n;
         if (gate <= 0) { gate = 0; if (gated()) noteOff(); }
@@ -312,12 +345,71 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         if (srrN > 1) { if (holdC <= 0) { hold = s; holdC = srrN; } holdC--; s = hold; }
         if (crushQ > 0.f) s = floorf(s * crushQ + 0.5f) / crushQ;
 
-        float as = fabsf(s);
+        // Insert-Effekt (mono rein, stereo raus)
+        float sl = s, sr2 = s;
+        if (insType != INS_OFF) {
+            float wl = s, wr = s;
+            switch (insType) {
+            case INS_CHORUS: {
+                insPh += insRate * inv; if (insPh >= 1.f) insPh -= 1.f;
+                ib[iw] = s;
+                float dep = insP2 * 0.008f * sr, base = 0.012f * sr;
+                float dl = base + dep * (0.5f + 0.5f * sin01(insPh));
+                float dr = base + dep * (0.5f + 0.5f * sin01(insPh + 0.25f));
+                float a = iw - dl; if (a < 0) a += 2048.f;
+                float b = iw - dr; if (b < 0) b += 2048.f;
+                int ia = (int)a, ib2 = (int)b;
+                wl = ib[ia & 2047] + (ib[(ia + 1) & 2047] - ib[ia & 2047]) * (a - ia);
+                wr = ib[ib2 & 2047] + (ib[(ib2 + 1) & 2047] - ib[ib2 & 2047]) * (b - ib2);
+                float m = (wl + wr) * 0.5f;      // WIDTH: 0 = mono, 1 = volle Breite
+                wl = m + (wl - m) * insP3; wr = m + (wr - m) * insP3;
+                iw = (iw + 1) & 2047;
+            } break;
+            case INS_FLANGER: {
+                insPh += insRate * inv; if (insPh >= 1.f) insPh -= 1.f;
+                float d = 0.0005f * sr + insP2 * 0.004f * sr * (0.5f + 0.5f * sin01(insPh));
+                float a = iw - d; if (a < 0) a += 2048.f;
+                int ia = (int)a;
+                float y = ib[ia & 2047] + (ib[(ia + 1) & 2047] - ib[ia & 2047]) * (a - ia);
+                ib[iw] = s + y * insFb;
+                iw = (iw + 1) & 2047;
+                wl = wr = y;
+            } break;
+            case INS_PHASER: {
+                float xl = s + phFbL * insFb, xr = s + phFbR * insFb;
+                for (int k = 0; k < 6; k++) {
+                    float yl = -apA[0] * xl + apZL[k]; apZL[k] = xl + apA[0] * yl; xl = yl;
+                    float yr = -apA[1] * xr + apZR[k]; apZR[k] = xr + apA[1] * yr; xr = yr;
+                }
+                phFbL = xl; phFbR = xr;
+                wl = (s + xl) * 0.5f; wr = (s + xr) * 0.5f;
+            } break;
+            case INS_DRIVE: {
+                float x = s * odG;
+                x = x > 0 ? fastTanh(x) : fastTanh(x * 0.8f) * 1.1f;   // leicht asymmetrisch
+                odLp += (x - odLp) * odCo;
+                wl = wr = odLp * odLvl;
+            } break;
+            case INS_RING: {
+                insPh += insRate * inv; if (insPh >= 1.f) insPh -= 1.f;
+                wl = wr = s * sin01(insPh);
+            } break;
+            case INS_APAN: {
+                insPh += insRate * inv; if (insPh >= 1.f) insPh -= 1.f;
+                float lv = sin01(insPh) * insP2;
+                wl = s * (1.f - lv); wr = s * (1.f + lv);
+            } break;
+            }
+            sl = s + (wl - s) * insMix;
+            sr2 = s + (wr - s) * insMix;
+        }
+        float as = fabsf(sl) > fabsf(sr2) ? fabsf(sl) : fabsf(sr2);
         if (as > bmax) bmax = as;
-        L[i] += s * gainL;
-        R[i] += s * gainR;
-        dS[i] += s * sendD;
-        rS[i] += s * sendR;
+        L[i] += sl * gainL;
+        R[i] += sr2 * gainR;
+        float sm = (sl + sr2) * 0.5f;
+        dS[i] += sm * sendD;
+        rS[i] += sm * sendR;
     }
 
     float pk = bmax * (gainL > gainR ? gainL : gainR);
@@ -528,7 +620,7 @@ void Engine::initPattern(Pattern& p) {
 void Engine::defaultProject() {
     memset(&proj, 0, sizeof(proj));
     memcpy(proj.magic, "GBX1", 4);
-    proj.version = 2;
+    proj.version = 3;
     proj.bpm = 120;
     for (int i = 0; i < 8; i++) proj.mst[i] = MST_DEFS[i].def;
     for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
@@ -771,22 +863,61 @@ bool Engine::save(const char* path) {
 bool Engine::load(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return false;
-    Project* tmp = (Project*)malloc(sizeof(Project));
-    size_t n = fread(tmp, 1, sizeof(Project), f);
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size < 20 || size > (long)sizeof(Project) * 2) { fclose(f); return false; }
+    uint8_t* buf = (uint8_t*)malloc(size);
+    bool ok = fread(buf, 1, size, f) == (size_t)size;
     fclose(f);
-    bool ok = n >= 8 && memcmp(tmp->magic, "GBX1", 4) == 0 &&
-              ((tmp->version == 2 && n == sizeof(Project)) ||
-               (tmp->version == 1 && n == offsetof(Project, cmp)));
-    if (ok && tmp->version == 1) {   // altes Projekt umziehen: Effekte aus mst nach fx, Kompressor neu
-        uint8_t old[8];
-        memcpy(old, tmp->mst, 8);   // v1: BPM SWNG DTIM DFBK DTON RSIZ RDMP VOL
-        for (int i = 0; i < 8; i++) { tmp->cmp[i] = CMP_DEFS[i].def; tmp->fx[i] = FX_DEFS[i].def; tmp->mst[i] = MST_DEFS[i].def; }
-        tmp->fx[FX_DTIM] = old[2]; tmp->fx[FX_DFBK] = old[3]; tmp->fx[FX_DTON] = old[4];
-        tmp->fx[FX_RSIZ] = old[5]; tmp->fx[FX_RDMP] = old[6];
-        tmp->mst[MS_SWNG] = old[1]; tmp->mst[MS_VOL] = old[7];
-        tmp->version = 2;
+    uint32_t ver = 0;
+    if (ok) memcpy(&ver, buf + 4, 4);
+    ok = ok && memcmp(buf, "GBX1", 4) == 0;
+    // alte Formate (Version 1/2): 40 Parameter pro Spur, Pattern = 5584 Bytes ab Offset 20
+    const long OLD_NP = 40, OLD_PAT = 16 + 8 * OLD_NP + NTRACKS * NSTEPS * (1 + OLD_NP);
+    const long V1 = 20 + NPATTERNS * OLD_PAT, V2 = V1 + 16;
+    if (ok && ver == 3 && size == (long)sizeof(Project)) {
+        memcpy(&proj, buf, sizeof(Project));
+    } else if (ok && ((ver == 1 && size == V1) || (ver == 2 && size == V2))) {
+        Project* np = (Project*)malloc(sizeof(Project));
+        memset(np, 0, sizeof(Project));
+        memcpy(np->magic, "GBX1", 4);
+        np->version = 3;
+        memcpy(&np->bpm, buf + 8, 2);
+        memcpy(np->mst, buf + 10, 8);
+        for (int pi = 0; pi < NPATTERNS; pi++) {
+            const uint8_t* q = buf + 20 + pi * OLD_PAT;
+            Pattern& P = np->pat[pi];
+            memcpy(P.machine, q, 8);
+            memcpy(P.len, q + 8, 8);
+            for (int t = 0; t < NTRACKS; t++) {
+                memcpy(P.p[t], q + 16 + t * OLD_NP, OLD_NP);
+                for (int i = OLD_NP; i < NPARAMS; i++) P.p[t][i] = COMMON_DEFS[i].def;
+                for (int st = 0; st < NSTEPS; st++) {
+                    const uint8_t* sp = q + 16 + 8 * OLD_NP + (t * NSTEPS + st) * (1 + OLD_NP);
+                    P.s[t][st].on = sp[0];
+                    memcpy(P.s[t][st].lock, sp + 1, OLD_NP);
+                    memset(P.s[t][st].lock + OLD_NP, NO_LOCK, NPARAMS - OLD_NP);
+                }
+            }
+        }
+        if (ver == 2) {
+            memcpy(np->cmp, buf + V1, 8);
+            memcpy(np->fx, buf + V1 + 8, 8);
+        } else {   // Version 1: Effekte lagen in mst
+            uint8_t old[8];
+            memcpy(old, np->mst, 8);   // BPM SWNG DTIM DFBK DTON RSIZ RDMP VOL
+            for (int i = 0; i < 8; i++) { np->cmp[i] = CMP_DEFS[i].def; np->fx[i] = FX_DEFS[i].def; np->mst[i] = MST_DEFS[i].def; }
+            np->fx[FX_DTIM] = old[2]; np->fx[FX_DFBK] = old[3]; np->fx[FX_DTON] = old[4];
+            np->fx[FX_RSIZ] = old[5]; np->fx[FX_RDMP] = old[6];
+            np->mst[MS_SWNG] = old[1]; np->mst[MS_VOL] = old[7];
+        }
+        memcpy(&proj, np, sizeof(Project));
+        free(np);
+        printf("Projekt von Version %u auf 3 umgestellt\n", ver);
+    } else {
+        ok = false;
     }
-    if (ok) memcpy(&proj, tmp, sizeof(Project));
-    free(tmp);
+    free(buf);
     return ok;
 }

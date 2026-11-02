@@ -21,6 +21,10 @@ K=$(uname -r)
   echo; echo "== USB-Geraete"; lsusb 2>&1
   for d in /sys/bus/usb/devices/*; do [ -f "$d/product" ] && echo "$d: $(cat "$d/product" 2>/dev/null)"; done
   echo; echo "== ALSA"; cat /proc/asound/cards; ls -l /dev/snd; aplay -l 2>&1; amidi -l 2>&1; aconnect -l 2>&1
+  echo; echo "== pc-modus.log"; cat "$GBDIR/pc-modus.log" 2>/dev/null || echo "(noch nicht benutzt)"
+  echo; echo "== settings.cfg"; cat "$GBDIR/settings.cfg" 2>/dev/null
+  echo; echo "== otg_mode / usb_role"; find /sys/devices/platform -name otg_mode 2>/dev/null | while read -r f; do echo "$f: $(cat "$f")"; done; for f in /sys/class/usb_role/*/role; do [ -e "$f" ] && echo "$f: $(cat "$f")"; done
+  echo; echo "== configfs"; mount | grep configfs; ls /sys/kernel/config/usb_gadget 2>&1
   echo; echo "== dmesg (USB)"; dmesg 2>/dev/null | grep -iE "usb|dwc|otg|gadget|udc|snd" | tail -80
 } > "$OUT" 2>&1
 sync

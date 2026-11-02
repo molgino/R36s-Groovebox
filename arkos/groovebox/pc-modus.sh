@@ -38,7 +38,7 @@ aus)
   [ -n "$AUDIO" ] && modprobe usb_f_uac2 2>/dev/null
   mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config 2>/dev/null
   if [ ! -d /sys/kernel/config/usb_gadget ]; then
-    say "FEHLER: Kernel ohne USB-Gadget-Unterstuetzung (configfs) - PC-Modus nicht moeglich"; pause 5; exit 1
+    say "FEHLER: Kernel ohne USB-Gadget (configfs)"; pause 5; exit 1
   fi
   teardown
   setrole peripheral
@@ -46,7 +46,7 @@ aus)
   UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
   if [ -z "$UDC" ]; then
     setrole host
-    say "FEHLER: kein USB-Geraete-Controller (UDC) - Kernel/Device-Tree erlaubt nur Host-Modus"; pause 5; exit 1
+    say "FEHLER: kein UDC - Kernel erlaubt nur Host-Modus"; pause 5; exit 1
   fi
   mkdir -p "$G" && cd "$G" || exit 1
   echo 0x1d6b > idVendor; echo 0x0104 > idProduct; echo 0x0100 > bcdDevice; echo 0x0200 > bcdUSB
@@ -76,7 +76,7 @@ aus)
     say "PC-Modus aktiv ($UDC): R36S mit dem PC verbinden (am besten USB-A-auf-USB-C-Kabel)"
   else
     teardown; setrole host
-    say "FEHLER: Gadget konnte nicht aktiviert werden (siehe pc-modus.log)"; pause 5; exit 1
+    say "FEHLER: Gadget-Aktivierung fehlgeschlagen"; pause 5; exit 1
   fi
   ;;
 esac

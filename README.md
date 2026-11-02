@@ -26,6 +26,18 @@ Jede Spur hat diese Seiten:
 * **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve
 * **AMP**: ADSR, Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
 * **LFO**: Tempo, Tiefe, Ziel (Pitch/Freq/Vol/Pan/Reso/Crush), Wellenform, Retrigger, Bitcrusher, Samplerate-Reduktion, Drive
+* **INS**: Insert-Effekt der Spur. Zuerst unter TYPE den Effekt wählen, dann MIX aufdrehen:
+
+  | TYPE | Regler |
+  |---|---|
+  | CHORS (Chorus, stereo) | RATE, DEPTH, WIDTH |
+  | PHASE (6-stufiger Phaser, stereo) | RATE, DEPTH, FBK |
+  | FLNGR (Flanger) | RATE, DEPTH, FBK (Mitte = 0, links negativ, rechts positiv) |
+  | DRIVE (Overdrive) | GAIN, TONE, LEVEL |
+  | RING (Ringmodulator) | FREQ, FINE |
+  | APAN (Autopan) | RATE, DEPTH |
+
+  Alle Regler, auch TYPE, lassen sich pro Step locken. Die Insert-Effekte sitzen hinter Filter und Hüllkurve, also vor Panorama und den Sends.
 
 Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 
@@ -112,7 +124,7 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | Linker Stick ↑/↓ | Wert stufenlos ändern |
 | Rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass |
 | L1 / R1 | Regler wählen |
-| L2 / R2 | Seite wählen (TRG SRC FLT AMP LFO, global: FX CMP MST SYS) |
+| L2 / R2 | Seite wählen (TRG SRC FLT AMP LFO INS, global: FX CMP MST SYS) |
 | START | Play / Stop |
 | **SELECT halten** | Hilfe-Einblendung |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |

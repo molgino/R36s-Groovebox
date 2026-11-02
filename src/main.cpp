@@ -291,16 +291,16 @@ static void drawHeader() {
     snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
     text(196, 4, b, eng.mute[track] ? C_DIM : tc, 2);
     for (int p = 0; p < NUI_PAGES; p++) {
-        int x = 336 + p * 30;
-        if (p == page) { rrect(x - 1, 3, 31, 18, 4, C_ACC); textC(x + 15, 4, PAGE_NAMES[p], C_BG); }
-        else textC(x + 15, 4, PAGE_NAMES[p], p >= PAGE_FX ? dimC(C_DIM, 0.8f) : C_DIM);
+        int x = 330 + p * 28;
+        if (p == page) { rrect(x - 1, 3, 29, 18, 4, C_ACC); textC(x + 14, 4, PAGE_NAMES[p], C_BG); }
+        else textC(x + 14, 4, PAGE_NAMES[p], p >= PAGE_FX ? dimC(C_DIM, 0.8f) : C_DIM);
     }
     if (aHeld) {
         snprintf(b, sizeof b, "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
-        text(338, 23, b, C_LOCK);
+        text(332, 23, b, C_LOCK);
     } else {
         snprintf(b, sizeof b, "CPU %2d%%  LEN %d", (int)(cpuLoad * 100), curP().len[track]);
-        text(338, 23, b, C_DIM);
+        text(332, 23, b, C_DIM);
         if (strcmp(midiBackend(), "AUS")) {
             bool act = SDL_GetTicks() - midiActivity < 150;
             rrect(554, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
@@ -355,6 +355,11 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         val = P.p[track][idx];
         if (d.kind == K_MACH) val = P.machine[track];
         else if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
+        if (page == PAGE_INS && k >= 1 && k <= 4) {   // Reglernamen haengen vom Effekttyp ab
+            int ty = (aHeld && holdS().lock[P_ITYP] != NO_LOCK) ? holdS().lock[P_ITYP] : P.p[track][P_ITYP];
+            if (ty <= 0 || ty >= INS_COUNT || (k <= 3 && INS_PNAMES[ty][k - 1][0] == '-')) d = PDEF_NONE;
+            else if (k <= 3) snprintf(label, ln, "%s", INS_PNAMES[ty][k - 1]);
+        }
         if (d.kind == K_SMPL) {
             d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
             snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
@@ -423,13 +428,15 @@ static void drawKnobs() {
             if (fw > 0) rrect(bx, 217, fw, 8, 3, c);
             text(478 - textW(b, 1) - 2, 213, b, c);
             if (locked) text(bx, 205, "LOCK", C_LOCK);
-            if (d.kind == K_MACH) {   // Auswahlleiste aller Engines
+            if (d.kind == K_MACH || d.kind == K_INS) {   // Auswahlleiste (Engines bzw. Effekte)
+                const char* const* names = d.kind == K_MACH ? MACHINE_NAMES : INS_NAMES;
+                int cnt = d.kind == K_MACH ? M_COUNT : INS_COUNT;
                 rrect(150, 204, 340, 34, 8, C_BG, 250);
                 rrect(150, 204, 4, 34, 2, c);
-                for (int m = 0; m < M_COUNT; m++) {
+                for (int m = 0; m < cnt; m++) {
                     int mx = 160 + m * 47;
                     if (m == val) rrect(mx - 2, 211, 46, 20, 5, c);
-                    textC(mx + 21, 213, MACHINE_NAMES[m], m == val ? C_BG : C_DIM);
+                    textC(mx + 21, 213, names[m], m == val ? C_BG : C_DIM);
                 }
             }
         }
@@ -508,6 +515,7 @@ static void drawSteps() {
     if (aHeld) h = "[X/Y/STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
     else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]MASCH [L1/R1]CPY/PST";
     else if (page == PAGE_SYS) h = "[X/Y] AENDERN  [L1/R1] EINSTELLUNG  [L2/R2] SEITE  [START] PLAY";
+    else if (page == PAGE_INS) h = "[X/Y] WERT [L1/R1] REGLER   TYPE WAEHLEN, DANN MIX AUFDREHEN";
     else if (page == PAGE_FX) h = "[X/Y] WERT [L1/R1] REGLER   SENDS PRO SPUR: AMP-SEITE (DLY/REV)";
     else if (page == PAGE_CMP) h = "[X/Y] WERT [L1/R1] REGLER   SC=T1 + RATIO HOCH = KICK DUCKT ALLES";
     else if (page == PAGE_MST) h = "[X/Y] WERT  [L1/R1] REGLER  [L2/R2] SEITE  [SEL+v] TAP-TEMPO";
@@ -596,6 +604,10 @@ static void editValue(int delta) {
     ParamDef d = paramDef(P.machine[track], idx);
     if (d.kind == K_NONE) return;
     if (d.kind == K_SMPL) d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
+    if (page == PAGE_INS && slot >= 1 && slot <= 4) {
+        int ty = P.p[track][P_ITYP];
+        if (ty <= 0 || ty >= INS_COUNT || (slot <= 3 && INS_PNAMES[ty][slot - 1][0] == '-')) return;
+    }
     if (d.kind == K_MACH) {   // Engine der Spur (nicht lockbar)
         if (aHeld) return;
         int m = clampi(P.machine[track] + (delta > 0 ? 1 : -1), 0, M_COUNT - 1);
@@ -904,7 +916,19 @@ static void applyUsbMode() {
     int rc = system(cmd);
     int now = detectUsbMode();
     printf("USB-Modus %d: rc=%d, erkannt=%d\n", usbMode, rc, now);
-    if (usbMode && !now) { usbMode = 0; toast("PC-MODUS NICHT MOEGLICH - SIEHE PC-MODUS.LOG"); }
+    if (usbMode && !now) {   // letzte Fehlerzeile aus dem Log anzeigen
+        usbMode = 0;
+        char lp[700], line[200], err[200] = "PC-MODUS NICHT MOEGLICH (PC-MODUS.LOG)";
+        snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
+        FILE* lf = fopen(lp, "r");
+        if (lf) {
+            while (fgets(line, sizeof line, lf))
+                if (!strncmp(line, "FEHLER:", 7)) { line[strcspn(line, "\r\n")] = 0; snprintf(err, sizeof err, "%.60s", line); }
+            fclose(lf);
+        }
+        toast("%s", err);
+        msgUntil = SDL_GetTicks() + 5000;
+    }
     else toast(usbMode ? "PC-MODUS AKTIV" : "USB: HOST-MODUS");
     usbMode = now;
     refreshDevices();
@@ -968,6 +992,7 @@ int main(int argc, char** argv) {
         page = shotPage % NUI_PAGES; track = page == 1 ? 7 : (page == 0 ? 4 : 0); cursor = 3; slot = page == 1 ? 0 : 1;
         refreshDevices();
         if (shotPage == 11) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
+        if (page == PAGE_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
         if (shotPage == 13) { page = 0; slot = 6; track = 4; editSlot = 6; editAt = 1; }
         if (shotPage == 6) {   // Sidechain-Beispiel
             eng.proj.cmp[CM_SRC] = 1; eng.proj.cmp[CM_THR] = 40; eng.proj.cmp[CM_RAT] = 6; slot = 5;

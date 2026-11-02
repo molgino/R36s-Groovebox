@@ -4,18 +4,18 @@
 #include <stdio.h>
 #include <math.h>
 
-enum { NTRACKS = 8, NSTEPS = 16, NPATTERNS = 16, NPAGES = 5, NPARAMS = NPAGES * 8, PAGE_FX = 5, PAGE_CMP = 6, PAGE_MST = 7, PAGE_SYS = 8, NUI_PAGES = 9 };
+enum { NTRACKS = 8, NSTEPS = 16, NPATTERNS = 16, NPAGES = 6, NPARAMS = NPAGES * 8, PAGE_INS = 5, PAGE_FX = 6, PAGE_CMP = 7, PAGE_MST = 8, PAGE_SYS = 9, NUI_PAGES = 10 };
 enum { NO_LOCK = 255 };
 
 enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_COUNT };
 static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL"};
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SRC", "FLT", "AMP", "LFO", "FX", "CMP", "MST", "SYS"};
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SRC", "FLT", "AMP", "LFO", "INS", "FX", "CMP", "MST", "SYS"};
 
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
-    K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
+    K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -26,7 +26,8 @@ enum {
     P_S0 = 8, P_S1, P_S2, P_S3, P_S4, P_S5, P_S6, P_S7,
     P_FREQ = 16, P_RESO, P_FTYP, P_FENV, P_FATK, P_FDEC, P_FSUS, P_FREL,
     P_AATK = 24, P_ADEC, P_ASUS, P_AREL, P_VOL, P_PAN, P_DLY, P_REV,
-    P_LSPD = 32, P_LDEP, P_LDST, P_LWAV, P_LTRG, P_CRSH, P_SRR, P_DRIV
+    P_LSPD = 32, P_LDEP, P_LDST, P_LWAV, P_LTRG, P_CRSH, P_SRR, P_DRIV,
+    P_ITYP = 40, P_IP1, P_IP2, P_IP3, P_IMIX, P_I5, P_I6, P_I7
 };
 // Master-Seite
 enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV };
@@ -50,7 +51,15 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     // LFO / FX
     {"SPD", K_NUM, 64, 127}, {"DEP", K_BIP, 64, 127}, {"DEST", K_LDST, 1, 5}, {"WAVE", K_LWAV, 0, 4},
     {"TRIG", K_TRG, 0, 1}, {"CRSH", K_NUM, 0, 127}, {"SRR", K_NUM, 0, 127}, {"DRIV", K_NUM, 0, 127},
+    // INS (Insert-Effekt; Namen von P1-P3 haengen vom Typ ab, siehe INS_PNAMES)
+    {"TYPE", K_INS, 0, 6}, {"P1", K_NUM, 64, 127}, {"P2", K_NUM, 64, 127}, {"P3", K_NUM, 64, 127},
+    {"MIX", K_NUM, 64, 127}, PDEF_NONE, PDEF_NONE, PDEF_NONE,
 };
+enum InsType { INS_OFF, INS_CHORUS, INS_PHASER, INS_FLANGER, INS_DRIVE, INS_RING, INS_APAN, INS_COUNT };
+static const char* const INS_NAMES[INS_COUNT] = {"OFF", "CHORS", "PHASE", "FLNGR", "DRIVE", "RING", "APAN"};
+static const char* const INS_PNAMES[INS_COUNT][3] = {
+    {"-", "-", "-"}, {"RATE", "DEPTH", "WIDTH"}, {"RATE", "DEPTH", "FBK"}, {"RATE", "DEPTH", "FBK"},
+    {"GAIN", "TONE", "LEVEL"}, {"FREQ", "FINE", "-"}, {"RATE", "DEPTH", "-"}};
 
 static const ParamDef SRC_DEFS[M_COUNT][8] = {
     // KICK
@@ -153,6 +162,7 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_BUFS: snprintf(buf, n, "%d", BUF_SIZES[v & 3]); break;
     case K_CLK: snprintf(buf, n, "%s", v == 1 ? "SEND" : (v == 2 ? "RECV" : "OFF")); break;
     case K_CHM: snprintf(buf, n, "%s", v ? "1-8" : "AUTO"); break;
+    case K_INS: snprintf(buf, n, "%s", v < INS_COUNT ? INS_NAMES[v] : "?"); break;
     case K_MS: snprintf(buf, n, "%.0fms", v * 250.f / 127.f); break;
     case K_MACH: snprintf(buf, n, "%s", v < M_COUNT ? MACHINE_NAMES[v] : "?"); break;
     case K_THR: snprintf(buf, n, "%.0fdB", cmpThrDb(v)); break;
