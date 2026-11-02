@@ -22,6 +22,7 @@ static const Col C_BG = {14, 14, 17}, C_PANEL = {28, 28, 34}, C_SEL = {44, 40, 3
 
 static SDL_Renderer* ren = nullptr;
 static SDL_Texture* fontTex = nullptr;
+static Uint8 textAlpha = 255;
 static SDL_AudioDeviceID audioDev = 0;
 static Engine eng;
 static Input in;
@@ -34,6 +35,8 @@ static bool funcUsed = false;
 static float stickAcc = 0;
 static char msg[64] = "";
 static Uint32 msgUntil = 0;
+static Uint32 editAt = 0, msgAt = 0;
+static int editSlot = 0;
 static Pattern clip;
 static bool haveClip = false;
 static bool quitReq = false;
@@ -48,7 +51,8 @@ static char setPath[600];
 static int bufOverride = 0;
 static int devCount = 0;
 static char devNames[16][128];
-static Uint32 audioApplyAt = 0;
+static Uint32 audioApplyAt = 0, usbApplyAt = 0;
+static int usbMode = 0;   // 0 Host, 1 PC (MIDI), 2 PC (MIDI + Audio)
 static int lastStepRec = 0;
 static Uint32 taps[4]; static int tapN = 0;
 static bool stickDj = false;
@@ -66,6 +70,7 @@ static int clampi(int x, int a, int b) { return x < a ? a : (x > b ? b : x); }
 static void toast(const char* fmt, ...) {
     va_list ap; va_start(ap, fmt); vsnprintf(msg, sizeof msg, fmt, ap); va_end(ap);
     msgUntil = SDL_GetTicks() + 1400;
+    msgAt = SDL_GetTicks();
 }
 
 static void loadSettings() {
@@ -120,10 +125,6 @@ static void setCol(Col c, Uint8 a = 255) { SDL_SetRenderDrawColor(ren, c.r, c.g,
 static void fill(int x, int y, int w, int h, Col c, Uint8 a = 255) {
     setCol(c, a); SDL_Rect r = {x, y, w, h}; SDL_RenderFillRect(ren, &r);
 }
-static void frame(int x, int y, int w, int h, Col c, int th = 1) {
-    setCol(c);
-    for (int i = 0; i < th; i++) { SDL_Rect r = {x + i, y + i, w - 2 * i, h - 2 * i}; SDL_RenderDrawRect(ren, &r); }
-}
 static void makeFont() {
     SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, 95 * FONT_W, FONT_H, 32, SDL_PIXELFORMAT_RGBA32);
     Uint8* px = (Uint8*)s->pixels;
@@ -140,6 +141,7 @@ static void makeFont() {
 static int textW(const char* s, int sc = 1) { return (int)strlen(s) * FONT_W * sc; }
 static void text(int x, int y, const char* s, Col c, int sc = 1) {
     SDL_SetTextureColorMod(fontTex, c.r, c.g, c.b);
+    SDL_SetTextureAlphaMod(fontTex, textAlpha);
     for (; *s; s++, x += FONT_W * sc) {
         int ch = (unsigned char)*s;
         if (ch < 32 || ch > 126) ch = '?';
@@ -179,6 +181,72 @@ static void playIcon(int x, int y, bool playing) {
     else fill(x, y + 2, 12, 12, C_DIM);
 }
 
+// ---------------------------------------------------------------- Optik-Helfer
+
+static const Col TCOL[NTRACKS] = {
+    {255, 94, 58}, {255, 168, 46}, {242, 222, 76}, {118, 214, 108},
+    {56, 200, 196}, {84, 150, 255}, {168, 112, 255}, {255, 98, 184}};
+
+static Col mix(Col a, Col b, float t) {
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return {(Uint8)(a.r + (b.r - a.r) * t), (Uint8)(a.g + (b.g - a.g) * t), (Uint8)(a.b + (b.b - a.b) * t)};
+}
+static Col dimC(Col c, float f) { return mix(C_BG, c, f); }
+
+// gefuelltes Rechteck mit runden Ecken
+static void rrect(int x, int y, int w, int h, int r, Col c, Uint8 a = 255) {
+    if (r * 2 > h) r = h / 2;
+    if (r * 2 > w) r = w / 2;
+    if (r <= 0) { fill(x, y, w, h, c, a); return; }
+    fill(x, y + r, w, h - 2 * r, c, a);
+    for (int i = 0; i < r; i++) {
+        float dy = r - i - 0.5f;
+        int in = r - (int)(sqrtf((float)r * r - dy * dy) + 0.5f);
+        fill(x + in, y + i, w - 2 * in, 1, c, a);
+        fill(x + in, y + h - 1 - i, w - 2 * in, 1, c, a);
+    }
+}
+
+// Hinweistext: [..] wird hervorgehoben
+static void hint(int x, int y, const char* s, Col key, Col norm) {
+    bool k = false;
+    char ch[2] = {0, 0};
+    for (; *s; s++) {
+        if (*s == '[') { k = true; continue; }
+        if (*s == ']') { k = false; x += 3; continue; }
+        ch[0] = *s;
+        text(x, y, ch, k ? key : norm);
+        x += FONT_W;
+    }
+}
+
+// Animationszustand
+static float flash[NTRACKS], meterV[NTRACKS];
+static uint32_t lastTrigs[NTRACKS];
+static Uint32 pageAt = 0, lastFrame = 0;
+static int lastPage = -1;
+static float beatPulse = 0;
+static int lastBeat = -1;
+
+static void animate() {
+    Uint32 now = SDL_GetTicks();
+    float dt = lastFrame ? (now - lastFrame) / 1000.f : 0.016f;
+    if (dt > 0.1f) dt = 0.1f;
+    lastFrame = now;
+    for (int t = 0; t < NTRACKS; t++) {
+        uint32_t tc = eng.v[t].trigs;
+        if (tc != lastTrigs[t]) { lastTrigs[t] = tc; flash[t] = 1.f; }
+        flash[t] -= dt * 5.f; if (flash[t] < 0) flash[t] = 0;
+        float pk = eng.v[t].peakHold; eng.v[t].peakHold = 0;
+        float dec = meterV[t] * expf(-dt * 7.f);
+        meterV[t] = pk > dec ? pk : dec;
+    }
+    int beat = eng.playing ? eng.playedStep[0] / 4 : -1;
+    if (beat != lastBeat) { lastBeat = beat; if (beat >= 0) beatPulse = 1.f; }
+    beatPulse -= dt * 4.f; if (beatPulse < 0) beatPulse = 0;
+    if (page != lastPage) { if (lastPage >= 0) pageAt = now; lastPage = page; }
+}
+
 // ---------------------------------------------------------------- Bildschirm
 
 static Pattern& curP() { return eng.proj.pat[eng.curPat]; }
@@ -191,25 +259,37 @@ static bool stepHasLock(const Step& s) {
 
 static void drawHeader() {
     char b[64];
+    Col tc = TCOL[track];
     fill(0, 0, SW, 40, C_PANEL);
+    fill(0, 40, SW, 1, dimC(tc, 0.6f));
     snprintf(b, sizeof b, "P%02d", eng.curPat + 1);
     text(8, 4, b, C_TEXT, 2);
-    if (eng.nextPat >= 0 && (SDL_GetTicks() / 250) % 2) {
-        snprintf(b, sizeof b, ">%02d", eng.nextPat + 1);
-        text(58, 4, b, C_ACC);
+    if (eng.nextPat >= 0) {   // Pattern in der Warteschlange: blinkend + Fortschritt bis zum Wechsel
+        if ((SDL_GetTicks() / 250) % 2) { snprintf(b, sizeof b, ">%02d", eng.nextPat + 1); text(58, 4, b, C_ACC); }
+        int prog = eng.playing ? (eng.playedStep[0] + 1) * 48 / NSTEPS : 0;
+        fill(8, 36, 48, 2, C_OFF); fill(8, 36, prog, 2, C_ACC);
     }
     playIcon(62, 20, eng.playing);
     snprintf(b, sizeof b, "%d BPM", eng.proj.bpm);
     text(84, 4, b, C_TEXT);
+    for (int i = 0; i < 4; i++) {   // Taktanzeige
+        bool on = eng.playing && lastBeat == i;
+        Col c = on ? mix(C_ACC, C_PLAY, beatPulse * 0.6f) : C_OFF2;
+        rrect(146 + i * 10, 8, 7, 7, 2, c);
+    }
     snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]);
     text(84, 21, b, C_DIM);
-    if (eng.recording) { fill(140, 25, 8, 8, C_TRIG); text(150, 21, "REC", C_TRIG); }
+    if (eng.recording) {
+        bool bl = (SDL_GetTicks() / 400) % 2;
+        rrect(140, 24, 9, 9, 4, bl ? C_TRIG : dimC(C_TRIG, 0.5f));
+        text(152, 21, "REC", C_TRIG);
+    }
     snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
-    text(170, 4, b, eng.mute[track] ? C_DIM : C_ACC, 2);
+    text(196, 4, b, eng.mute[track] ? C_DIM : tc, 2);
     for (int p = 0; p < NUI_PAGES; p++) {
         int x = 368 + p * 35;
-        if (p == page) { fill(x, 3, 34, 18, C_ACC); textC(x + 17, 4, PAGE_NAMES[p], C_BG); }
-        else textC(x + 17, 4, PAGE_NAMES[p], C_DIM);
+        if (p == page) { rrect(x, 3, 34, 18, 4, C_ACC); textC(x + 17, 4, PAGE_NAMES[p], C_BG); }
+        else textC(x + 17, 4, PAGE_NAMES[p], p >= PAGE_MST ? dimC(C_DIM, 0.8f) : C_DIM);
     }
     if (aHeld) {
         snprintf(b, sizeof b, "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
@@ -217,99 +297,152 @@ static void drawHeader() {
     } else {
         snprintf(b, sizeof b, "CPU %2d%%  LEN %d", (int)(cpuLoad * 100), curP().len[track]);
         text(370, 23, b, C_DIM);
-        if (strcmp(midiBackend(), "AUS"))
-            text(560, 23, "MIDI", SDL_GetTicks() - midiActivity < 150 ? C_GREEN : C_DIM);
+        if (strcmp(midiBackend(), "AUS")) {
+            bool act = SDL_GetTicks() - midiActivity < 150;
+            rrect(554, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
+            text(564, 23, "MIDI", act ? C_GREEN : C_DIM);
+        }
     }
-    // Pegel
-    int ml = clampi((int)(eng.peakL * 36), 0, 36), mr = clampi((int)(eng.peakR * 36), 0, 36);
-    fill(620, 2, 6, 36, C_OFF); fill(629, 2, 6, 36, C_OFF);
-    fill(620, 38 - ml, 6, ml, eng.peakL > 0.95f ? C_TRIG : C_GREEN);
-    fill(629, 38 - mr, 6, mr, eng.peakR > 0.95f ? C_TRIG : C_GREEN);
+    int ml = clampi((int)(eng.peakL * 34), 0, 34), mr = clampi((int)(eng.peakR * 34), 0, 34);
+    rrect(620, 3, 6, 34, 2, C_OFF); rrect(629, 3, 6, 34, 2, C_OFF);
+    if (ml) rrect(620, 37 - ml, 6, ml, 2, eng.peakL > 0.95f ? C_TRIG : C_GREEN);
+    if (mr) rrect(629, 37 - mr, 6, mr, 2, eng.peakR > 0.95f ? C_TRIG : C_GREEN);
+}
+
+// Wert + Anzeige eines Reglers der aktuellen Seite ermitteln
+static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, char* label, int ln) {
+    const Pattern& P = curP();
+    locked = false; label[0] = 0;
+    if (page == PAGE_MST) {
+        d = MST_DEFS[k];
+        val = k == MS_BPM ? eng.proj.bpm : eng.proj.mst[k];
+    } else if (page == PAGE_SYS) {
+        d = SYS_DEFS[k];
+        switch (k) {
+        case SY_OUT: val = devIndex(); d.max = (uint8_t)devCount; snprintf(label, ln, "%.19s", val ? devNames[val - 1] : "STANDARD"); break;
+        case SY_BUF: val = bufOverride ? 0 : cfg.buf; break;
+        case SY_MIN: val = cfg.midiIn; break;
+        case SY_NOUT: val = cfg.notesOut; break;
+        case SY_CLK: val = cfg.clk; break;
+        case SY_MCH: val = cfg.chm; break;
+        case SY_USB: val = usbMode; snprintf(label, ln, "%s", usbMode ? "R36S AM PC" : "GERAETE AM R36S"); break;
+        default: {
+            char nm[256]; val = midiPortInfo(nm, sizeof nm);
+            snprintf(label, ln, "%.19s", strcmp(midiBackend(), "AUS") ? nm : "MIDI AUS");
+        } break;
+        }
+        if (k == SY_BUF && bufOverride) snprintf(label, ln, "--buffer %d", bufOverride);
+    } else {
+        int idx = page * 8 + k;
+        d = paramDef(P.machine[track], idx);
+        val = P.p[track][idx];
+        if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
+        if (d.kind == K_SMPL) {
+            d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
+            snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
+        }
+    }
+    baseVal = (page < PAGE_MST) ? P.p[track][page * 8 + k] : val;
+    return d.kind != K_NONE;
+}
+static void knobText(const ParamDef& d, int val, char* b, int n) {
+    if (d.kind == K_SMPL) snprintf(b, n, "%d", val + 1);
+    else if (d.kind == K_DEV) { if (val) snprintf(b, n, "#%d", val); else snprintf(b, n, "STD"); }
+    else fmtParam(d, val, b, n);
+}
+static float knobFrac(const ParamDef& d, int val) {
+    if (d.kind == K_BPM) return (val - 30) / 270.f;
+    return d.max ? (float)val / d.max : 0.f;
 }
 
 static void drawKnobs() {
-    char b[32];
-    const Pattern& P = curP();
-    int m = P.machine[track];
+    char b[32], label[24];
+    Col tc = TCOL[track];
+    Uint32 now = SDL_GetTicks();
     for (int k = 0; k < 8; k++) {
         int x = (k % 4) * 160, y = 44 + (k / 4) * 96;
         bool sel = k == slot;
-        if (sel) fill(x + 2, y + 1, 156, 92, C_SEL);
-        ParamDef d; int val; bool locked = false;
-        char label[24] = "";
-        if (page == PAGE_MST) {
-            d = MST_DEFS[k];
-            val = k == MS_BPM ? eng.proj.bpm : eng.proj.mst[k];
-        } else if (page == PAGE_SYS) {
-            d = SYS_DEFS[k];
-            switch (k) {
-            case SY_OUT: val = devIndex(); d.max = (uint8_t)devCount; snprintf(label, sizeof label, "%.19s", val ? devNames[val - 1] : "STANDARD"); break;
-            case SY_BUF: val = bufOverride ? 0 : cfg.buf; break;
-            case SY_MIN: val = cfg.midiIn; break;
-            case SY_NOUT: val = cfg.notesOut; break;
-            case SY_CLK: val = cfg.clk; break;
-            case SY_MCH: val = cfg.chm; break;
-            case SY_REC: val = eng.recording; break;
-            default: {
-                char nm[256]; val = midiPortInfo(nm, sizeof nm);
-                snprintf(label, sizeof label, "%.19s", strcmp(midiBackend(), "AUS") ? nm : "MIDI AUS");
-            } break;
-            }
-            if (k == SY_BUF && bufOverride) snprintf(label, sizeof label, "--buffer %d", bufOverride);
-        } else {
-            int idx = page * 8 + k;
-            d = paramDef(m, idx);
-            val = P.p[track][idx];
-            if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
-            if (d.kind == K_SMPL) {
-                d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
-                snprintf(label, sizeof label, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
-            }
-        }
+        ParamDef d; int val, baseVal; bool locked;
+        bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
+        if (sel) { rrect(x + 3, y + 1, 154, 92, 8, C_SEL); rrect(x + 3, y + 10, 3, 74, 1, ok ? tc : C_DIM); }
         int cx = x + 80, cy = y + 38;
-        if (d.kind == K_NONE) {
+        if (!ok) {
             arc(cx, cy, 27, 135, 405, C_OFF, 2);
             textC(cx, cy - 8, "-", C_DIM);
             continue;
         }
-        float frac = d.kind == K_BPM ? (val - 30) / 270.f : (d.max ? (float)val / d.max : 0.f);
-        Col kc = locked ? C_LOCK : (sel ? C_ACC : C_TEXT);
+        float frac = knobFrac(d, val);
+        bool justEdited = sel && editAt && now - editAt < 300;
+        Col kc = locked ? C_LOCK : (sel ? (page >= PAGE_MST ? C_ACC : tc) : C_TEXT);
+        if (justEdited) kc = mix(kc, C_PLAY, 0.5f * (1.f - (now - editAt) / 300.f));
         knob(cx, cy, 27, frac, d.kind == K_BIP, kc);
-        if (d.kind == K_SMPL) snprintf(b, sizeof b, "%d", val + 1);
-        else if (d.kind == K_DEV) { if (val) snprintf(b, sizeof b, "#%d", val); else snprintf(b, sizeof b, "STD"); }
-        else fmtParam(d, val, b, sizeof b);
+        if (locked) {   // Grundwert als Markierung
+            float a = (135 + 270 * knobFrac(d, baseVal)) * 0.0174533f;
+            fill(cx + (int)(31 * cosf(a)) - 1, cy + (int)(31 * sinf(a)) - 1, 3, 3, C_DIM);
+        }
+        knobText(d, val, b, sizeof b);
         textC(cx, cy - 8, b, locked ? C_LOCK : C_TEXT);
-        textC(cx, y + 70, label[0] ? label : d.name, sel ? C_ACC : C_DIM);
+        textC(cx, y + 70, label[0] ? label : d.name, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
     }
-    if (SDL_GetTicks() < msgUntil) {
-        int w = textW(msg) + 24;
-        fill(320 - w / 2, 214, w, 24, C_ACC);
-        textC(320, 218, msg, C_BG);
+    // grosse Werteanzeige beim Drehen bzw. Meldung (die juengste gewinnt)
+    bool showEdit = editAt && now - editAt < 900 && editAt >= msgAt;
+    bool showMsg = now < msgUntil && msgAt > editAt;
+    if (showEdit) {
+        ParamDef d; int val, baseVal; bool locked;
+        if (knobInfo(editSlot, d, val, locked, baseVal, label, sizeof label)) {
+            knobText(d, val, b, sizeof b);
+            Col c = locked ? C_LOCK : (page >= PAGE_MST ? C_ACC : tc);
+            rrect(150, 204, 340, 34, 8, C_BG, 240);
+            rrect(150, 204, 4, 34, 2, c);
+            text(164, 213, label[0] ? label : d.name, C_DIM);
+            int bx = 330, bw = 100;
+            rrect(bx, 217, bw, 8, 3, C_OFF2);
+            int fw = (int)(bw * knobFrac(d, val));
+            if (fw > 0) rrect(bx, 217, fw, 8, 3, c);
+            text(478 - textW(b, 1) - 2, 213, b, c);
+            if (locked) text(bx, 205, "LOCK", C_LOCK);
+        }
+    } else if (showMsg) {
+        int w = textW(msg) + 28;
+        rrect(320 - w / 2, 210, w, 26, 8, C_ACC);
+        textC(320, 215, msg, C_BG);
+    }
+    // Seitenwechsel: Seitenname kurz gross einblenden
+    if (pageAt && now - pageAt < 450) {
+        textAlpha = (Uint8)(255 * (1.f - (now - pageAt) / 450.f));
+        textC(320, 120, PAGE_NAMES[page], C_PLAY, 4);
+        textAlpha = 255;
     }
 }
 
-static Col stepCol(const Step& s, int idx) {
-    if (s.on) return stepHasLock(s) ? C_LOCK : C_TRIG;
-    return (idx / 4) % 2 ? C_OFF2 : C_OFF;
-}
+static Col offCol(int s) { return (s / 4) % 2 ? C_OFF2 : C_OFF; }
 
 static void drawGrid() {
     const Pattern& P = curP();
     char b[16];
-    int y0 = 242;
+    int y0 = 244;
     for (int t = 0; t < NTRACKS; t++) {
         int y = y0 + t * 18;
-        if (t == track) fill(0, y - 1, SW, 17, C_PANEL);
+        Col tc = eng.mute[t] ? dimC(TCOL[t], 0.35f) : TCOL[t];
+        if (t == track) rrect(0, y - 2, SW, 18, 4, C_PANEL);
+        rrect(4, y, 4, 14, 1, mix(tc, C_PLAY, flash[t] * 0.7f));   // Farbchip, blitzt beim Trig
         snprintf(b, sizeof b, "%d %s", t + 1, MACHINE_NAMES[P.machine[t]]);
-        text(6, y, b, eng.mute[t] ? C_DIM : (t == track ? C_ACC : C_TEXT));
-        if (eng.mute[t]) text(66, y, "M", C_TRIG);
+        text(12, y - 2, b, eng.mute[t] ? C_DIM : (t == track ? TCOL[t] : C_TEXT));
+        if (eng.mute[t]) { fill(12, y + 5, textW(b), 1, C_DIM); text(68, y - 2, "M", C_TRIG); }
+        int mw = clampi((int)(sqrtf(meterV[t]) * 62), 0, 62);   // Pegel der Spur
+        fill(12, y + 13, 62, 2, C_OFF);
+        if (mw) fill(12, y + 13, mw, 2, tc);
         int len = P.len[t];
         for (int s = 0; s < NSTEPS; s++) {
             int x = 82 + s * 34;
-            if (s >= len) { fill(x, y + 1, 31, 13, C_DARK); continue; }
-            fill(x, y + 1, 31, 13, stepCol(P.s[t][s], s));
-            if (eng.playing && eng.playedStep[t] == s) frame(x, y + 1, 31, 13, C_PLAY, 2);
-            if (t == track && s == cursor) frame(x - 2, y - 1, 35, 17, C_TEXT, 1);
+            if (s >= len) continue;
+            const Step& st = P.s[t][s];
+            bool ph = eng.playing && eng.playedStep[t] == s;
+            if (t == track && s == cursor) rrect(x - 2, y - 1, 35, 16, 4, aHeld ? C_LOCK : C_TEXT);
+            Col c = st.on ? tc : offCol(s);
+            if (ph) c = st.on ? mix(tc, C_PLAY, 0.25f + flash[t] * 0.6f) : mix(c, C_PLAY, 0.18f);
+            rrect(x, y + 1, 31, 12, 3, c);
+            if (st.on && stepHasLock(st)) fill(x + 25, y + 3, 3, 3, C_BG);
         }
     }
 }
@@ -317,24 +450,41 @@ static void drawGrid() {
 static void drawSteps() {
     const Pattern& P = curP();
     char b[8];
+    Col tc = eng.mute[track] ? dimC(TCOL[track], 0.35f) : TCOL[track];
     int len = P.len[track];
+    if (eng.recording) rrect(2, 388, 628, 54, 8, (SDL_GetTicks() / 400) % 2 ? C_TRIG : dimC(C_TRIG, 0.5f));
+    if (eng.recording) rrect(4, 390, 624, 50, 7, C_BG);
     for (int s = 0; s < NSTEPS; s++) {
         int x = 6 + s * 39, y = 392;
-        if (s >= len) { fill(x, y, 36, 46, C_DARK); continue; }
+        if (s >= len) { rrect(x, y, 36, 46, 6, C_DARK); continue; }
         const Step& st = P.s[track][s];
-        fill(x, y, 36, 46, stepCol(st, s));
         bool ph = eng.playing && eng.playedStep[track] == s;
-        if (ph) fill(x + 4, y + 4, 28, 5, C_PLAY);
+        if (s == cursor) rrect(x - 3, y - 3, 42, 52, 8, aHeld ? C_LOCK : C_TEXT);
+        Col c = st.on ? tc : offCol(s);
+        if (ph && st.on) c = mix(tc, C_PLAY, 0.2f + flash[track] * 0.6f);
+        rrect(x, y, 36, 46, 6, c);
+        if (ph) rrect(x + 6, y + 4, 24, 4, 2, st.on ? C_BG : C_PLAY);
+        if (st.on && stepHasLock(st)) rrect(x + 27, y + 11, 5, 5, 2, C_BG);
+        if (st.on && st.lock[P_NOTE] != NO_LOCK) {   // gelockte Note auf der Taste
+            char nb[8];
+            fmtParam(COMMON_DEFS[P_NOTE], st.lock[P_NOTE], nb, sizeof nb);
+            textC(x + 18, y + 13, nb, dimC(C_BG, 0.85f));
+        }
         snprintf(b, sizeof b, "%d", s + 1);
-        textC(x + 18, y + 26, b, st.on ? C_BG : C_DIM);
-        if (s == cursor) frame(x - 2, y - 2, 40, 50, aHeld ? C_LOCK : C_TEXT, 2);
+        textC(x + 18, y + 27, b, st.on ? C_BG : C_DIM);
     }
-    text(6, 452, "A:TRIG B:HOER X/Y:WERT L1/R1:REGLER L2/R2:SEITE SEL:FUNC", C_DIM);
+    const char* h;
+    if (aHeld) h = "[X/Y/STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
+    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]MASCH [L1/R1]CPY/PST";
+    else if (page == PAGE_SYS) h = "[X/Y] AENDERN  [L1/R1] EINSTELLUNG  [L2/R2] SEITE  [START] PLAY";
+    else if (page == PAGE_MST) h = "[X/Y] WERT  [L1/R1] REGLER  [L2/R2] SEITE  [SEL+v] TAP-TEMPO";
+    else h = "[A]TRIG [B]HOER [X/Y]WERT [L1/R1]REGLER [L2/R2]SEITE [SEL]FUNC";
+    hint(6, 452, h, C_ACC, C_DIM);
 }
 
 static void drawHelp() {
-    fill(30, 30, 580, 420, C_BG, 235);
-    frame(30, 30, 580, 420, C_ACC, 2);
+    rrect(30, 30, 580, 420, 12, C_ACC);
+    rrect(32, 32, 576, 416, 11, C_BG, 245);
     static const char* lines[] = {
         "SELECT (FUNC) GEHALTEN +",
         "  LINKS/RECHTS   Pattern wechseln",
@@ -360,6 +510,7 @@ static void drawHelp() {
 }
 
 static void drawAll(bool help) {
+    animate();
     setCol(C_BG);
     SDL_RenderClear(ren);
     drawHeader();
@@ -372,6 +523,7 @@ static void drawAll(bool help) {
 // ---------------------------------------------------------------- Bedienung
 
 static void editValue(int delta) {
+    editAt = SDL_GetTicks(); editSlot = slot;
     if (page == PAGE_SYS) {
         int d = delta > 0 ? 1 : -1;
         switch (slot) {
@@ -386,7 +538,7 @@ static void editValue(int delta) {
         case SY_NOUT: cfg.notesOut = d > 0; break;
         case SY_CLK: cfg.clk = clampi(cfg.clk + d, 0, 2); break;
         case SY_MCH: cfg.chm = d > 0; break;
-        case SY_REC: eng.recording = d > 0; return;
+        case SY_USB: usbMode = clampi(usbMode + d, 0, 2); usbApplyAt = SDL_GetTicks() + 1200; return;
         default: return;
         }
         applyMidiSettings();
@@ -683,6 +835,32 @@ static void openAudio() {
     SDL_PauseAudioDevice(audioDev, 0);
 }
 
+static int detectUsbMode() {
+    FILE* f = fopen("/sys/kernel/config/usb_gadget/groovebox/UDC", "r");
+    if (!f) return 0;
+    char b[64] = "";
+    bool on = fgets(b, sizeof b, f) && b[0] > ' ';
+    fclose(f);
+    if (!on) return 0;
+    struct stat st;
+    return stat("/sys/kernel/config/usb_gadget/groovebox/configs/c.1/uac2.usb0", &st) == 0 ? 2 : 1;
+}
+
+static void applyUsbMode() {
+    char cmd[800];
+    static const char* args[3] = {"aus", "an", "an audio"};
+    snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s nosleep", basePath, args[usbMode]);
+    toast(usbMode ? "PC-MODUS WIRD AKTIVIERT ..." : "PC-MODUS AUS ...");
+    drawAll(false); SDL_RenderPresent(ren);
+    int rc = system(cmd);
+    int now = detectUsbMode();
+    printf("USB-Modus %d: rc=%d, erkannt=%d\n", usbMode, rc, now);
+    if (usbMode && !now) { usbMode = 0; toast("PC-MODUS NICHT MOEGLICH - SIEHE PC-MODUS.LOG"); }
+    else toast(usbMode ? "PC-MODUS AKTIV" : "USB: HOST-MODUS");
+    usbMode = now;
+    refreshDevices();
+}
+
 static void setupPaths() {
     char* bp = SDL_GetBasePath();
     if (bp) { snprintf(basePath, sizeof basePath, "%s", bp); SDL_free(bp); }
@@ -741,6 +919,8 @@ int main(int argc, char** argv) {
         page = shotPage % NUI_PAGES; track = page == 1 ? 7 : (page == 0 ? 4 : 0); cursor = 3; slot = page == 1 ? 0 : 1;
         refreshDevices();
         if (shotPage == 8) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
+        if (shotPage == 9) { page = 2; slot = 0; track = 4; animate(); editAt = SDL_GetTicks(); editSlot = 0; eng.recording = true; }
+        lastPage = page;
         if (shotPage == 7) { page = 0; drawAll(true); } else drawAll(false);
         SDL_RenderPresent(ren);
         SDL_SaveBMP(surf, shot);
@@ -771,6 +951,7 @@ int main(int argc, char** argv) {
     if (learn || (!in.haveMap && in.joy && !in.gc)) runLearn();
 
     loadSettings();
+    usbMode = detectUsbMode();
     refreshDevices();
     for (int i = 0; i < devCount; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, devNames[i]);
     eng.init(44100);
@@ -796,6 +977,7 @@ int main(int argc, char** argv) {
         last = now;
         handleInput(now, dt);
         if (audioApplyAt && now >= audioApplyAt) { audioApplyAt = 0; openAudio(); }
+        if (usbApplyAt && now >= usbApplyAt) { usbApplyAt = 0; applyUsbMode(); }
         if (now - lastAuto > 120000) {   // Autosave alle 2 Minuten bei Aenderungen
             lastAuto = now;
             if (memcmp(&lastSaved, &eng.proj, sizeof(Project))) saveProject();

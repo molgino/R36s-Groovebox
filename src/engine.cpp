@@ -90,6 +90,7 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     case M_SAMPLE: aenv.v = 0; break;
     default: break;
     }
+    trigs = trigs + 1;
 }
 
 void Voice::update(int n, float sr, float bpm) {
@@ -209,6 +210,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     float fmIndex = P(P_S1) / 127.f * 1.6f, fmFb = P(P_S2) / 127.f * 0.4f;
     int w1 = P(P_S0) & 3, w2 = P(P_S1) & 3;
     float dt = pitchHz * inv;
+    float bmax = 0.f;
 
     for (int i = 0; i < n; i++) {
         float s = 0.f;
@@ -309,12 +311,16 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         if (srrN > 1) { if (holdC <= 0) { hold = s; holdC = srrN; } holdC--; s = hold; }
         if (crushQ > 0.f) s = floorf(s * crushQ + 0.5f) / crushQ;
 
+        float as = fabsf(s);
+        if (as > bmax) bmax = as;
         L[i] += s * gainL;
         R[i] += s * gainR;
         dS[i] += s * sendD;
         rS[i] += s * sendR;
     }
 
+    float pk = bmax * (gainL > gainR ? gainL : gainR);
+    if (pk > peakHold) peakHold = pk;
     // Stimme beenden, wenn verklungen
     switch (machine) {
     case M_KICK: case M_HAT: if (denv < 1e-4f) active = false; break;

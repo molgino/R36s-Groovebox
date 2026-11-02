@@ -14,7 +14,7 @@ static const char* const PAGE_NAMES[NUI_PAGES] = {"TRIG", "SRC", "FILT", "AMP", 
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
-    K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO
+    K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -79,10 +79,10 @@ static const ParamDef MST_DEFS[8] = {
 };
 
 // System-Seite (nicht im Projekt, sondern in settings.cfg)
-enum { SY_OUT = 0, SY_BUF, SY_MIN, SY_NOUT, SY_CLK, SY_MCH, SY_REC, SY_PORT };
+enum { SY_OUT = 0, SY_BUF, SY_MIN, SY_NOUT, SY_CLK, SY_MCH, SY_USB, SY_PORT };
 static const ParamDef SYS_DEFS[8] = {
     {"OUT", K_DEV, 0, 0}, {"BUF", K_BUFS, 1, 3}, {"M.IN", K_OFFON, 1, 1}, {"N.OUT", K_OFFON, 0, 1},
-    {"CLK", K_CLK, 0, 2}, {"M.CH", K_CHM, 0, 1}, {"REC", K_OFFON, 0, 1}, {"MIDI", K_INFO, 0, 0},
+    {"CLK", K_CLK, 0, 2}, {"M.CH", K_CHM, 0, 1}, {"USB", K_USB, 0, 2}, {"MIDI", K_INFO, 0, 0},
 };
 static const int BUF_SIZES[4] = {128, 256, 512, 1024};
 
@@ -133,6 +133,7 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_BUFS: snprintf(buf, n, "%d", BUF_SIZES[v & 3]); break;
     case K_CLK: snprintf(buf, n, "%s", v == 1 ? "SEND" : (v == 2 ? "RECV" : "OFF")); break;
     case K_CHM: snprintf(buf, n, "%s", v ? "1-8" : "AUTO"); break;
+    case K_USB: snprintf(buf, n, "%s", v == 1 ? "PC" : (v == 2 ? "PC+A" : "HOST")); break;
     default: snprintf(buf, n, "%d", v); break;
     }
 }

@@ -85,6 +85,9 @@ struct Voice {
     float pitchHz = 100, gainL = 0, gainR = 0, sendD = 0, sendR = 0, drive = 0, crushQ = 0;
     int srrN = 1, ftype = 0;
     float fBase = 127, fEnv = 0, reso = 0;
+    // fuer die Anzeige
+    volatile uint32_t trigs = 0;
+    volatile float peakHold = 0;
 
     inline int P(int i) const { return lk[i] != NO_LOCK ? lk[i] : base[i]; }
     void noteOn(int machine, const uint8_t* base, const uint8_t* locks, float velScale, int gateSamples, float sr);

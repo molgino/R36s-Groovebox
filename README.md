@@ -62,13 +62,15 @@ Unter **MIDI** auf der SYS-Seite steht, welche Geräte verbunden sind, und im He
 | N.OUT | Sequencer-Noten ausgeben: Spur 1–8 auf Kanal 1–8, mit Länge und Velocity, Retrigs inklusive |
 | CLK | OFF, SEND (Clock + Start/Stop an andere Geräte) oder RECV (Tempo, Start und Stop von außen) |
 | M.CH | AUTO: jeder Kanal spielt die gerade gewählte Spur. 1-8: Kanal 1–8 spielt Spur 1–8 |
-| REC | Aufnahme (auch per SELECT + ↑) |
+| USB | HOST: Geräte am R36S (Keyboard, S-1, DAC). PC: der R36S ist ein MIDI-Gerät am PC. PC+A: zusätzlich ein Audio-Interface (siehe unten) |
 
 * **Live spielen:** Die Noten spielen die gewählte Spur mit Anschlagstärke. Synth-, FM- und Loop-Spuren klingen, solange die Taste gehalten wird.
 * **Live-Aufnahme** (REC an, Sequencer läuft): Gespielte Noten werden auf den nächsten Step quantisiert und mit Note und Velocity als Locks eingetragen.
 * **Step-Aufnahme** (REC an, Sequencer gestoppt): Jede Note landet auf dem Cursor-Step, danach springt der Cursor einen Step weiter. So tippst du Melodien bequem ein.
 * **CC 70–77** steuern die 8 Regler der aktuellen Seite (TRIG bis LFO). Bei laufender Aufnahme werden sie als Parameter-Locks auf Trigs gespeichert.
 * **CC 1** (Modulationsrad) steuert den DJ-Filter.
+
+Aufnahme an/aus: SELECT + ↑.
 
 Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die Groovebox direkt auf die USB-MIDI-Geräte zu (rawmidi).
 
@@ -104,6 +106,30 @@ Das Projekt liegt in `projects/project1.gbx`. Gespeichert wird automatisch beim 
 
 Am Desktop gilt diese Tastaturbelegung: Pfeiltasten, Z=A, X=B, S=X, A=Y, Q/W=L1/R1, 1/2=L2/R2, Enter=START, Shift/Backspace=SELECT, I/K=linker Stick, O/L=rechter Stick.
 
+## Am PC: Ableton, MIDI-OX & Co. (PC-Modus)
+
+Normalerweise ist der OTG-Port ein **Host**: Geräte werden *an* den R36S gesteckt. Ein PC ist ebenfalls ein Host, deshalb sieht er den R36S zunächst nicht.
+Im **PC-Modus** schaltet der R36S den Port in den Geräte-Modus (USB-Gadget) und meldet sich am PC als **„R36S Groovebox“** an:
+
+* **PC**: ein USB-MIDI-Gerät mit 1 Ein- und 1 Ausgang, ohne Treiber, unter Windows, macOS und Linux.
+* **PC+A**: zusätzlich ein USB-Audio-Interface mit 2 Kanälen bei 48 kHz. Auf der SYS-Seite unter OUT dann das Gadget-Gerät wählen (z. B. „UAC2Gadget“), damit der Ton der Groovebox in Ableton als Eingang ankommt.
+
+Einschalten:
+
+* in der App: SYS-Seite, Regler **USB** auf PC oder PC+A, oder
+* im Ports-Menü: **Groovebox - PC-Modus MIDI**, **Groovebox - PC-Modus MIDI+Audio** bzw. **Groovebox - PC-Modus AUS**.
+
+Danach den R36S mit dem PC verbinden. Am zuverlässigsten ist ein **USB-A-auf-USB-C-Kabel**. Ein C-auf-C-Kabel schaltet die Stromversorgung manchmal nicht frei.
+Während der PC-Modus aktiv ist, funktionieren Geräte am R36S (S-1, Keyboard, DAC) nicht. Nach einem Neustart ist der R36S wieder Host.
+
+**In Ableton:** *Einstellungen → Link, Tempo & MIDI*. Beim Eingang „R36S Groovebox“ **Spur** aktivieren, damit die Noten der Groovebox in Ableton ankommen, z. B. mit N.OUT an.
+Zum Synchronisieren gibt es zwei Wege:
+
+* Groovebox führt: CLK auf SEND, in Ableton beim Eingang **Sync** an und oben links EXT aktivieren.
+* Ableton führt: beim Ausgang **Sync** an, CLK auf RECV.
+
+Wenn es nicht klappt, steht der Grund in `groovebox/pc-modus.log`. Möglich ist zum Beispiel, dass der ArkOS-Kernel keinen USB-Geräte-Modus erlaubt.
+
 ## Installation auf dem R36S (ArkOS 2.0)
 
 1. Die Datei `dist/r36s-groovebox-arkos.zip` entpacken. Ihren Inhalt in den Ordner `ports` der SD-Karte kopieren. Das ist die Partition `EASYROMS`, auf dem Gerät `/roms/ports/`. Danach sieht es so aus:
@@ -114,6 +140,7 @@ Am Desktop gilt diese Tastaturbelegung: Pfeiltasten, Z=A, X=B, S=X, A=Y, Q/W=L1/
    ports/Groovebox - Autostart AUS.sh
    ports/groovebox/groovebox            (Programm, aarch64)
    ports/groovebox/groovebox.service
+   ports/groovebox/pc-modus.sh          (PC-Modus, auch aus der App aufrufbar)
    ports/groovebox/samples/...          (Start-Sample-Paket)
    ```
 2. Am R36S unter **Ports** den Eintrag **Groovebox** starten. Falls er nicht auftaucht, EmulationStation neu starten (Start → Quit → Restart EmulationStation).
