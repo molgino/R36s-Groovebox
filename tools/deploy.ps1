@@ -15,7 +15,7 @@
 param(
     [string]$Ip = "192.168.77.1",
     [string]$User = "ark",
-    [string]$Repo = "OWNER/R36s-Groovebox",
+    [string]$Repo = "molgino/R36s-Groovebox",
     [string]$Zip = "",
     [switch]$SetupKey,
     [switch]$Log,

@@ -3,9 +3,9 @@
 #   ./deploy.sh [zip]          neueste Version (nightly) bzw. angegebenes ZIP aufspielen
 #   ./deploy.sh --setup-key    SSH-Schluessel hinterlegen
 #   ./deploy.sh --log          Log live anzeigen
-# Umgebungsvariablen: R36S_IP (192.168.77.1), R36S_USER (ark), GB_REPO (OWNER/R36s-Groovebox)
+# Umgebungsvariablen: R36S_IP (192.168.77.1), R36S_USER (ark), GB_REPO (molgino/R36s-Groovebox)
 set -euo pipefail
-IP=${R36S_IP:-192.168.77.1}; USER_=${R36S_USER:-ark}; REPO=${GB_REPO:-OWNER/R36s-Groovebox}
+IP=${R36S_IP:-192.168.77.1}; USER_=${R36S_USER:-ark}; REPO=${GB_REPO:-molgino/R36s-Groovebox}
 OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5)
 ping -c1 -W1 "$IP" >/dev/null 2>&1 || { ping -c1 -W1 169.254.77.1 >/dev/null 2>&1 && IP=169.254.77.1; }
 T="$USER_@$IP"
