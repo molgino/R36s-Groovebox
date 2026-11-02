@@ -45,6 +45,13 @@ aus)
   teardown
   setrole peripheral
   sleep 1
+  # Port im Device Tree fest auf Host? (ArkOS R36S: "No support otg", 5V-Boost dauerhaft an)
+  OTGM=$(cat /sys/devices/platform/*/*usb2-phy*/otg_mode 2>/dev/null | head -1)
+  if [ "$OTGM" = "UNKNOWN" ] || dmesg 2>/dev/null | tail -n 30 | grep -q "No support otg"; then
+    setrole host
+    say "FEHLER: OTG-Port ist im Device Tree fest auf Host - PC-Modus braucht angepasste DTB (oder WLAN-Stick)"
+    pause 5; exit 1
+  fi
   UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
   if [ -z "$UDC" ]; then
     setrole host
