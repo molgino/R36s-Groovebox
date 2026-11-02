@@ -904,7 +904,9 @@ static int detectUsbMode() {
     fclose(f);
     if (!on) return 0;
     struct stat st;
-    return stat("/sys/kernel/config/usb_gadget/groovebox/configs/c.1/uac2.usb0", &st) == 0 ? 2 : 1;
+    bool aud = stat("/sys/kernel/config/usb_gadget/groovebox/configs/c.1/uac2.usb0", &st) == 0 ||
+               stat("/sys/kernel/config/usb_gadget/groovebox/configs/c.1/uac1.usb0", &st) == 0;
+    return aud ? 2 : 1;
 }
 
 static void applyUsbMode() {
@@ -929,7 +931,18 @@ static void applyUsbMode() {
         toast("%s", err);
         msgUntil = SDL_GetTicks() + 5000;
     }
-    else toast(usbMode ? "PC-MODUS AKTIV" : "USB: HOST-MODUS");
+    else if (usbMode) {
+        char lp[700], line[200], okm[200] = "PC-MODUS AKTIV";
+        snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
+        FILE* lf = fopen(lp, "r");
+        if (lf) {
+            while (fgets(line, sizeof line, lf))
+                if (!strncmp(line, "OK:", 3)) { line[strcspn(line, "\r\n")] = 0; snprintf(okm, sizeof okm, "%.60s", line + 4); }
+            fclose(lf);
+        }
+        toast("%s", okm);
+        msgUntil = SDL_GetTicks() + 4000;
+    } else toast("USB: HOST-MODUS");
     usbMode = now;
     refreshDevices();
 }

@@ -34,11 +34,14 @@ static char infoNames[256] = "";
 static int infoCount = 0;
 static const char* backend = "AUS";
 
+static volatile int serialOpen = 0;
+
 int midiPortInfo(char* buf, int n) {
     if (!infoMx) { snprintf(buf, n, "kein MIDI"); return 0; }
     SDL_LockMutex(infoMx);
-    snprintf(buf, n, "%s", infoCount ? infoNames : "kein Geraet");
-    int c = infoCount;
+    if (serialOpen) snprintf(buf, n, "PC (USB-SERIELL)%s%s", infoCount ? ", " : "", infoCount ? infoNames : "");
+    else snprintf(buf, n, "%s", infoCount ? infoNames : "kein Geraet");
+    int c = infoCount + (serialOpen ? 1 : 0);
     SDL_UnlockMutex(infoMx);
     return c;
 }
@@ -61,6 +64,10 @@ static void pushIn(uint8_t st, uint8_t d1, uint8_t d2) {
 #include <alsa/asoundlib.h>
 #include <poll.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <errno.h>
 
 static void quietErr(const char*, int, const char*, int, const char*, ...) {}
 
@@ -122,6 +129,41 @@ static void rawClose(RawDev& r) {
     r.in = r.out = nullptr;
     printf("MIDI (raw): %s getrennt\n", r.name);
 }
+// ---- USB-Seriell (PC-Modus ohne usb_f_midi): MIDI-Bytes ueber /dev/ttyGS0
+static int serFd = -1;
+static RawDev serDev;
+static void serialCheck() {
+    struct stat st;
+    if (serFd >= 0 || stat("/dev/ttyGS0", &st) != 0) return;
+    serFd = open("/dev/ttyGS0", O_RDWR | O_NOCTTY | O_NONBLOCK);
+    if (serFd < 0) return;
+    struct termios tio;
+    if (tcgetattr(serFd, &tio) == 0) { cfmakeraw(&tio); cfsetspeed(&tio, B115200); tcsetattr(serFd, TCSANOW, &tio); }
+    serDev.status = 0; serDev.cnt = 0; serDev.sysex = false;
+    serialOpen = 1;
+    printf("MIDI: USB-Seriell zum PC aktiv (/dev/ttyGS0)\n");
+}
+static void serialClose() {
+    if (serFd >= 0) close(serFd);
+    serFd = -1; serialOpen = 0;
+    printf("MIDI: USB-Seriell geschlossen\n");
+}
+static void serialPoll() {
+    if (serFd < 0) return;
+    uint8_t b[256];
+    int n;
+    while ((n = (int)read(serFd, b, sizeof b)) > 0) for (int i = 0; i < n; i++) rawParse(serDev, b[i]);
+    if (n < 0 && errno != EAGAIN && errno != EINTR && errno != EIO) serialClose();
+    struct stat st;
+    if (serFd >= 0 && stat("/dev/ttyGS0", &st) != 0) serialClose();
+}
+static void serialSend(const MidiMsg& m) {
+    if (serFd < 0) return;
+    uint8_t b[3] = {m.st, m.d1, m.d2};
+    int n = m.st >= 0xF8 ? 1 : (((m.st & 0xF0) == 0xC0 || (m.st & 0xF0) == 0xD0) ? 2 : 3);
+    if (write(serFd, b, n) < 0 && errno != EAGAIN && errno != EIO && errno != ESHUTDOWN) serialClose();
+}
+
 static void rawSend(const MidiMsg& m) {
     uint8_t b[3] = {m.st, m.d1, m.d2};
     int n = m.st >= 0xF8 ? 1 : (((m.st & 0xF0) == 0xC0 || (m.st & 0xF0) == 0xD0) ? 2 : 3);
@@ -214,13 +256,16 @@ static int midiThread(void*) {
                 if (n == -ENODEV) { rawClose(r); rescan = true; }
             }
         }
+        serialPoll();
         MidiMsg m;
         while (ringPeek(rOut, m) && m.due <= now + 0.0003) {
             if (seq) seqSend(m); else rawSend(m);
+            serialSend(m);
             ringDrop(rOut);
         }
         if (rescan || now - lastScan > 3.0) {
             if (seq) seqScan(); else rawScan();
+            serialCheck();
             lastScan = now; rescan = false;
         }
         SDL_Delay(1);
@@ -257,6 +302,7 @@ void midiStop() {
     SDL_WaitThread(thread, nullptr);
     if (seq) snd_seq_close(seq);
     for (auto& r : raw) if (r.in || r.out) rawClose(r);
+    if (serFd >= 0) serialClose();
 }
 
 #else  // ohne ALSA

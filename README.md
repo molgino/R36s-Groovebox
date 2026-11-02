@@ -163,7 +163,24 @@ Zum Synchronisieren gibt es zwei Wege:
 * Groovebox führt: CLK auf SEND, in Ableton beim Eingang **Sync** an und oben links EXT aktivieren.
 * Ableton führt: beim Ausgang **Sync** an, CLK auf RECV.
 
-Wenn es nicht klappt, steht der Grund in `groovebox/pc-modus.log`. Möglich ist zum Beispiel, dass der ArkOS-Kernel keinen USB-Geräte-Modus erlaubt.
+### Kernel ohne USB-MIDI-Gadget: MIDI über USB-Seriell
+
+Manche ArkOS-Kernel haben zwar den USB-Geräte-Modus, aber keinen MIDI-Baustein (`usb_f_midi`).
+Dann meldet sich der R36S automatisch als **serielle Schnittstelle** am PC an (unter Windows als „USB Serial Device (COMx)“), und die Groovebox schickt und empfängt MIDI darüber.
+Am PC übersetzt ein kostenloses Brückenprogramm das in einen normalen MIDI-Port:
+
+**Windows**
+
+1. Lade **loopMIDI** (Tobias Erichsen) herunter und lege zwei Ports an, z. B. „R36S in“ und „R36S out“.
+2. Lade **Hairless MIDI<->Serial Bridge** herunter. Als Serial Port den COM-Port des R36S wählen, MIDI Out = „R36S in“, MIDI In = „R36S out“. Die Baudrate ist egal.
+3. In Ableton „R36S in“ als Eingang (Spur/Sync) und „R36S out“ als Ausgang aktivieren.
+
+**macOS:** Hairless MIDI<->Serial Bridge mit dem IAC-Treiber. **Linux:** `ttymidi`.
+
+Welche Bausteine dein Kernel hat, steht nach dem ersten Versuch in `groovebox/pc-modus.log` in der Zeile „Verfuegbare Gadget-Funktionen“.
+Ist dort `uac2` oder `uac1` dabei, funktioniert PC+A als Audio-Interface auch ohne den MIDI-Baustein.
+
+Wenn es nicht klappt, steht der Grund in `groovebox/pc-modus.log`. Die App zeigt ihn zusätzlich direkt an.
 
 ## Installation auf dem R36S (ArkOS 2.0)
 
