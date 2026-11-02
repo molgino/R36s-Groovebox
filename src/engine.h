@@ -1,6 +1,7 @@
 // Audio-Engine: Sequencer, 8 monophone Spuren, Delay + Reverb, Master
 #pragma once
 #include "params.h"
+#include "samples.h"
 #include <stdint.h>
 
 struct Step { uint8_t on; uint8_t lock[NPARAMS]; };
@@ -76,6 +77,9 @@ struct Voice {
     float lfoPh = 0, lfoSH = 0, lfoVal = 0;
     float hold = 0; int holdC = 0;
     float glideCo = 0;
+    // Sample-Wiedergabe
+    const Sample* smp = nullptr;
+    double spos = 0; float sinc = 0, sGain = 1; int sStart = 0, sEnd = 0; bool sRev = false, sLoop = false, sDone = false;
     Rng rng;
     // pro Block berechnet
     float pitchHz = 100, gainL = 0, gainR = 0, sendD = 0, sendR = 0, drive = 0, crushQ = 0;
@@ -85,6 +89,7 @@ struct Voice {
     inline int P(int i) const { return lk[i] != NO_LOCK ? lk[i] : base[i]; }
     void noteOn(int machine, const uint8_t* base, const uint8_t* locks, float velScale, int gateSamples, float sr);
     void noteOff() { aenv.off(); fenv.off(); }
+    bool gated() const { return machine == M_SYNTH || machine == M_FM || (machine == M_SAMPLE && P(P_S5)); }
     void update(int n, float sr, float bpm);
     void render(float* L, float* R, float* dS, float* rS, int n, float sr);
 };
@@ -114,7 +119,18 @@ public:
     volatile float peakL = 0, peakR = 0;
     Voice v[NTRACKS];
 
+    // MIDI (Ausgabe ueber Callback aus dem Audio-Thread; frameOff = Position im aktuellen Puffer)
+    typedef void (*MidiOutFn)(uint8_t st, uint8_t d1, uint8_t d2, int frameOff);
+    MidiOutFn midiOut = nullptr;
+    volatile bool notesOut = false, recording = false, midiInOn = true;
+    volatile int clockMode = 0;   // 0 aus, 1 senden, 2 empfangen
+    volatile int chMode = 0;      // 0 = AUTO (aktive Spur), 1 = Kanal 1-8 -> Spur 1-8
+    volatile int uiTrack = 0, uiPage = 0, uiCursor = 0;
+    volatile int stepRecCount = 0;
+
     void init(int sampleRate);
+    void setRate(int sampleRate);
+    void midiIn(uint8_t st, uint8_t d1, uint8_t d2);
     void defaultProject();
     void initPattern(Pattern& p);
     static void setMachine(Pattern& p, int t, int m);
@@ -132,7 +148,19 @@ private:
     Reverb rev;
     SVF djL, djR;
     Rng rng;
+    int curOff = 0;
+    int midiNote[NTRACKS], midiGate[NTRACKS], liveNote[NTRACKS], skipStep[NTRACKS];
+    uint8_t liveLk[NTRACKS][NPARAMS];
+    double stepStartClock = 0, curStepLen = 1;
+    double nextTickAt = 0, tickInt = 1; int ticksLeft = 0;
+    int tickCount = 0; double tickHist[25]; int tickHistN = 0;
+    bool sendStart = false, sendStop = false;
+    void initFx(int sampleRate);
+    void emit(uint8_t st, uint8_t d1, uint8_t d2, int off) { if (midiOut) midiOut(st, d1, d2, off); }
+    void allNotesOff();
+    void liveNoteOn(int t, int note, int vel);
+    void clockTick();
     void doStep();
-    void trigger(int t, const uint8_t* lk, float velScale, bool fromSeq);
+    void trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, bool toMidi = true);
     void processBlock(float* out, int n);
 };

@@ -13,8 +13,10 @@ PKGS=(
   pool/main/l/linux/linux-libc-dev_4.15.0-213.224_arm64.deb
   pool/universe/libs/libsdl2/libsdl2-dev_2.0.8+dfsg1-1ubuntu1.18.04.4_arm64.deb
   pool/universe/libs/libsdl2/libsdl2-2.0-0_2.0.8+dfsg1-1ubuntu1.18.04.4_arm64.deb
+  pool/main/a/alsa-lib/libasound2_1.1.3-5ubuntu0.6_arm64.deb
+  pool/main/a/alsa-lib/libasound2-dev_1.1.3-5ubuntu0.6_arm64.deb
 )
-if [ ! -f "$SYSROOT/.done" ]; then
+if [ ! -f "$SYSROOT/.done2" ]; then
   echo ">> Sysroot anlegen in $SYSROOT"
   mkdir -p "$SYSROOT/debs"
   for p in "${PKGS[@]}"; do
@@ -27,7 +29,7 @@ if [ ! -f "$SYSROOT/.done" ]; then
     for l in $(find . -maxdepth 1 -type l); do
       t=$(readlink "$l"); case "$t" in /*) ln -sf "$SYSROOT$t" "$l";; esac
     done )
-  touch "$SYSROOT/.done"
+  touch "$SYSROOT/.done2"
 fi
 CROSS=${CROSS:-aarch64-linux-gnu-}
 make clean >/dev/null

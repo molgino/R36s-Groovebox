@@ -10,7 +10,7 @@ WorkingDirectory=@GBDIR@
 Environment=SDL_AUDIODRIVER=alsa
 Environment=HOME=/root
 ExecStartPre=/bin/sh -c 'chmod +x @GBDIR@/groovebox'
-ExecStart=@GBDIR@/groovebox --buffer 256
+ExecStart=@GBDIR@/groovebox
 # Nach dem Beenden (oder einem Absturz) EmulationStation starten
 ExecStopPost=/bin/systemctl --no-block start @ESUNIT@
 Restart=no

@@ -5,14 +5,14 @@ CXX      ?= g++
 CC_LINK  ?= gcc
 SDL_CFLAGS ?= $(shell sdl2-config --cflags)
 SDL_LIBS   ?= $(shell sdl2-config --libs)
-CXXFLAGS += -O2 -Wall -Wextra -Wno-unused-parameter -fno-exceptions -fno-rtti -fno-threadsafe-statics $(SDL_CFLAGS)
+CXXFLAGS += -DWITH_MIDI -O2 -Wall -Wextra -Wno-unused-parameter -fno-exceptions -fno-rtti -fno-threadsafe-statics $(SDL_CFLAGS)
 LDFLAGS  +=
-SRC = src/main.cpp src/engine.cpp src/input.cpp
+SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp
 OBJ = $(SRC:.cpp=.o)
 OUT ?= groovebox
 
 $(OUT): $(OBJ)
-	$(CC_LINK) $(LDFLAGS) -o $@ $(OBJ) $(SDL_LIBS) -lm
+	$(CC_LINK) $(LDFLAGS) -o $@ $(OBJ) $(SDL_LIBS) -lasound -lm
 
 src/%.o: src/%.cpp src/*.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@

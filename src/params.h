@@ -4,16 +4,17 @@
 #include <stdio.h>
 #include <math.h>
 
-enum { NTRACKS = 8, NSTEPS = 16, NPATTERNS = 16, NPAGES = 5, NPARAMS = NPAGES * 8, PAGE_MST = 5, NUI_PAGES = 6 };
+enum { NTRACKS = 8, NSTEPS = 16, NPATTERNS = 16, NPAGES = 5, NPARAMS = NPAGES * 8, PAGE_MST = 5, PAGE_SYS = 6, NUI_PAGES = 7 };
 enum { NO_LOCK = 255 };
 
-enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_COUNT };
-static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM"};
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRIG", "SRC", "FILT", "AMP", "LFO", "MST"};
+enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_COUNT };
+static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL"};
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRIG", "SRC", "FILT", "AMP", "LFO", "MST", "SYS"};
 
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
-    K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT
+    K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
+    K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -67,12 +68,23 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
     // FM
     {{"RATI", K_RATIO, 5, 15}, {"INDX", K_NUM, 50, 127}, {"FBK", K_NUM, 0, 127}, {"M.DEC", K_NUM, 50, 127},
      {"FINE", K_BIP, 64, 127}, {"NOIS", K_NUM, 0, 127}, PDEF_NONE, PDEF_NONE},
+    // SAMPLE (END < STRT = rueckwaerts)
+    {{"SMPL", K_SMPL, 0, 127}, {"TUNE", K_SEMI, 24, 48}, {"FINE", K_BIP, 64, 127}, {"STRT", K_NUM, 0, 127},
+     {"END", K_NUM, 127, 127}, {"LOOP", K_OFFON, 0, 1}, {"GAIN", K_NUM, 64, 127}, PDEF_NONE},
 };
 
 static const ParamDef MST_DEFS[8] = {
     {"BPM", K_BPM, 0, 0}, {"SWNG", K_SWNG, 0, 30}, {"D.TIM", K_DTIM, 4, 7}, {"D.FBK", K_NUM, 60, 127},
     {"D.TON", K_NUM, 80, 127}, {"R.SIZ", K_NUM, 80, 127}, {"R.DMP", K_NUM, 60, 127}, {"VOL", K_NUM, 100, 127},
 };
+
+// System-Seite (nicht im Projekt, sondern in settings.cfg)
+enum { SY_OUT = 0, SY_BUF, SY_MIN, SY_NOUT, SY_CLK, SY_MCH, SY_REC, SY_PORT };
+static const ParamDef SYS_DEFS[8] = {
+    {"OUT", K_DEV, 0, 0}, {"BUF", K_BUFS, 1, 3}, {"M.IN", K_OFFON, 1, 1}, {"N.OUT", K_OFFON, 0, 1},
+    {"CLK", K_CLK, 0, 2}, {"M.CH", K_CHM, 0, 1}, {"REC", K_OFFON, 0, 1}, {"MIDI", K_INFO, 0, 0},
+};
+static const int BUF_SIZES[4] = {128, 256, 512, 1024};
 
 static const float FM_RATIOS[16] = {0.25f, 0.5f, 0.75f, 1, 1.5f, 2, 2.5f, 3, 3.5f, 4, 5, 6, 7, 8, 9, 11};
 static const float DLY_STEPS[8] = {0.5f, 1, 1.5f, 2, 3, 4, 6, 8};
@@ -116,5 +128,11 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_SWNG: snprintf(buf, n, "%d%%", 50 + v); break;
     case K_CNT: snprintf(buf, n, "%d", v + 1); break;
     case K_BPM: snprintf(buf, n, "%d", v); break;
+    case K_SEMI: snprintf(buf, n, "%+d", v - 24); break;
+    case K_OFFON: snprintf(buf, n, "%s", v ? "ON" : "OFF"); break;
+    case K_BUFS: snprintf(buf, n, "%d", BUF_SIZES[v & 3]); break;
+    case K_CLK: snprintf(buf, n, "%s", v == 1 ? "SEND" : (v == 2 ? "RECV" : "OFF")); break;
+    case K_CHM: snprintf(buf, n, "%s", v ? "1-8" : "AUTO"); break;
+    default: snprintf(buf, n, "%d", v); break;
     }
 }

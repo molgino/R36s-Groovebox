@@ -9,6 +9,8 @@
 #include "engine.h"
 #include "input.h"
 #include "font.h"
+#include "samples.h"
+#include "midi.h"
 
 static const int SW = 640, SH = 480;
 
@@ -39,6 +41,20 @@ static volatile float cpuLoad = 0;
 static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
+// System-Einstellungen (settings.cfg)
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm; };
+static Settings cfg = {"", 1, 1, 0, 0, 0};
+static char setPath[600];
+static int bufOverride = 0;
+static int devCount = 0;
+static char devNames[16][128];
+static Uint32 audioApplyAt = 0;
+static int lastStepRec = 0;
+static Uint32 taps[4]; static int tapN = 0;
+static bool stickDj = false;
+static volatile double cbTime = 0;
+static volatile int cbFrames = 256;
+
 static void lockA() { if (audioDev) SDL_LockAudioDevice(audioDev); }
 static void unlockA() { if (audioDev) SDL_UnlockAudioDevice(audioDev); }
 static bool saveProject() {
@@ -50,6 +66,52 @@ static int clampi(int x, int a, int b) { return x < a ? a : (x > b ? b : x); }
 static void toast(const char* fmt, ...) {
     va_list ap; va_start(ap, fmt); vsnprintf(msg, sizeof msg, fmt, ap); va_end(ap);
     msgUntil = SDL_GetTicks() + 1400;
+}
+
+static void loadSettings() {
+    FILE* f = fopen(setPath, "r");
+    if (!f) return;
+    char line[200];
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        char* sp = strchr(line, ' ');
+        if (!sp || line[0] == '#') continue;
+        *sp = 0;
+        const char* v = sp + 1;
+        if (!strcmp(line, "audio_device")) snprintf(cfg.dev, sizeof cfg.dev, "%s", v);
+        else if (!strcmp(line, "buffer")) cfg.buf = clampi(atoi(v), 0, 3);
+        else if (!strcmp(line, "midi_in")) cfg.midiIn = atoi(v) != 0;
+        else if (!strcmp(line, "midi_notes_out")) cfg.notesOut = atoi(v) != 0;
+        else if (!strcmp(line, "midi_clock")) cfg.clk = clampi(atoi(v), 0, 2);
+        else if (!strcmp(line, "midi_channels")) cfg.chm = atoi(v) != 0;
+    }
+    fclose(f);
+}
+static void saveSettings() {
+    FILE* f = fopen(setPath, "w");
+    if (!f) return;
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm);
+    fclose(f);
+}
+static void applyMidiSettings() {
+    eng.midiInOn = cfg.midiIn != 0;
+    eng.notesOut = cfg.notesOut != 0;
+    eng.clockMode = cfg.clk;
+    eng.chMode = cfg.chm;
+}
+static void refreshDevices() {
+    int n = SDL_GetNumAudioDevices(0);
+    devCount = 0;
+    for (int i = 0; i < n && devCount < 16; i++) {
+        const char* nm = SDL_GetAudioDeviceName(i, 0);
+        if (nm) snprintf(devNames[devCount++], 128, "%s", nm);
+    }
+}
+static int devIndex() {
+    if (!cfg.dev[0]) return 0;
+    for (int i = 0; i < devCount; i++) if (!strcmp(devNames[i], cfg.dev)) return i + 1;
+    return 0;
 }
 
 // ---------------------------------------------------------------- Zeichnen
@@ -141,12 +203,13 @@ static void drawHeader() {
     text(84, 4, b, C_TEXT);
     snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]);
     text(84, 21, b, C_DIM);
+    if (eng.recording) { fill(140, 25, 8, 8, C_TRIG); text(150, 21, "REC", C_TRIG); }
     snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
     text(170, 4, b, eng.mute[track] ? C_DIM : C_ACC, 2);
     for (int p = 0; p < NUI_PAGES; p++) {
-        int x = 370 + p * 40;
-        if (p == page) { fill(x, 3, 38, 18, C_ACC); textC(x + 19, 4, PAGE_NAMES[p], C_BG); }
-        else textC(x + 19, 4, PAGE_NAMES[p], C_DIM);
+        int x = 368 + p * 35;
+        if (p == page) { fill(x, 3, 34, 18, C_ACC); textC(x + 17, 4, PAGE_NAMES[p], C_BG); }
+        else textC(x + 17, 4, PAGE_NAMES[p], C_DIM);
     }
     if (aHeld) {
         snprintf(b, sizeof b, "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
@@ -154,6 +217,8 @@ static void drawHeader() {
     } else {
         snprintf(b, sizeof b, "CPU %2d%%  LEN %d", (int)(cpuLoad * 100), curP().len[track]);
         text(370, 23, b, C_DIM);
+        if (strcmp(midiBackend(), "AUS"))
+            text(560, 23, "MIDI", SDL_GetTicks() - midiActivity < 150 ? C_GREEN : C_DIM);
     }
     // Pegel
     int ml = clampi((int)(eng.peakL * 36), 0, 36), mr = clampi((int)(eng.peakR * 36), 0, 36);
@@ -171,14 +236,35 @@ static void drawKnobs() {
         bool sel = k == slot;
         if (sel) fill(x + 2, y + 1, 156, 92, C_SEL);
         ParamDef d; int val; bool locked = false;
+        char label[24] = "";
         if (page == PAGE_MST) {
             d = MST_DEFS[k];
             val = k == MS_BPM ? eng.proj.bpm : eng.proj.mst[k];
+        } else if (page == PAGE_SYS) {
+            d = SYS_DEFS[k];
+            switch (k) {
+            case SY_OUT: val = devIndex(); d.max = (uint8_t)devCount; snprintf(label, sizeof label, "%.19s", val ? devNames[val - 1] : "STANDARD"); break;
+            case SY_BUF: val = bufOverride ? 0 : cfg.buf; break;
+            case SY_MIN: val = cfg.midiIn; break;
+            case SY_NOUT: val = cfg.notesOut; break;
+            case SY_CLK: val = cfg.clk; break;
+            case SY_MCH: val = cfg.chm; break;
+            case SY_REC: val = eng.recording; break;
+            default: {
+                char nm[256]; val = midiPortInfo(nm, sizeof nm);
+                snprintf(label, sizeof label, "%.19s", strcmp(midiBackend(), "AUS") ? nm : "MIDI AUS");
+            } break;
+            }
+            if (k == SY_BUF && bufOverride) snprintf(label, sizeof label, "--buffer %d", bufOverride);
         } else {
             int idx = page * 8 + k;
             d = paramDef(m, idx);
             val = P.p[track][idx];
             if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
+            if (d.kind == K_SMPL) {
+                d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
+                snprintf(label, sizeof label, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
+            }
         }
         int cx = x + 80, cy = y + 38;
         if (d.kind == K_NONE) {
@@ -189,9 +275,11 @@ static void drawKnobs() {
         float frac = d.kind == K_BPM ? (val - 30) / 270.f : (d.max ? (float)val / d.max : 0.f);
         Col kc = locked ? C_LOCK : (sel ? C_ACC : C_TEXT);
         knob(cx, cy, 27, frac, d.kind == K_BIP, kc);
-        fmtParam(d, val, b, sizeof b);
+        if (d.kind == K_SMPL) snprintf(b, sizeof b, "%d", val + 1);
+        else if (d.kind == K_DEV) { if (val) snprintf(b, sizeof b, "#%d", val); else snprintf(b, sizeof b, "STD"); }
+        else fmtParam(d, val, b, sizeof b);
         textC(cx, cy - 8, b, locked ? C_LOCK : C_TEXT);
-        textC(cx, y + 70, d.name, sel ? C_ACC : C_DIM);
+        textC(cx, y + 70, label[0] ? label : d.name, sel ? C_ACC : C_DIM);
     }
     if (SDL_GetTicks() < msgUntil) {
         int w = textW(msg) + 24;
@@ -250,7 +338,7 @@ static void drawHelp() {
     static const char* lines[] = {
         "SELECT (FUNC) GEHALTEN +",
         "  LINKS/RECHTS   Pattern wechseln",
-        "  HOCH/RUNTER    Tempo +/-",
+        "  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo",
         "  A              Spur stumm",
         "  B              Spur loeschen",
         "  X / Y          Maschine wechseln",
@@ -284,6 +372,27 @@ static void drawAll(bool help) {
 // ---------------------------------------------------------------- Bedienung
 
 static void editValue(int delta) {
+    if (page == PAGE_SYS) {
+        int d = delta > 0 ? 1 : -1;
+        switch (slot) {
+        case SY_OUT: {
+            refreshDevices();
+            int i = clampi(devIndex() + d, 0, devCount);
+            snprintf(cfg.dev, sizeof cfg.dev, "%s", i ? devNames[i - 1] : "");
+            audioApplyAt = SDL_GetTicks() + 800;
+        } break;
+        case SY_BUF: cfg.buf = clampi(cfg.buf + d, 0, 3); bufOverride = 0; audioApplyAt = SDL_GetTicks() + 800; break;
+        case SY_MIN: cfg.midiIn = d > 0; break;
+        case SY_NOUT: cfg.notesOut = d > 0; break;
+        case SY_CLK: cfg.clk = clampi(cfg.clk + d, 0, 2); break;
+        case SY_MCH: cfg.chm = d > 0; break;
+        case SY_REC: eng.recording = d > 0; return;
+        default: return;
+        }
+        applyMidiSettings();
+        saveSettings();
+        return;
+    }
     if (page == PAGE_MST) {
         if (slot == MS_BPM) eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + delta, 30, 300);
         else eng.proj.mst[slot] = (uint8_t)clampi(eng.proj.mst[slot] + delta, 0, MST_DEFS[slot].max);
@@ -291,8 +400,9 @@ static void editValue(int delta) {
     }
     Pattern& P = curP();
     int idx = page * 8 + slot;
-    const ParamDef& d = paramDef(P.machine[track], idx);
+    ParamDef d = paramDef(P.machine[track], idx);
     if (d.kind == K_NONE) return;
+    if (d.kind == K_SMPL) d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
     if (aHeld) {
         Step& s = holdS();
         int cur = s.lock[idx] != NO_LOCK ? s.lock[idx] : eng.proj.pat[holdPat].p[holdTrack][idx];
@@ -301,11 +411,12 @@ static void editValue(int delta) {
     } else {
         P.p[track][idx] = (uint8_t)clampi(P.p[track][idx] + delta, 0, d.max);
     }
-    if (idx == P_NOTE) { lockA(); eng.preview(track, aHeld ? &holdS() : nullptr); unlockA(); }
+    if (idx == P_NOTE || d.kind == K_SMPL) { lockA(); eng.preview(track, aHeld ? &holdS() : nullptr); unlockA(); }
 }
 
 static int curMax() {
     if (page == PAGE_MST) return slot == MS_BPM ? 270 : MST_DEFS[slot].max;
+    if (page == PAGE_SYS) return 1;
     return paramDef(curP().machine[track], page * 8 + slot).max;
 }
 
@@ -325,9 +436,22 @@ static void handleInput(Uint32 now, float dt) {
             unlockA();
             toast("PATTERN %02d", to + 1);
         }
-        if (I.repeat(BT_UP, now) || I.repeat(BT_DOWN, now)) {
+        if (I.pressed(BT_UP)) {
             funcUsed = true;
-            eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + (I.down[BT_UP] ? 1 : -1), 30, 300);
+            eng.recording = !eng.recording;
+            toast(eng.recording ? "AUFNAHME AN" : "AUFNAHME AUS");
+        }
+        if (I.pressed(BT_DOWN)) {   // Tap-Tempo
+            funcUsed = true;
+            if (tapN && now - taps[(tapN - 1) % 4] > 2000) tapN = 0;
+            taps[tapN % 4] = now; tapN++;
+            int n = tapN < 4 ? tapN : 4;
+            if (n >= 2) {
+                Uint32 newest = taps[(tapN - 1) % 4], oldest = taps[(tapN - n) % 4];
+                float iv = (newest - oldest) / (float)(n - 1);
+                if (iv > 0) eng.proj.bpm = (uint16_t)clampi((int)(60000.f / iv + 0.5f), 30, 300);
+                toast("TAP %d BPM", eng.proj.bpm);
+            } else toast("TAP ...");
         }
         if (I.pressed(BT_A)) { funcUsed = true; eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
         if (I.pressed(BT_B)) {
@@ -387,6 +511,7 @@ static void handleInput(Uint32 now, float dt) {
             lockA();
             if (eng.playing) eng.stop(); else eng.start();
             unlockA();
+            if (!eng.playing && eng.clockMode == 2) toast("WARTE AUF MIDI-START");
         }
         int big = curMax() >= 100;
         int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
@@ -408,7 +533,16 @@ static void handleInput(Uint32 now, float dt) {
     }
     if (aHeld && !I.down[BT_A]) aHeld = false;
     float ry = I.ry;
-    eng.dj = fabsf(ry) > 0.2f ? (ry > 0 ? (ry - 0.2f) / 0.8f : (ry + 0.2f) / 0.8f) : 0.f;
+    if (fabsf(ry) > 0.2f) { eng.dj = ry > 0 ? (ry - 0.2f) / 0.8f : (ry + 0.2f) / 0.8f; stickDj = true; }
+    else if (stickDj) { eng.dj = 0.f; stickDj = false; }
+    // Zustand fuer MIDI-Eingang / Step-Aufnahme
+    eng.uiTrack = track; eng.uiPage = page; eng.uiCursor = cursor;
+    if (eng.stepRecCount != lastStepRec) {
+        lastStepRec = eng.stepRecCount;
+        int len = curP().len[track] < 1 ? 1 : curP().len[track];
+        cursor = (cursor + 1) % len;
+    }
+    if (I.pressed(BT_R2) || I.pressed(BT_L2)) if (page == PAGE_SYS) refreshDevices();
 }
 
 // ---------------------------------------------------------------- Lernmodus
@@ -493,9 +627,18 @@ static bool runLearn() {
 
 // ---------------------------------------------------------------- Audio / Hilfen
 
+static void midiOutHook(uint8_t st, uint8_t d1, uint8_t d2, int off) {
+    MidiMsg m = {st, d1, d2, 0, cbTime + (double)(cbFrames + off) / eng.sr};
+    midiOutPush(m);
+}
+
 static void audioCb(void*, Uint8* stream, int len) {
     Uint64 t0 = SDL_GetPerformanceCounter();
     int frames = len / (int)(sizeof(float) * 2);
+    cbTime = midiNow();
+    cbFrames = frames;
+    MidiMsg mm;
+    while (midiInPop(mm)) eng.midiIn(mm.st, mm.d1, mm.d2);
     eng.render((float*)stream, frames);
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
@@ -519,23 +662,50 @@ static bool writeWav(const char* path, const float* data, int frames, int sr) {
     return true;
 }
 
+static void openAudio() {
+    if (audioDev) { SDL_CloseAudioDevice(audioDev); audioDev = 0; }
+    SDL_AudioSpec want, have;
+    SDL_zero(want);
+    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2;
+    want.samples = (Uint16)(bufOverride ? bufOverride : BUF_SIZES[cfg.buf]);
+    want.callback = audioCb;
+    const char* name = cfg.dev[0] ? cfg.dev : nullptr;
+    audioDev = SDL_OpenAudioDevice(name, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+    if (!audioDev && name) {
+        printf("Audio: '%s' nicht verfuegbar (%s) - nehme Standardausgang\n", name, SDL_GetError());
+        toast("AUSGANG NICHT VERFUEGBAR");
+        audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+    }
+    if (!audioDev) { printf("Audio: %s\n", SDL_GetError()); return; }
+    printf("Audio: %s, %d Hz, Puffer %d Frames (%.1f ms)\n", name ? name : "Standard", have.freq, have.samples,
+           have.samples * 1000.0 / have.freq);
+    eng.setRate(have.freq);
+    SDL_PauseAudioDevice(audioDev, 0);
+}
+
 static void setupPaths() {
     char* bp = SDL_GetBasePath();
     if (bp) { snprintf(basePath, sizeof basePath, "%s", bp); SDL_free(bp); }
     char dir[600];
     snprintf(dir, sizeof dir, "%sprojects", basePath);
     mkdir(dir, 0755);
-    snprintf(cfgPath, sizeof cfgPath, "%sinput.cfg", basePath);
     if (!projPath[0]) snprintf(projPath, sizeof projPath, "%s/project1.gbx", dir);
+    snprintf(cfgPath, sizeof cfgPath, "%sinput.cfg", basePath);
+    snprintf(setPath, sizeof setPath, "%ssettings.cfg", basePath);
+    char sdir[600];
+    snprintf(sdir, sizeof sdir, "%ssamples", basePath);
+    mkdir(sdir, 0755);
+    int ns = samplesLoad(sdir);
+    printf("%d Samples geladen aus %s\n", ns, sdir);
 }
 
 int main(int argc, char** argv) {
-    bool learn = false, windowed = false; int bufFrames = 256;
+    bool learn = false, windowed = false;
     const char* shot = nullptr; const char* renderOut = nullptr; float renderSecs = 8; int shotPage = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--learn")) learn = true;
         else if (!strcmp(argv[i], "--windowed")) windowed = true;
-        else if (!strcmp(argv[i], "--buffer") && i + 1 < argc) bufFrames = clampi(atoi(argv[++i]), 64, 4096);
+        else if (!strcmp(argv[i], "--buffer") && i + 1 < argc) bufOverride = clampi(atoi(argv[++i]), 64, 4096);
         else if (!strcmp(argv[i], "--project") && i + 1 < argc) snprintf(projPath, sizeof projPath, "%s", argv[++i]);
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) { shot = argv[++i]; if (i + 1 < argc && argv[i + 1][0] != '-') shotPage = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--render") && i + 1 < argc) { renderOut = argv[++i]; if (i + 1 < argc && argv[i + 1][0] != '-') renderSecs = (float)atof(argv[++i]); }
@@ -567,9 +737,11 @@ int main(int argc, char** argv) {
         eng.start();
         static float tmp[44100];
         for (int k = 0; k < 6; k++) eng.render(tmp, 22050 / 2);
-        page = shotPage; track = shotPage == 0 ? 4 : 0; cursor = 3; slot = 1;
-        if (shotPage == 1) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
-        if (shotPage == 6) { drawAll(true); } else drawAll(false);
+        // Seiten 0-6, 7 = Hilfe, 8 = P-Lock-Ansicht
+        page = shotPage % NUI_PAGES; track = page == 1 ? 7 : (page == 0 ? 4 : 0); cursor = 3; slot = page == 1 ? 0 : 1;
+        refreshDevices();
+        if (shotPage == 8) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
+        if (shotPage == 7) { page = 0; drawAll(true); } else drawAll(false);
         SDL_RenderPresent(ren);
         SDL_SaveBMP(surf, shot);
         return 0;
@@ -598,17 +770,18 @@ int main(int argc, char** argv) {
 
     if (learn || (!in.haveMap && in.joy && !in.gc)) runLearn();
 
-    SDL_AudioSpec want, have;
-    SDL_zero(want);
-    want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2; want.samples = (Uint16)bufFrames; want.callback = audioCb;
-    audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
-    if (!audioDev) printf("Audio: %s\n", SDL_GetError());
-    else printf("Audio: %d Hz, Puffer %d Frames (%.1f ms)\n", have.freq, have.samples, have.samples * 1000.0 / have.freq);
-    eng.init(audioDev ? have.freq : 44100);
+    loadSettings();
+    refreshDevices();
+    for (int i = 0; i < devCount; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, devNames[i]);
+    eng.init(44100);
     if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);
     memcpy(&lastSaved, &eng.proj, sizeof(Project));
+    applyMidiSettings();
+    eng.midiOut = midiOutHook;
+    midiStart();
+    openAudio();
+    toast("%d SAMPLES GELADEN", sampleCount());
     Uint32 lastAuto = SDL_GetTicks();
-    if (audioDev) SDL_PauseAudioDevice(audioDev, 0);
 
     Uint32 last = SDL_GetTicks();
     while (!quitReq) {
@@ -622,6 +795,7 @@ int main(int argc, char** argv) {
         float dt = (now - last) / 1000.f;
         last = now;
         handleInput(now, dt);
+        if (audioApplyAt && now >= audioApplyAt) { audioApplyAt = 0; openAudio(); }
         if (now - lastAuto > 120000) {   // Autosave alle 2 Minuten bei Aenderungen
             lastAuto = now;
             if (memcmp(&lastSaved, &eng.proj, sizeof(Project))) saveProject();
@@ -636,6 +810,7 @@ int main(int argc, char** argv) {
     lockA(); eng.stop(); unlockA();
     if (saveProject()) printf("Projekt gespeichert: %s\n", projPath);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
+    midiStop();
     SDL_Quit();
     return 0;
 }

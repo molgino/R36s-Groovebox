@@ -69,6 +69,15 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     if (!wasActive || m != M_SYNTH || P(P_S7) == 0) curNote = note;
     active = true;
     if (P(P_LTRG)) lfoPh = 0;
+    if (m == M_SAMPLE) {
+        smp = sampleGet(P(P_S0));
+        if (!smp) { active = false; return; }
+        int a = (int)(P(P_S3) / 127.f * (smp->len - 1)), e = (int)(P(P_S4) / 127.f * (smp->len - 1));
+        sRev = e < a;
+        sStart = a; sEnd = e; spos = a; sDone = false;
+        sLoop = P(P_S5) != 0;
+        if (sStart == sEnd) { active = false; return; }
+    }
     update(0, sr, 120);
     aenv.on();
     fenv.on();
@@ -78,6 +87,7 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     case M_HAT: denv = 1; break;
     case M_CLAP: clapLeft = P(P_S3) + 1; clapTimer = 0; clapTail = false; burst = 0; denv = 0; break;
     case M_FM: menv = 1; if (!wasActive) { ph1 = phM = 0; fbPrev = 0; } break;
+    case M_SAMPLE: aenv.v = 0; break;
     default: break;
     }
 }
@@ -149,6 +159,14 @@ void Voice::update(int n, float sr, float bpm) {
         pitchHz = 440.f * exp2f((nn - 69.f) / 12.f);
         mco = decayCo(0.01f * exp2f(P(P_S3) * (9.f / 127.f)), sr);
         break;
+    case M_SAMPLE:
+        if (smp) {
+            float semis = (nn - 60.f) + (P(P_S1) - 24) + (P(P_S2) - 64) / 64.f;
+            sinc = smp->rate / sr * exp2f(semis / 12.f) * (sRev ? -1.f : 1.f);
+            float g = P(P_S6) / 64.f;
+            sGain = g * g;
+        }
+        break;
     default:
         pitchHz = 440.f * exp2f((nn - 69.f) / 12.f);
         break;
@@ -169,7 +187,7 @@ void Voice::update(int n, float sr, float bpm) {
 
     if (gate > 0) {
         gate -= n;
-        if (gate <= 0) { gate = 0; if (machine >= M_SYNTH) noteOff(); }
+        if (gate <= 0) { gate = 0; if (gated()) noteOff(); }
     }
 }
 
@@ -262,6 +280,22 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             s += noise * rng.next() * 0.5f;
             s *= 0.6f;
         } break;
+        case M_SAMPLE: {
+            if (sDone || !smp) break;
+            int ip = (int)spos;
+            if (ip < 0) ip = 0;
+            if (ip >= smp->len) ip = smp->len - 1;
+            float fr = (float)(spos - ip);
+            float a = smp->data[ip], b = ip + 1 < smp->len ? smp->data[ip + 1] : a;
+            s = (a + (b - a) * fr) * sGain;
+            spos += sinc;
+            bool past = sRev ? spos <= sEnd : spos >= sEnd;
+            if (past) {
+                if (sLoop) spos = sStart + (spos - sEnd);
+                else sDone = true;
+                if (sRev ? spos < sEnd : spos > sEnd) spos = sStart;
+            }
+        } break;
         }
 
         fenv.tick();
@@ -286,6 +320,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     case M_KICK: case M_HAT: if (denv < 1e-4f) active = false; break;
     case M_SNARE: if (denv < 1e-4f && nenv < 1e-4f) active = false; break;
     case M_CLAP: if (clapTail && denv < 1e-4f && burst < 1e-4f) active = false; break;
+    case M_SAMPLE: if (sDone || aenv.st == 0) active = false; break;
     default: if (aenv.st == 0) active = false; break;
     }
     if (aenv.st == 3 && aenv.s <= 0.f) active = false;
@@ -334,14 +369,115 @@ void Reverb::process(float in, float size, float damp, float& oL, float& oR) {
 // ---------------------------------------------------------------- Engine
 
 void Engine::init(int sampleRate) {
-    sr = sampleRate;
     for (int i = 0; i <= 2048; i++) SINT[i] = sinf(i / 2048.f * 6.2831853f);
+    initFx(sampleRate);
+    for (int t = 0; t < NTRACKS; t++) {
+        v[t].rng.s = 0x1234567u * (t + 1);
+        midiNote[t] = liveNote[t] = skipStep[t] = -1;
+        midiGate[t] = 0;
+    }
+    defaultProject();
+}
+
+void Engine::initFx(int sampleRate) {
+    sr = sampleRate;
+    free(dlyL); free(dlyR);
     dlyLen = sr * 4 + 16;
     dlyL = (float*)calloc(dlyLen, sizeof(float));
     dlyR = (float*)calloc(dlyLen, sizeof(float));
+    dlyPos = 0;
+    for (int k = 0; k < 8; k++) { free(rev.cl[k].b); free(rev.cr[k].b); rev.cl[k] = Comb(); rev.cr[k] = Comb(); }
+    for (int k = 0; k < 4; k++) { free(rev.al[k].b); free(rev.ar[k].b); rev.al[k] = Allpass(); rev.ar[k] = Allpass(); }
     rev.init(sr);
-    for (int t = 0; t < NTRACKS; t++) v[t].rng.s = 0x1234567u * (t + 1);
-    defaultProject();
+}
+
+void Engine::setRate(int sampleRate) {
+    if (sampleRate == sr) return;
+    double ratio = (double)sampleRate / sr;
+    clock *= ratio; nextStepAt *= ratio; nextTickAt *= ratio; stepStartClock *= ratio;
+    initFx(sampleRate);
+}
+
+void Engine::allNotesOff() {
+    for (int t = 0; t < NTRACKS; t++) {
+        if (midiNote[t] >= 0) emit(0x80 | t, (uint8_t)midiNote[t], 0, curOff);
+        midiNote[t] = -1;
+        midiGate[t] = 0;
+    }
+}
+
+void Engine::liveNoteOn(int t, int note, int vel) {
+    Pattern& P = proj.pat[curPat];
+    memset(liveLk[t], NO_LOCK, NPARAMS);
+    liveLk[t][P_NOTE] = (uint8_t)note;
+    liveLk[t][P_VEL] = (uint8_t)vel;
+    v[t].noteOn(P.machine[t], P.p[t], liveLk[t], 1.f, -1, (float)sr);
+    liveNote[t] = note;
+    if (!recording) return;
+    int len = P.len[t] < 1 ? 1 : P.len[t];
+    int s;
+    if (playing) {
+        s = playedStep[t] % len;
+        if (clock - stepStartClock > curStepLen * 0.5) { s = (s + 1) % len; skipStep[t] = s; }
+    } else {
+        s = uiCursor % len;
+        stepRecCount++;
+    }
+    Step& st = P.s[t][s];
+    if (!st.on) { memset(st.lock, NO_LOCK, NPARAMS); st.on = 1; }
+    st.lock[P_NOTE] = (uint8_t)note;
+    st.lock[P_VEL] = (uint8_t)vel;
+}
+
+void Engine::clockTick() {
+    if (tickHistN < 25) tickHist[tickHistN++] = clock;
+    else { memmove(tickHist, tickHist + 1, sizeof(double) * 24); tickHist[24] = clock; }
+    if (tickHistN >= 13) {
+        double per = (tickHist[tickHistN - 1] - tickHist[0]) / (tickHistN - 1);
+        if (per > 0) {
+            double bpm = sr * 60.0 / (24.0 * per);
+            if (bpm >= 30 && bpm <= 300) proj.bpm = (uint16_t)(bpm + 0.5);
+        }
+    }
+    if (!playing) return;
+    if (tickCount % 6 == 0) {
+        stepStartClock = clock;
+        curStepLen = stepSamples();
+        doStep();
+    }
+    tickCount++;
+}
+
+void Engine::midiIn(uint8_t st, uint8_t d1, uint8_t d2) {
+    if (st == 0xF8) { if (clockMode == 2) clockTick(); return; }
+    if (st == 0xFA || st == 0xFB) {
+        if (clockMode != 2) return;
+        if (st == 0xFA) { for (int t = 0; t < NTRACKS; t++) trackPos[t] = 0; globalStep = 0; tickCount = 0; }
+        playing = true;
+        return;
+    }
+    if (st == 0xFC) { if (clockMode == 2) stop(); return; }
+    if (!midiInOn) return;
+    int type = st & 0xF0, ch = st & 0x0F;
+    int t = chMode == 0 ? uiTrack : (ch < NTRACKS ? ch : -1);
+    if (t < 0 || t >= NTRACKS) return;
+    if (type == 0x90 && d2 > 0) liveNoteOn(t, d1, d2);
+    else if (type == 0x80 || type == 0x90) {
+        if (liveNote[t] == d1) { if (v[t].gated()) v[t].noteOff(); liveNote[t] = -1; }
+    } else if (type == 0xB0) {
+        if (d1 == 1) { dj = (d2 - 64) / 64.f; return; }        // Modulationsrad = DJ-Filter
+        if (d1 < 70 || d1 > 77 || uiPage >= PAGE_MST) return;   // CC 70-77 = Regler 1-8
+        Pattern& P = proj.pat[curPat];
+        int idx = uiPage * 8 + (d1 - 70);
+        const ParamDef& d = paramDef(P.machine[t], idx);
+        if (d.kind == K_NONE) return;
+        uint8_t val = (uint8_t)((d2 * d.max + 63) / 127);
+        if (recording && playing) {
+            Step& s = P.s[t][playedStep[t]];
+            if (s.on) { s.lock[idx] = val; return; }
+        }
+        P.p[t][idx] = val;
+    }
 }
 
 static void resetTrack(Pattern& p, int t, int m) {
@@ -364,7 +500,7 @@ void Engine::setMachine(Pattern& p, int t, int m) {
 }
 
 void Engine::initPattern(Pattern& p) {
-    static const int defM[NTRACKS] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_SYNTH, M_FM, M_SYNTH};
+    static const int defM[NTRACKS] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_SYNTH, M_FM, M_SAMPLE};
     memset(&p, 0, sizeof(p));
     for (int t = 0; t < NTRACKS; t++) {
         resetTrack(p, t, defM[t]);
@@ -375,8 +511,7 @@ void Engine::initPattern(Pattern& p) {
     p.p[4][P_NOTE] = 36;                                          // Bass
     p.p[5][P_S0] = 1; p.p[5][P_DLY] = 50; p.p[5][P_FREQ] = 85;    // Lead
     p.p[6][P_NOTE] = 72; p.p[6][P_DLY] = 40; p.p[6][P_REV] = 50;  // FM-Glocke
-    p.p[7][P_AATK] = 75; p.p[7][P_AREL] = 95; p.p[7][P_REV] = 70; // Pad
-    p.p[7][P_S2] = 80; p.p[7][P_S3] = 64; p.p[7][P_LEN] = 80;
+    p.p[7][P_S0] = 11; p.p[7][P_DLY] = 35; p.p[7][P_REV] = 45;   // Sample (Start-Paket: keys/stab-minor)
 }
 
 void Engine::defaultProject() {
@@ -396,32 +531,46 @@ void Engine::defaultProject() {
     const int bs[] = {0, 3, 6, 8, 11, 14}; const int bn[] = {36, 36, 48, 36, 39, 43};
     for (int k = 0; k < 6; k++) { p.s[4][bs[k]].on = 1; p.s[4][bs[k]].lock[P_NOTE] = (uint8_t)bn[k]; }
     p.s[6][0].on = 1; p.s[6][10].on = 1; p.s[6][10].lock[P_NOTE] = 79;
+    p.s[7][6].on = 1; p.s[7][14].on = 1; p.s[7][14].lock[P_NOTE] = 63;
 }
 
 void Engine::start() {
-    for (int t = 0; t < NTRACKS; t++) trackPos[t] = 0;
+    for (int t = 0; t < NTRACKS; t++) { trackPos[t] = 0; skipStep[t] = -1; }
     if (nextPat >= 0) { curPat = nextPat; nextPat = -1; }
     globalStep = 0;
+    tickCount = 0;
     nextStepAt = clock;
+    if (clockMode == 1) sendStart = true;
+    if (clockMode == 2) return;   // externer Takt startet per MIDI-Start
     playing = true;
 }
 
 void Engine::stop() {
     playing = false;
-    for (int t = 0; t < NTRACKS; t++) { v[t].noteOff(); rt[t].left = 0; }
+    for (int t = 0; t < NTRACKS; t++) { if (v[t].gated()) v[t].noteOff(); rt[t].left = 0; }
+    ticksLeft = 0;
+    sendStop = true;
 }
 
 void Engine::preview(int t, const Step* s) {
-    trigger(t, (s && s->on) ? s->lock : nullptr, 1.f, false);
+    trigger(t, (s && s->on) ? s->lock : nullptr, 1.f, false, false);
 }
 
-void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq) {
+void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, bool toMidi) {
     Pattern& P = proj.pat[curPat];
     const uint8_t* b = P.p[t];
     auto val = [&](int i) { return (lk && lk[i] != NO_LOCK) ? lk[i] : b[i]; };
     float ls = lenSteps(val(P_LEN));
     int gs = ls < 0 ? -1 : (int)(ls * stepSamples()) + 1;
     v[t].noteOn(P.machine[t], b, lk, velScale, gs, (float)sr);
+    if (toMidi && notesOut && midiOut) {
+        if (midiNote[t] >= 0) emit(0x80 | t, (uint8_t)midiNote[t], 0, curOff);
+        int nn = val(P_NOTE);
+        int vv = (int)(val(P_VEL) * velScale + 0.5f);
+        emit(0x90 | t, (uint8_t)nn, (uint8_t)(vv < 1 ? 1 : (vv > 127 ? 127 : vv)), curOff);
+        midiNote[t] = nn;
+        midiGate[t] = gs > 0 ? gs : (int)stepSamples();
+    }
     if (fromSeq) {
         int r = val(P_RTRG);
         if (r > 0) {
@@ -450,7 +599,9 @@ void Engine::doStep() {
         int s = trackPos[t] % len;
         playedStep[t] = s;
         Step& st = P.s[t][s];
-        if (st.on && !mute[t]) {
+        bool skip = skipStep[t] == s;
+        if (skip) skipStep[t] = -1;
+        if (st.on && !mute[t] && !skip) {
             int prob = st.lock[P_PROB] != NO_LOCK ? st.lock[P_PROB] : P.p[t][P_PROB];
             if (prob >= 100 || rng.uni() * 100.f < prob) trigger(t, st.lock, 1.f, true);
         }
@@ -463,13 +614,32 @@ void Engine::render(float* out, int frames) {
     const int BLK = 16;
     for (int i = 0; i < frames; i += BLK) {
         int m = frames - i < BLK ? frames - i : BLK;
-        if (playing) {
+        curOff = i;
+        if (sendStop) { sendStop = false; allNotesOff(); if (clockMode == 1) emit(0xFC, 0, 0, i); }
+        if (sendStart) { sendStart = false; if (clockMode == 1) emit(0xFA, 0, 0, i); }
+        if (playing && clockMode != 2) {
             int guard = 0;
             while (clock >= nextStepAt && guard++ < 4) {
+                stepStartClock = nextStepAt;
                 doStep();
                 double S = stepSamples();
                 double sw = 0.5 + proj.mst[MS_SWNG] / 100.0;
-                nextStepAt += (globalStep & 1) ? 2.0 * S * sw : 2.0 * S * (1.0 - sw);
+                double d = (globalStep & 1) ? 2.0 * S * sw : 2.0 * S * (1.0 - sw);
+                nextStepAt += d;
+                curStepLen = d;
+                if (clockMode == 1) { ticksLeft = 6; tickInt = d / 6.0; nextTickAt = stepStartClock; }
+            }
+        }
+        while (ticksLeft > 0 && nextTickAt < clock + m) {
+            double o = nextTickAt - clock;
+            emit(0xF8, 0, 0, i + (o > 0 ? (int)o : 0));
+            nextTickAt += tickInt;
+            ticksLeft--;
+        }
+        for (int t = 0; t < NTRACKS; t++) {
+            if (midiNote[t] >= 0 && midiGate[t] > 0) {
+                midiGate[t] -= m;
+                if (midiGate[t] <= 0) { emit(0x80 | t, (uint8_t)midiNote[t], 0, i); midiNote[t] = -1; }
             }
         }
         for (int t = 0; t < NTRACKS; t++) {
@@ -478,7 +648,7 @@ void Engine::render(float* out, int frames) {
                 q.timer -= m;
                 if (q.timer <= 0) {
                     q.vel = clampf(q.vel + q.fade, 0.f, 1.5f);
-                    trigger(t, q.lk, q.vel, false);
+                    trigger(t, q.lk, q.vel, false, true);
                     q.left--;
                     q.timer += q.interval;
                 }
