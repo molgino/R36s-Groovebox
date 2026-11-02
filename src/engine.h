@@ -20,6 +20,8 @@ struct Project {
     uint8_t mst[8];
     uint8_t pad[2];
     Pattern pat[NPATTERNS];
+    uint8_t cmp[8];          // ab Version 2: Kompressor
+    uint8_t fx[8];           // ab Version 2: Delay/Reverb (vorher in mst)
 };
 
 struct Rng {
@@ -120,6 +122,7 @@ public:
     volatile float dj = 0;     // -1..1 DJ-Filter (rechter Stick)
     float djSm = 0;
     volatile float peakL = 0, peakR = 0;
+    volatile float grPeak = 0;   // Gain-Reduktion in dB (fuer die Anzeige)
     Voice v[NTRACKS];
 
     // MIDI (Ausgabe ueber Callback aus dem Audio-Thread; frameOff = Position im aktuellen Puffer)
@@ -150,6 +153,8 @@ private:
     float* dlyL = nullptr; float* dlyR = nullptr; int dlyLen = 0, dlyPos = 0; float dlpL = 0, dlpR = 0;
     Reverb rev;
     SVF djL, djR;
+    float cEnv = 0;
+    float* preBuf = nullptr; int preLen = 0, prePos = 0;
     Rng rng;
     int curOff = 0;
     int midiNote[NTRACKS], midiGate[NTRACKS], liveNote[NTRACKS], skipStep[NTRACKS];

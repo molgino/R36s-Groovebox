@@ -16,18 +16,41 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 | FM    | RATI, INDX, FBK, M.DEC, FINE, NOIS |
 | SMPL  | SMPL (Sample-Auswahl), TUNE (±24 Halbtöne), FINE, STRT, END (END < STRT = rückwärts), LOOP, GAIN |
 
-Jede Spur ist monophon (wie bei Digitakt und Co.) und hat diese Seiten:
+Jede Spur ist monophon (wie bei Digitakt und Co.). Ihre **Engine** wählst du auf der TRG-Seite mit dem Regler **ENGINE**: KICK, SNARE, HAT, CLAP, SYNTH, FM oder SMPL. Beim Drehen erscheint eine Auswahlleiste.
+Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regler auf die Grundwerte der neuen Engine gesetzt.
 
-* **TRIG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD
+Jede Spur hat diese Seiten:
+
+* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE
 * **SRC**: Regler der Maschine (siehe Tabelle)
-* **FILT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve
-* **AMP**: ADSR, Lautstärke, Panorama, Delay- und Reverb-Send
+* **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve
+* **AMP**: ADSR, Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
 * **LFO**: Tempo, Tiefe, Ziel (Pitch/Freq/Vol/Pan/Reso/Crush), Wellenform, Retrigger, Bitcrusher, Samplerate-Reduktion, Drive
 
-Dazu kommen zwei globale Seiten:
+Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 
-* **MST**: BPM, Swing, Delay (Zeit/Feedback/Ton), Reverb (Größe/Dämpfung) und Gesamtlautstärke
-* **SYS**: Audio-Ausgang, Puffergröße, MIDI-Einstellungen und Aufnahme (wird in `settings.cfg` gespeichert)
+* **FX**: die Send-Effekte
+  * Delay: D.TIME (1/32 bis 1/2, im Songtempo), D.FBK, D.TONE, D.PING (0 = mono, 127 = volles Ping-Pong)
+  * Reverb: R.SIZE, R.DAMP, R.PRE (Predelay bis 250 ms), R.WIDE (Stereobreite)
+* **CMP**: Master-Kompressor mit **Sidechain** (siehe unten)
+* **MST**: BPM, Swing, Gesamtlautstärke und DRIVE (Sättigung der Summe)
+* **SYS**: Audio-Ausgang, Puffergröße, MIDI und USB-Modus (wird in `settings.cfg` gespeichert)
+
+## Kompressor und Sidechain (CMP-Seite)
+
+| Regler | Funktion |
+|---|---|
+| THR | Schwelle −48 bis 0 dB (0 dB und GAIN 0 = aus) |
+| RATIO | 1.5:1 bis 20:1 und INF (Limiter), mit weichem Knie |
+| ATK / REL | Attack 0,1–100 ms, Release 10 ms–2 s |
+| GAIN | Make-up-Gain bis +24 dB |
+| SC | Sidechain-Quelle: INT = die Summe selbst, T1–T8 = diese Spur steuert den Kompressor |
+| MIX | Parallel-Kompression (127 = voll komprimiert) |
+| GR | Anzeige der aktuellen Gain-Reduktion. Zusätzlich zeigt der rote Balken im Header die Gain-Reduktion |
+
+Bei SC = T1 bis T8 läuft die Quellspur **am Kompressor vorbei**, und alles andere wird von ihr „weggedrückt“. Die Effekt-Returns zählen dazu.
+
+Klassisches Pumpen: SC = T1 (Kick), THR um −30 dB, RATIO 8:1 oder mehr, ATK kurz, REL 100–200 ms.
 
 ## Samples
 
@@ -89,7 +112,7 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | Linker Stick ↑/↓ | Wert stufenlos ändern |
 | Rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass |
 | L1 / R1 | Regler wählen |
-| L2 / R2 | Seite wählen (TRIG SRC FILT AMP LFO MST SYS) |
+| L2 / R2 | Seite wählen (TRG SRC FLT AMP LFO, global: FX CMP MST SYS) |
 | START | Play / Stop |
 | **SELECT halten** | Hilfe-Einblendung |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
@@ -97,7 +120,7 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | SELECT + ↓ | Tap-Tempo (mehrmals im Takt tippen) |
 | SELECT + A | Spur stummschalten |
 | SELECT + B | Spur löschen |
-| SELECT + X/Y | Maschine der Spur wechseln |
+| SELECT + X/Y | Engine der Spur wechseln (alternativ: Regler ENGINE auf der TRG-Seite) |
 | SELECT + L1/R1 | Pattern kopieren / einfügen |
 | SELECT + L2/R2 | Spurlänge (Polymetrie, 1 bis 16) |
 | SELECT + START | Speichern (2 s halten: Speichern und Beenden) |

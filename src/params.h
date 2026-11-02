@@ -4,17 +4,18 @@
 #include <stdio.h>
 #include <math.h>
 
-enum { NTRACKS = 8, NSTEPS = 16, NPATTERNS = 16, NPAGES = 5, NPARAMS = NPAGES * 8, PAGE_MST = 5, PAGE_SYS = 6, NUI_PAGES = 7 };
+enum { NTRACKS = 8, NSTEPS = 16, NPATTERNS = 16, NPAGES = 5, NPARAMS = NPAGES * 8, PAGE_FX = 5, PAGE_CMP = 6, PAGE_MST = 7, PAGE_SYS = 8, NUI_PAGES = 9 };
 enum { NO_LOCK = 255 };
 
 enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_COUNT };
 static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL"};
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRIG", "SRC", "FILT", "AMP", "LFO", "MST", "SYS"};
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SRC", "FLT", "AMP", "LFO", "FX", "CMP", "MST", "SYS"};
 
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
-    K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB
+    K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
+    K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -28,14 +29,16 @@ enum {
     P_LSPD = 32, P_LDEP, P_LDST, P_LWAV, P_LTRG, P_CRSH, P_SRR, P_DRIV
 };
 // Master-Seite
-enum { MS_BPM = 0, MS_SWNG, MS_DTIM, MS_DFBK, MS_DTON, MS_RSIZ, MS_RDMP, MS_VOL };
+enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV };
+// FX-Seite (Send-Effekte)
+enum { FX_DTIM = 0, FX_DFBK, FX_DTON, FX_DWID, FX_RSIZ, FX_RDMP, FX_RPRE, FX_RWID };
 
 static const ParamDef PDEF_NONE = {"", K_NONE, 0, 0};
 
 static const ParamDef COMMON_DEFS[NPARAMS] = {
     // TRIG
     {"NOTE", K_NOTE, 60, 127}, {"VEL", K_NUM, 100, 127}, {"LEN", K_LEN, 48, 127}, {"PROB", K_PCT, 100, 100},
-    {"RTRG", K_RTRG, 0, 6}, {"RFAD", K_BIP, 64, 127}, PDEF_NONE, PDEF_NONE,
+    {"RTRG", K_RTRG, 0, 6}, {"RFAD", K_BIP, 64, 127}, {"ENGINE", K_MACH, 0, M_COUNT - 1}, PDEF_NONE,
     // SRC (maschinenabhaengig, siehe SRC_DEFS)
     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
     // FILT
@@ -74,9 +77,26 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
 };
 
 static const ParamDef MST_DEFS[8] = {
-    {"BPM", K_BPM, 0, 0}, {"SWNG", K_SWNG, 0, 30}, {"D.TIM", K_DTIM, 4, 7}, {"D.FBK", K_NUM, 60, 127},
-    {"D.TON", K_NUM, 80, 127}, {"R.SIZ", K_NUM, 80, 127}, {"R.DMP", K_NUM, 60, 127}, {"VOL", K_NUM, 100, 127},
+    {"BPM", K_BPM, 0, 0}, {"SWNG", K_SWNG, 0, 30}, {"VOL", K_NUM, 100, 127}, {"DRIVE", K_NUM, 0, 127},
+    PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
 };
+static const ParamDef FX_DEFS[8] = {
+    {"D.TIME", K_DTIM, 4, 7}, {"D.FBK", K_NUM, 60, 127}, {"D.TONE", K_NUM, 80, 127}, {"D.PING", K_NUM, 127, 127},
+    {"R.SIZE", K_NUM, 80, 127}, {"R.DAMP", K_NUM, 60, 127}, {"R.PRE", K_MS, 0, 127}, {"R.WIDE", K_NUM, 100, 127},
+};
+inline float fxPreMs(int v) { return v * 250.f / 127.f; }
+
+// Kompressor-Seite (Master, mit Sidechain)
+enum { CM_THR = 0, CM_RAT, CM_ATK, CM_REL, CM_GAIN, CM_SRC, CM_MIX, CM_GR };
+static const ParamDef CMP_DEFS[8] = {
+    {"THR", K_THR, 127, 127}, {"RATIO", K_CRAT, 3, 8}, {"ATK", K_CATK, 50, 127}, {"REL", K_CREL, 60, 127},
+    {"GAIN", K_CGAIN, 0, 127}, {"SC", K_SCSRC, 0, 8}, {"MIX", K_NUM, 127, 127}, {"GR", K_GR, 0, 0},
+};
+static const float CMP_RATIOS[9] = {1.5f, 2, 3, 4, 6, 8, 12, 20, 1000};
+inline float cmpThrDb(int v) { return -48.f + v * 48.f / 127.f; }
+inline float cmpAtkMs(int v) { return 0.1f * exp2f(v * (10.f / 127.f)); }
+inline float cmpRelMs(int v) { return 10.f * exp2f(v * (7.6f / 127.f)); }
+inline float cmpGainDb(int v) { return v * 24.f / 127.f; }
 
 // System-Seite (nicht im Projekt, sondern in settings.cfg)
 enum { SY_OUT = 0, SY_BUF, SY_MIN, SY_NOUT, SY_CLK, SY_MCH, SY_USB, SY_PORT };
@@ -133,6 +153,14 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_BUFS: snprintf(buf, n, "%d", BUF_SIZES[v & 3]); break;
     case K_CLK: snprintf(buf, n, "%s", v == 1 ? "SEND" : (v == 2 ? "RECV" : "OFF")); break;
     case K_CHM: snprintf(buf, n, "%s", v ? "1-8" : "AUTO"); break;
+    case K_MS: snprintf(buf, n, "%.0fms", v * 250.f / 127.f); break;
+    case K_MACH: snprintf(buf, n, "%s", v < M_COUNT ? MACHINE_NAMES[v] : "?"); break;
+    case K_THR: snprintf(buf, n, "%.0fdB", cmpThrDb(v)); break;
+    case K_CRAT: if (v >= 8) snprintf(buf, n, "INF"); else snprintf(buf, n, "%g:1", CMP_RATIOS[v]); break;
+    case K_CATK: { float ms = cmpAtkMs(v); if (ms < 10) snprintf(buf, n, "%.1fms", ms); else snprintf(buf, n, "%.0fms", ms); } break;
+    case K_CREL: { float ms = cmpRelMs(v); if (ms < 1000) snprintf(buf, n, "%.0fms", ms); else snprintf(buf, n, "%.1fs", ms / 1000); } break;
+    case K_CGAIN: snprintf(buf, n, "+%.1f", cmpGainDb(v)); break;
+    case K_SCSRC: if (v) snprintf(buf, n, "T%d", v); else snprintf(buf, n, "INT"); break;
     case K_USB: snprintf(buf, n, "%s", v == 1 ? "PC" : (v == 2 ? "PC+A" : "HOST")); break;
     default: snprintf(buf, n, "%d", v); break;
     }

@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stddef.h>
 
 static float SINT[2049];
 static inline float sin01(float ph) {
@@ -392,6 +393,10 @@ void Engine::initFx(int sampleRate) {
     dlyL = (float*)calloc(dlyLen, sizeof(float));
     dlyR = (float*)calloc(dlyLen, sizeof(float));
     dlyPos = 0;
+    free(preBuf);
+    preLen = sr / 4 + 2;
+    preBuf = (float*)calloc(preLen, sizeof(float));
+    prePos = 0;
     for (int k = 0; k < 8; k++) { free(rev.cl[k].b); free(rev.cr[k].b); rev.cl[k] = Comb(); rev.cr[k] = Comb(); }
     for (int k = 0; k < 4; k++) { free(rev.al[k].b); free(rev.ar[k].b); rev.al[k] = Allpass(); rev.ar[k] = Allpass(); }
     rev.init(sr);
@@ -472,7 +477,7 @@ void Engine::midiIn(uint8_t st, uint8_t d1, uint8_t d2) {
         if (liveNote[t] == d1) { if (v[t].gated()) v[t].noteOff(); liveNote[t] = -1; }
     } else if (type == 0xB0) {
         if (d1 == 1) { dj = (d2 - 64) / 64.f; return; }        // Modulationsrad = DJ-Filter
-        if (d1 < 70 || d1 > 77 || uiPage >= PAGE_MST) return;   // CC 70-77 = Regler 1-8
+        if (d1 < 70 || d1 > 77 || uiPage >= PAGE_FX) return;   // CC 70-77 = Regler 1-8
         Pattern& P = proj.pat[curPat];
         int idx = uiPage * 8 + (d1 - 70);
         const ParamDef& d = paramDef(P.machine[t], idx);
@@ -523,9 +528,11 @@ void Engine::initPattern(Pattern& p) {
 void Engine::defaultProject() {
     memset(&proj, 0, sizeof(proj));
     memcpy(proj.magic, "GBX1", 4);
-    proj.version = 1;
+    proj.version = 2;
     proj.bpm = 120;
     for (int i = 0; i < 8; i++) proj.mst[i] = MST_DEFS[i].def;
+    for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
+    for (int i = 0; i < 8; i++) proj.fx[i] = FX_DEFS[i].def;
     for (int i = 0; i < NPATTERNS; i++) initPattern(proj.pat[i]);
     // Demo-Beat in Pattern 1
     Pattern& p = proj.pat[0];
@@ -666,19 +673,35 @@ void Engine::render(float* out, int frames) {
 }
 
 void Engine::processBlock(float* out, int n) {
-    float L[16] = {0}, R[16] = {0}, D[16] = {0}, RV[16] = {0};
+    float L[16] = {0}, R[16] = {0}, D[16] = {0}, RV[16] = {0}, KL[16] = {0}, KR[16] = {0};
+    int key = (int)proj.cmp[CM_SRC] - 1;   // -1 = intern (Summe), sonst Sidechain-Spur
     for (int t = 0; t < NTRACKS; t++) {
         if (!v[t].active) continue;
         v[t].update(n, (float)sr, proj.bpm);
-        v[t].render(L, R, D, RV, n, (float)sr);
+        if (t == key) v[t].render(KL, KR, D, RV, n, (float)sr);
+        else v[t].render(L, R, D, RV, n, (float)sr);
     }
-    int dlen = (int)(DLY_STEPS[proj.mst[MS_DTIM] & 7] * stepSamples());
+    // Kompressor-Parameter
+    float cThr = cmpThrDb(proj.cmp[CM_THR]);
+    float cSlope = 1.f - 1.f / CMP_RATIOS[proj.cmp[CM_RAT] > 8 ? 8 : proj.cmp[CM_RAT]];
+    float cAtk = 1.f - expf(-1000.f / (cmpAtkMs(proj.cmp[CM_ATK]) * sr));
+    float cRel = 1.f - expf(-1000.f / (cmpRelMs(proj.cmp[CM_REL]) * sr));
+    float cMake = exp2f(cmpGainDb(proj.cmp[CM_GAIN]) / 6.0206f);
+    float cMix = proj.cmp[CM_MIX] / 127.f;
+    bool cOn = proj.cmp[CM_THR] < 127 || proj.cmp[CM_GAIN] > 0;
+    float grMax = 0;
+    int dlen = (int)(DLY_STEPS[proj.fx[FX_DTIM] & 7] * stepSamples());
     if (dlen > dlyLen - 1) dlen = dlyLen - 1;
     if (dlen < 1) dlen = 1;
-    float fb = proj.mst[MS_DFBK] / 127.f * 0.95f;
-    float dtone = 0.05f + proj.mst[MS_DTON] / 127.f * 0.95f;
-    float rsize = proj.mst[MS_RSIZ] / 127.f, rdamp = proj.mst[MS_RDMP] / 127.f;
+    float fb = proj.fx[FX_DFBK] / 127.f * 0.95f;
+    float dtone = 0.05f + proj.fx[FX_DTON] / 127.f * 0.95f;
+    float dwid = proj.fx[FX_DWID] / 127.f, rwid = proj.fx[FX_RWID] / 127.f;
+    float rsize = proj.fx[FX_RSIZ] / 127.f, rdamp = proj.fx[FX_RDMP] / 127.f;
+    int pre = (int)(fxPreMs(proj.fx[FX_RPRE]) * sr / 1000.f);
+    if (pre > preLen - 1) pre = preLen - 1;
     float mv = proj.mst[MS_VOL] / 100.f; mv *= mv;
+    float mdrv = proj.mst[MS_DRIV] / 127.f;
+    float outG = 0.6f * mv * (1.f + 3.f * mdrv), outC = 1.f - 0.25f * mdrv;
 
     djSm += (dj - djSm) * 0.08f;
     int djMode = djSm < -0.03f ? 1 : (djSm > 0.03f ? 2 : 0);
@@ -693,22 +716,48 @@ void Engine::processBlock(float* out, int n) {
         dlyL[dlyPos] = D[i] + dlpR * fb;
         dlyR[dlyPos] = dlpL * fb;
         if (++dlyPos >= dlyLen) dlyPos = 0;
+        // Delay-Stereobreite: 0 = mono, 127 = volles Ping-Pong
+        float dm = (dlpL + dlpR) * 0.5f;
+        float wdL = dm + (dlpL - dm) * dwid, wdR = dm + (dlpR - dm) * dwid;
+        // Reverb mit Predelay
+        float rin = RV[i] + (dlpL + dlpR) * 0.15f;
+        if (pre > 0) {
+            int rp2 = prePos - pre; if (rp2 < 0) rp2 += preLen;
+            preBuf[prePos] = rin; rin = preBuf[rp2];
+            if (++prePos >= preLen) prePos = 0;
+        }
         float rl, rr;
-        rev.process(RV[i] + (dlpL + dlpR) * 0.15f, rsize, rdamp, rl, rr);
-        float oL = L[i] + dlpL + rl, oR = R[i] + dlpR + rr;
+        rev.process(rin, rsize, rdamp, rl, rr);
+        float rm = (rl + rr) * 0.5f;
+        rl = rm + (rl - rm) * rwid; rr = rm + (rr - rm) * rwid;
+        float oL = L[i] + wdL + rl, oR = R[i] + wdR + rr;
+        if (cOn) {
+            float det = key >= 0 ? fmaxf(fabsf(KL[i]), fabsf(KR[i])) : fmaxf(fabsf(oL), fabsf(oR));
+            cEnv += (det - cEnv) * (det > cEnv ? cAtk : cRel);
+            float over = 6.0206f * log2f(cEnv + 1e-9f) - cThr;
+            float gr = 0;   // weiches Knie, 6 dB
+            if (over > 3.f) gr = cSlope * over;
+            else if (over > -3.f) gr = cSlope * (over + 3.f) * (over + 3.f) / 12.f;
+            if (gr > grMax) grMax = gr;
+            float g = exp2f(-gr / 6.0206f) * cMake;
+            float w = 1.f - cMix + cMix * g;
+            oL *= w; oR *= w;
+        }
+        oL += KL[i]; oR += KR[i];
         if (djMode) {
             float lo, bp, hp;
             djL.proc(oL, lo, bp, hp); oL = djMode == 1 ? lo : hp;
             djR.proc(oR, lo, bp, hp); oR = djMode == 1 ? lo : hp;
         }
-        oL = fastTanh(oL * 0.6f * mv);
-        oR = fastTanh(oR * 0.6f * mv);
+        oL = fastTanh(oL * outG) * outC;
+        oR = fastTanh(oR * outG) * outC;
         out[2 * i] = oL; out[2 * i + 1] = oR;
         float al = fabsf(oL), ar = fabsf(oR);
         if (al > pl) pl = al;
         if (ar > pr) pr = ar;
     }
     peakL = pl; peakR = pr;
+    if (grMax > grPeak) grPeak = grMax;
 }
 
 bool Engine::save(const char* path) {
@@ -723,8 +772,20 @@ bool Engine::load(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return false;
     Project* tmp = (Project*)malloc(sizeof(Project));
-    bool ok = fread(tmp, sizeof(Project), 1, f) == 1 && memcmp(tmp->magic, "GBX1", 4) == 0 && tmp->version == 1;
+    size_t n = fread(tmp, 1, sizeof(Project), f);
     fclose(f);
+    bool ok = n >= 8 && memcmp(tmp->magic, "GBX1", 4) == 0 &&
+              ((tmp->version == 2 && n == sizeof(Project)) ||
+               (tmp->version == 1 && n == offsetof(Project, cmp)));
+    if (ok && tmp->version == 1) {   // altes Projekt umziehen: Effekte aus mst nach fx, Kompressor neu
+        uint8_t old[8];
+        memcpy(old, tmp->mst, 8);   // v1: BPM SWNG DTIM DFBK DTON RSIZ RDMP VOL
+        for (int i = 0; i < 8; i++) { tmp->cmp[i] = CMP_DEFS[i].def; tmp->fx[i] = FX_DEFS[i].def; tmp->mst[i] = MST_DEFS[i].def; }
+        tmp->fx[FX_DTIM] = old[2]; tmp->fx[FX_DFBK] = old[3]; tmp->fx[FX_DTON] = old[4];
+        tmp->fx[FX_RSIZ] = old[5]; tmp->fx[FX_RDMP] = old[6];
+        tmp->mst[MS_SWNG] = old[1]; tmp->mst[MS_VOL] = old[7];
+        tmp->version = 2;
+    }
     if (ok) memcpy(&proj, tmp, sizeof(Project));
     free(tmp);
     return ok;

@@ -226,6 +226,7 @@ static uint32_t lastTrigs[NTRACKS];
 static Uint32 pageAt = 0, lastFrame = 0;
 static int lastPage = -1;
 static float beatPulse = 0;
+static float grDisp = 0;
 static int lastBeat = -1;
 
 static void animate() {
@@ -241,6 +242,9 @@ static void animate() {
         float dec = meterV[t] * expf(-dt * 7.f);
         meterV[t] = pk > dec ? pk : dec;
     }
+    float g = eng.grPeak; eng.grPeak = 0;
+    float gd = grDisp * expf(-dt * 6.f);
+    grDisp = g > gd ? g : gd;
     int beat = eng.playing ? eng.playedStep[0] / 4 : -1;
     if (beat != lastBeat) { lastBeat = beat; if (beat >= 0) beatPulse = 1.f; }
     beatPulse -= dt * 4.f; if (beatPulse < 0) beatPulse = 0;
@@ -287,16 +291,16 @@ static void drawHeader() {
     snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
     text(196, 4, b, eng.mute[track] ? C_DIM : tc, 2);
     for (int p = 0; p < NUI_PAGES; p++) {
-        int x = 368 + p * 35;
-        if (p == page) { rrect(x, 3, 34, 18, 4, C_ACC); textC(x + 17, 4, PAGE_NAMES[p], C_BG); }
-        else textC(x + 17, 4, PAGE_NAMES[p], p >= PAGE_MST ? dimC(C_DIM, 0.8f) : C_DIM);
+        int x = 336 + p * 30;
+        if (p == page) { rrect(x - 1, 3, 31, 18, 4, C_ACC); textC(x + 15, 4, PAGE_NAMES[p], C_BG); }
+        else textC(x + 15, 4, PAGE_NAMES[p], p >= PAGE_FX ? dimC(C_DIM, 0.8f) : C_DIM);
     }
     if (aHeld) {
         snprintf(b, sizeof b, "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
-        text(370, 23, b, C_LOCK);
+        text(338, 23, b, C_LOCK);
     } else {
         snprintf(b, sizeof b, "CPU %2d%%  LEN %d", (int)(cpuLoad * 100), curP().len[track]);
-        text(370, 23, b, C_DIM);
+        text(338, 23, b, C_DIM);
         if (strcmp(midiBackend(), "AUS")) {
             bool act = SDL_GetTicks() - midiActivity < 150;
             rrect(554, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
@@ -305,6 +309,11 @@ static void drawHeader() {
     }
     int ml = clampi((int)(eng.peakL * 34), 0, 34), mr = clampi((int)(eng.peakR * 34), 0, 34);
     rrect(620, 3, 6, 34, 2, C_OFF); rrect(629, 3, 6, 34, 2, C_OFF);
+    if (eng.proj.cmp[CM_THR] < 127) {   // Gain-Reduktion des Kompressors (von oben nach unten)
+        int gh = clampi((int)(grDisp / 24.f * 34), 0, 34);
+        rrect(611, 3, 5, 34, 2, C_OFF);
+        if (gh) rrect(611, 3, 5, gh, 2, C_TRIG);
+    }
     if (ml) rrect(620, 37 - ml, 6, ml, 2, eng.peakL > 0.95f ? C_TRIG : C_GREEN);
     if (mr) rrect(629, 37 - mr, 6, mr, 2, eng.peakR > 0.95f ? C_TRIG : C_GREEN);
 }
@@ -316,6 +325,14 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
     if (page == PAGE_MST) {
         d = MST_DEFS[k];
         val = k == MS_BPM ? eng.proj.bpm : eng.proj.mst[k];
+    } else if (page == PAGE_FX) {
+        d = FX_DEFS[k];
+        val = eng.proj.fx[k];
+    } else if (page == PAGE_CMP) {
+        d = CMP_DEFS[k];
+        val = k == CM_GR ? 0 : eng.proj.cmp[k];
+        if (k == CM_SRC && val) snprintf(label, ln, "SC: T%d %s", val, MACHINE_NAMES[P.machine[val - 1]]);
+        if (k == CM_THR && val >= 127 && eng.proj.cmp[CM_GAIN] == 0) snprintf(label, ln, "THR (AUS)");
     } else if (page == PAGE_SYS) {
         d = SYS_DEFS[k];
         switch (k) {
@@ -336,22 +353,26 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         int idx = page * 8 + k;
         d = paramDef(P.machine[track], idx);
         val = P.p[track][idx];
-        if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
+        if (d.kind == K_MACH) val = P.machine[track];
+        else if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
         if (d.kind == K_SMPL) {
             d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
             snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
         }
     }
-    baseVal = (page < PAGE_MST) ? P.p[track][page * 8 + k] : val;
+    baseVal = (page < PAGE_FX && d.kind != K_MACH) ? P.p[track][page * 8 + k] : val;
     return d.kind != K_NONE;
 }
+
 static void knobText(const ParamDef& d, int val, char* b, int n) {
-    if (d.kind == K_SMPL) snprintf(b, n, "%d", val + 1);
+    if (d.kind == K_GR) snprintf(b, n, "-%.1f", grDisp);
+    else if (d.kind == K_SMPL) snprintf(b, n, "%d", val + 1);
     else if (d.kind == K_DEV) { if (val) snprintf(b, n, "#%d", val); else snprintf(b, n, "STD"); }
     else fmtParam(d, val, b, n);
 }
 static float knobFrac(const ParamDef& d, int val) {
     if (d.kind == K_BPM) return (val - 30) / 270.f;
+    if (d.kind == K_GR) return grDisp / 24.f > 1.f ? 1.f : grDisp / 24.f;
     return d.max ? (float)val / d.max : 0.f;
 }
 
@@ -373,7 +394,8 @@ static void drawKnobs() {
         }
         float frac = knobFrac(d, val);
         bool justEdited = sel && editAt && now - editAt < 300;
-        Col kc = locked ? C_LOCK : (sel ? (page >= PAGE_MST ? C_ACC : tc) : C_TEXT);
+        Col kc = locked ? C_LOCK : (sel ? (page >= PAGE_FX ? C_ACC : tc) : C_TEXT);
+        if (d.kind == K_GR) kc = C_TRIG;
         if (justEdited) kc = mix(kc, C_PLAY, 0.5f * (1.f - (now - editAt) / 300.f));
         knob(cx, cy, 27, frac, d.kind == K_BIP, kc);
         if (locked) {   // Grundwert als Markierung
@@ -385,13 +407,13 @@ static void drawKnobs() {
         textC(cx, y + 70, label[0] ? label : d.name, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
     }
     // grosse Werteanzeige beim Drehen bzw. Meldung (die juengste gewinnt)
-    bool showEdit = editAt && now - editAt < 900 && editAt >= msgAt;
+    bool showEdit = editAt && (now - editAt < 900 || editAt == 1) && editAt >= msgAt;
     bool showMsg = now < msgUntil && msgAt > editAt;
     if (showEdit) {
         ParamDef d; int val, baseVal; bool locked;
         if (knobInfo(editSlot, d, val, locked, baseVal, label, sizeof label)) {
             knobText(d, val, b, sizeof b);
-            Col c = locked ? C_LOCK : (page >= PAGE_MST ? C_ACC : tc);
+            Col c = locked ? C_LOCK : (page >= PAGE_FX ? C_ACC : tc);
             rrect(150, 204, 340, 34, 8, C_BG, 240);
             rrect(150, 204, 4, 34, 2, c);
             text(164, 213, label[0] ? label : d.name, C_DIM);
@@ -401,6 +423,15 @@ static void drawKnobs() {
             if (fw > 0) rrect(bx, 217, fw, 8, 3, c);
             text(478 - textW(b, 1) - 2, 213, b, c);
             if (locked) text(bx, 205, "LOCK", C_LOCK);
+            if (d.kind == K_MACH) {   // Auswahlleiste aller Engines
+                rrect(150, 204, 340, 34, 8, C_BG, 250);
+                rrect(150, 204, 4, 34, 2, c);
+                for (int m = 0; m < M_COUNT; m++) {
+                    int mx = 160 + m * 47;
+                    if (m == val) rrect(mx - 2, 211, 46, 20, 5, c);
+                    textC(mx + 21, 213, MACHINE_NAMES[m], m == val ? C_BG : C_DIM);
+                }
+            }
         }
     } else if (showMsg) {
         int w = textW(msg) + 28;
@@ -477,6 +508,8 @@ static void drawSteps() {
     if (aHeld) h = "[X/Y/STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
     else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]MASCH [L1/R1]CPY/PST";
     else if (page == PAGE_SYS) h = "[X/Y] AENDERN  [L1/R1] EINSTELLUNG  [L2/R2] SEITE  [START] PLAY";
+    else if (page == PAGE_FX) h = "[X/Y] WERT [L1/R1] REGLER   SENDS PRO SPUR: AMP-SEITE (DLY/REV)";
+    else if (page == PAGE_CMP) h = "[X/Y] WERT [L1/R1] REGLER   SC=T1 + RATIO HOCH = KICK DUCKT ALLES";
     else if (page == PAGE_MST) h = "[X/Y] WERT  [L1/R1] REGLER  [L2/R2] SEITE  [SEL+v] TAP-TEMPO";
     else h = "[A]TRIG [B]HOER [X/Y]WERT [L1/R1]REGLER [L2/R2]SEITE [SEL]FUNC";
     hint(6, 452, h, C_ACC, C_DIM);
@@ -545,9 +578,17 @@ static void editValue(int delta) {
         saveSettings();
         return;
     }
+    if (page == PAGE_FX) {
+        eng.proj.fx[slot] = (uint8_t)clampi(eng.proj.fx[slot] + delta, 0, FX_DEFS[slot].max);
+        return;
+    }
+    if (page == PAGE_CMP) {
+        if (slot != CM_GR) eng.proj.cmp[slot] = (uint8_t)clampi(eng.proj.cmp[slot] + delta, 0, CMP_DEFS[slot].max);
+        return;
+    }
     if (page == PAGE_MST) {
         if (slot == MS_BPM) eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + delta, 30, 300);
-        else eng.proj.mst[slot] = (uint8_t)clampi(eng.proj.mst[slot] + delta, 0, MST_DEFS[slot].max);
+        else if (MST_DEFS[slot].kind != K_NONE) eng.proj.mst[slot] = (uint8_t)clampi(eng.proj.mst[slot] + delta, 0, MST_DEFS[slot].max);
         return;
     }
     Pattern& P = curP();
@@ -555,6 +596,12 @@ static void editValue(int delta) {
     ParamDef d = paramDef(P.machine[track], idx);
     if (d.kind == K_NONE) return;
     if (d.kind == K_SMPL) d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
+    if (d.kind == K_MACH) {   // Engine der Spur (nicht lockbar)
+        if (aHeld) return;
+        int m = clampi(P.machine[track] + (delta > 0 ? 1 : -1), 0, M_COUNT - 1);
+        if (m != P.machine[track]) { lockA(); Engine::setMachine(P, track, m); unlockA(); lockA(); eng.preview(track, nullptr); unlockA(); }
+        return;
+    }
     if (aHeld) {
         Step& s = holdS();
         int cur = s.lock[idx] != NO_LOCK ? s.lock[idx] : eng.proj.pat[holdPat].p[holdTrack][idx];
@@ -569,6 +616,8 @@ static void editValue(int delta) {
 static int curMax() {
     if (page == PAGE_MST) return slot == MS_BPM ? 270 : MST_DEFS[slot].max;
     if (page == PAGE_SYS) return 1;
+    if (page == PAGE_CMP) return CMP_DEFS[slot].max;
+    if (page == PAGE_FX) return FX_DEFS[slot].max;
     return paramDef(curP().machine[track], page * 8 + slot).max;
 }
 
@@ -915,13 +964,19 @@ int main(int argc, char** argv) {
         eng.start();
         static float tmp[44100];
         for (int k = 0; k < 6; k++) eng.render(tmp, 22050 / 2);
-        // Seiten 0-6, 7 = Hilfe, 8 = P-Lock-Ansicht
+        // Seiten 0-7, 10 = Hilfe, 11 = P-Lock-Ansicht, 12 = Werte-Overlay
         page = shotPage % NUI_PAGES; track = page == 1 ? 7 : (page == 0 ? 4 : 0); cursor = 3; slot = page == 1 ? 0 : 1;
         refreshDevices();
-        if (shotPage == 8) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
-        if (shotPage == 9) { page = 2; slot = 0; track = 4; animate(); editAt = SDL_GetTicks(); editSlot = 0; eng.recording = true; }
+        if (shotPage == 11) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
+        if (shotPage == 13) { page = 0; slot = 6; track = 4; editSlot = 6; editAt = 1; }
+        if (shotPage == 6) {   // Sidechain-Beispiel
+            eng.proj.cmp[CM_SRC] = 1; eng.proj.cmp[CM_THR] = 40; eng.proj.cmp[CM_RAT] = 6; slot = 5;
+            for (int k = 0; k < 4; k++) eng.render(tmp, 22050 / 2);
+            animate();
+        }
+        if (shotPage == 12) { page = 2; slot = 0; track = 4; animate(); editAt = SDL_GetTicks(); editSlot = 0; eng.recording = true; }
         lastPage = page;
-        if (shotPage == 7) { page = 0; drawAll(true); } else drawAll(false);
+        if (shotPage == 10) { page = 0; drawAll(true); } else drawAll(false);
         SDL_RenderPresent(ren);
         SDL_SaveBMP(surf, shot);
         return 0;
