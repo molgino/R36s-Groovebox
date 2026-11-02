@@ -1,0 +1,7 @@
+.sysroot/
+src/*.o
+/groovebox
+/groovebox-aarch64
+projects/
+input.cfg
+*.log

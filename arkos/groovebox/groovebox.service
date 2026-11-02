@@ -1,0 +1,19 @@
+[Unit]
+Description=R36S Groovebox (ersetzt EmulationStation)
+After=multi-user.target sound.target
+Conflicts=@ESUNIT@
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=@GBDIR@
+Environment=SDL_AUDIODRIVER=alsa
+Environment=HOME=/root
+ExecStartPre=/bin/sh -c 'chmod +x @GBDIR@/groovebox'
+ExecStart=@GBDIR@/groovebox --buffer 256
+# Nach dem Beenden (oder einem Absturz) EmulationStation starten
+ExecStopPost=/bin/systemctl --no-block start @ESUNIT@
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
