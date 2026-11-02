@@ -138,6 +138,9 @@ aus)
       echo "$IP" > "$GBDIR/netmidi.ip"
       echo "Netzwerk: $IF  R36S-Adresse: $IP (ohne DHCP: PC bekommt nach ~1 min eine 169.254.x.x-Adresse)"
       IPINFO=" $IP:5004"
+      # SSH fuer Aufspielen/Debugging ueber das Kabel
+      (systemctl start ssh 2>/dev/null || systemctl start sshd 2>/dev/null || service ssh start 2>/dev/null) \
+        && echo "SSH laeuft: ssh ark@$IP" || echo "SSH-Dienst nicht gefunden (ArkOS: Options > Enable Remote Services)"
     fi
     say "OK: PC-Modus aktiv: ${MIDIOK:-kein MIDI}${IPINFO} ${AUDOK}"
     echo "R36S mit dem PC verbinden (am besten USB-A-auf-USB-C-Kabel)"

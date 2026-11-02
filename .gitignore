@@ -7,3 +7,4 @@ input.cfg
 *.log
 samples/
 settings.cfg
+dist/

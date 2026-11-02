@@ -253,14 +253,38 @@ Ab dann bootet der R36S direkt in die Groovebox.
   * Fehlt das USB-Gerät dort, enthält der ArkOS-Kernel keinen `snd-usb-audio`-Treiber.
 * Der Header zeigt die CPU-Last der Audio-Engine an. Mit dem Demo-Beat ist sie sehr gering. Gemessen habe ich nur auf dem PC (unter 1 %). Auf dem R36S ist sie höher, sollte aber reichlich Luft lassen.
 
+## Aufspielen und Debuggen per Kabel (ohne SD-Karte)
+
+Im PC-Modus ist der R36S per USB-Netzwerk unter **192.168.77.1** erreichbar (ohne DHCP unter 169.254.77.1), und SSH wird automatisch gestartet.
+Einmalig in ArkOS *Options → Enable Remote Services* aktivieren. Zugang: `ark` / `ark`.
+
+**Windows** (PowerShell, im Ordner `tools`):
+
+```powershell
+.\deploy.ps1 -SetupKey    # einmalig: Schluessel hinterlegen, danach ohne Passwort
+.\deploy.ps1              # neueste Version von GitHub (nightly) aufspielen und Log anzeigen
+.\deploy.ps1 -Zip .\r36s-groovebox-arkos.zip   # ein bestimmtes Paket aufspielen
+.\deploy.ps1 -Log         # nur das Log live anzeigen
+.\deploy.ps1 -Shell       # SSH-Konsole
+```
+
+**macOS/Linux:** `tools/deploy.sh` (gleiche Funktionen, `--setup-key`, `--log`, `--shell`).
+
+Beim Aufspielen bleiben Projekte, Samples, Tastenbelegung und Einstellungen erhalten. Ersetzt werden nur Programm und Skripte.
+
+## Automatischer Build (GitHub Actions)
+
+Jeder Push auf `main` baut das Programm für den R36S und legt das Paket als Release **nightly** ab. Genau das holt `deploy.ps1`.
+Ein Tag wie `v1.0` erzeugt ein festes Versions-Release.
+
 ## Selbst bauen
 
 ```bash
 # Desktop (zum Testen)
 sudo apt install libsdl2-dev libasound2-dev && make && ./groovebox --windowed
 
-# Cross-Build für den R36S (auf x86-Linux)
-sudo apt install g++-aarch64-linux-gnu curl && ./tools/cross-build.sh
+# Cross-Build für den R36S (auf x86-Linux) und Paket
+sudo apt install g++-aarch64-linux-gnu curl zip && ./tools/cross-build.sh && ./tools/package.sh
 ```
 
 Der Cross-Build lädt einen kleinen Ubuntu-18.04-arm64-Sysroot (glibc 2.27, SDL 2.0.8 Header) nach `.sysroot`.
