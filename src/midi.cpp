@@ -35,13 +35,15 @@ static int infoCount = 0;
 static const char* backend = "AUS";
 
 static volatile int serialOpen = 0;
+static volatile int rtpPeers = 0;
 
 int midiPortInfo(char* buf, int n) {
     if (!infoMx) { snprintf(buf, n, "kein MIDI"); return 0; }
     SDL_LockMutex(infoMx);
-    if (serialOpen) snprintf(buf, n, "PC (USB-SERIELL)%s%s", infoCount ? ", " : "", infoCount ? infoNames : "");
+    if (rtpPeers) snprintf(buf, n, "PC (NETZ-MIDI)%s%s", infoCount ? ", " : "", infoCount ? infoNames : "");
+    else if (serialOpen) snprintf(buf, n, "PC (USB-SERIELL)%s%s", infoCount ? ", " : "", infoCount ? infoNames : "");
     else snprintf(buf, n, "%s", infoCount ? infoNames : "kein Geraet");
-    int c = infoCount + (serialOpen ? 1 : 0);
+    int c = infoCount + (serialOpen ? 1 : 0) + rtpPeers;
     SDL_UnlockMutex(infoMx);
     return c;
 }
@@ -239,6 +241,147 @@ static void seqSend(const MidiMsg& m) {
     snd_seq_event_output_direct(seq, &ev);
 }
 
+// ---- RTP-MIDI / AppleMIDI (Netzwerk-MIDI, z. B. rtpMIDI unter Windows, Netzwerk-MIDI unter macOS)
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+static int rtpCtl = -1, rtpData = -1;
+static const uint32_t RTP_SSRC = 0x52333653;   // "R36S"
+struct RtpPeer { bool on; uint32_t ssrc; sockaddr_in ctl, data; double last; };
+static RtpPeer peers[4];
+static uint16_t rtpSeq = 1;
+static RawDev rtpParse;
+
+static uint64_t rtpTime() { return (uint64_t)(midiNow() * 10000.0); }   // 100-us-Einheiten
+static void put32(uint8_t* p, uint32_t v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
+static void put64(uint8_t* p, uint64_t v) { put32(p, (uint32_t)(v >> 32)); put32(p + 4, (uint32_t)v); }
+static uint32_t get32(const uint8_t* p) { return ((uint32_t)p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]; }
+static uint64_t get64(const uint8_t* p) { return ((uint64_t)get32(p) << 32) | get32(p + 4); }
+
+static int udpOpen(int port) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return -1;
+    int one = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    sockaddr_in a; memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET; a.sin_port = htons(port); a.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(fd, (sockaddr*)&a, sizeof a) < 0) { close(fd); return -1; }
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+    return fd;
+}
+
+static void rtpCount() { int c = 0; for (auto& p : peers) if (p.on) c++; rtpPeers = c; }
+
+static void rtpParseMidi(const uint8_t* p, int n) {
+    if (n < 13 || (p[0] & 0xC0) != 0x80) return;
+    const uint8_t* q = p + 12;
+    const uint8_t* end = p + n;
+    uint8_t h = *q++;
+    int len = h & 0x0F;
+    if (h & 0x80) { if (q >= end) return; len = (len << 8) | *q++; }
+    bool z = h & 0x20;
+    const uint8_t* e = q + len < end ? q + len : end;
+    bool first = true;
+    uint8_t rs = 0;
+    while (q < e) {
+        if (!first || z) { for (int k = 0; k < 4 && q < e; k++) { if (!(*q++ & 0x80)) break; } }
+        first = false;
+        if (q >= e) break;
+        uint8_t st;
+        if (*q & 0x80) { st = *q++; if (st < 0xF0) rs = st; } else st = rs;
+        if (!st) break;
+        if (st >= 0xF8) { pushIn(st, 0, 0); continue; }
+        if (st == 0xF0) { while (q < e && *q != 0xF7) q++; if (q < e) q++; continue; }
+        if (st >= 0xF1) { q += (st == 0xF2) ? 2 : ((st == 0xF1 || st == 0xF3) ? 1 : 0); continue; }
+        int need = ((st & 0xF0) == 0xC0 || (st & 0xF0) == 0xD0) ? 1 : 2;
+        if (q + need > e) break;
+        pushIn(st, q[0] & 127, need > 1 ? (q[1] & 127) : 0);
+        q += need;
+    }
+}
+
+static void rtpReply(int fd, const sockaddr_in& to, const char* cmd, uint32_t token) {
+    uint8_t b[64];
+    b[0] = 0xFF; b[1] = 0xFF; b[2] = cmd[0]; b[3] = cmd[1];
+    put32(b + 4, 2); put32(b + 8, token); put32(b + 12, RTP_SSRC);
+    const char* nm = "R36S Groovebox";
+    int l = (int)strlen(nm) + 1;
+    memcpy(b + 16, nm, l);
+    sendto(fd, b, 16 + l, 0, (const sockaddr*)&to, sizeof to);
+}
+
+static void rtpPoll() {
+    uint8_t b[1500];
+    for (int pass = 0; pass < 2; pass++) {
+        int fd = pass ? rtpData : rtpCtl;
+        if (fd < 0) continue;
+        for (;;) {
+            sockaddr_in from; socklen_t fl = sizeof from;
+            int n = (int)recvfrom(fd, b, sizeof b, 0, (sockaddr*)&from, &fl);
+            if (n <= 0) break;
+            if (n >= 4 && b[0] == 0xFF && b[1] == 0xFF) {   // AppleMIDI-Steuerbefehl
+                char c0 = (char)b[2], c1 = (char)b[3];
+                if (c0 == 'I' && c1 == 'N' && n >= 16) {    // Einladung
+                    uint32_t tok = get32(b + 8), ssrc = get32(b + 12);
+                    int slot = -1;
+                    for (int i = 0; i < 4; i++) if (peers[i].on && peers[i].ssrc == ssrc) slot = i;
+                    for (int i = 0; i < 4 && slot < 0; i++) if (!peers[i].on) slot = i;
+                    if (slot < 0) { rtpReply(fd, from, "NO", tok); continue; }
+                    RtpPeer& p = peers[slot];
+                    if (!pass) { memset(&p, 0, sizeof p); p.ssrc = ssrc; p.ctl = from; }
+                    else { p.data = from; p.on = true; p.ssrc = ssrc; printf("Netzwerk-MIDI: %s verbunden\n", inet_ntoa(from.sin_addr)); }
+                    p.last = midiNow();
+                    rtpReply(fd, from, "OK", tok);
+                    rtpCount();
+                } else if (c0 == 'C' && c1 == 'K' && n >= 36) {   // Uhrabgleich
+                    uint8_t cnt = b[8];
+                    if (cnt == 0) {
+                        uint8_t r[36];
+                        memcpy(r, b, 36);
+                        put32(r + 4, RTP_SSRC);
+                        r[8] = 1;
+                        put64(r + 20, rtpTime());
+                        sendto(fd, r, 36, 0, (sockaddr*)&from, fl);
+                    } else if (cnt == 1) {
+                        uint8_t r[36];
+                        memcpy(r, b, 36);
+                        put32(r + 4, RTP_SSRC);
+                        r[8] = 2;
+                        put64(r + 28, rtpTime());
+                        sendto(fd, r, 36, 0, (sockaddr*)&from, fl);
+                    }
+                    (void)get64;
+                    uint32_t ss = get32(b + 4);
+                    for (auto& p : peers) if (p.on && p.ssrc == ss) p.last = midiNow();
+                } else if (c0 == 'B' && c1 == 'Y' && n >= 16) {   // Abmeldung
+                    uint32_t ss = get32(b + 12);
+                    for (auto& p : peers) if (p.ssrc == ss && p.on) { p.on = false; printf("Netzwerk-MIDI: getrennt\n"); }
+                    rtpCount();
+                }
+            } else if (pass) {
+                rtpParseMidi(b, n);
+                uint32_t ss = n >= 12 ? get32(b + 8) : 0;
+                for (auto& p : peers) if (p.on && p.ssrc == ss) p.last = midiNow();
+            }
+        }
+    }
+    double now = midiNow();   // Sitzungen ohne Lebenszeichen (rtpMIDI synchronisiert regelmaessig) beenden
+    for (auto& p : peers) if (p.on && now - p.last > 90.0) { p.on = false; printf("Netzwerk-MIDI: Zeitueberschreitung\n"); rtpCount(); }
+}
+
+static void rtpSend(const MidiMsg& m) {
+    if (!rtpPeers || rtpData < 0) return;
+    uint8_t b[20];
+    int n = m.st >= 0xF8 ? 1 : (((m.st & 0xF0) == 0xC0 || (m.st & 0xF0) == 0xD0) ? 2 : 3);
+    b[0] = 0x80; b[1] = 0x61; b[2] = rtpSeq >> 8; b[3] = rtpSeq & 0xFF; rtpSeq++;
+    put32(b + 4, (uint32_t)rtpTime());
+    put32(b + 8, RTP_SSRC);
+    b[12] = (uint8_t)n;   // Kopf: B=0 J=0 Z=0 P=0, Laenge
+    b[13] = m.st; b[14] = m.d1; b[15] = m.d2;
+    for (auto& p : peers) if (p.on) sendto(rtpData, b, 13 + n, 0, (sockaddr*)&p.data, sizeof p.data);
+}
+
 static int midiThread(void*) {
     double lastScan = 0;
     bool rescan = true;
@@ -257,10 +400,12 @@ static int midiThread(void*) {
             }
         }
         serialPoll();
+        rtpPoll();
         MidiMsg m;
         while (ringPeek(rOut, m) && m.due <= now + 0.0003) {
             if (seq) seqSend(m); else rawSend(m);
             serialSend(m);
+            rtpSend(m);
             ringDrop(rOut);
         }
         if (rescan || now - lastScan > 3.0) {
@@ -291,6 +436,9 @@ bool midiStart() {
         backend = "RAW";
         printf("MIDI: kein ALSA-Sequencer (/dev/snd/seq) - nutze rawmidi\n");
     }
+    rtpCtl = udpOpen(5004);
+    rtpData = udpOpen(5005);
+    if (rtpCtl >= 0 && rtpData >= 0) printf("Netzwerk-MIDI (RTP-MIDI) bereit auf Port 5004/5005\n");
     running = true;
     thread = SDL_CreateThread(midiThread, "midi", nullptr);
     return thread != nullptr;
@@ -303,6 +451,13 @@ void midiStop() {
     if (seq) snd_seq_close(seq);
     for (auto& r : raw) if (r.in || r.out) rawClose(r);
     if (serFd >= 0) serialClose();
+    for (auto& p : peers) if (p.on) {   // Abmeldung senden
+        uint8_t bb[16] = {0xFF, 0xFF, 'B', 'Y'};
+        put32(bb + 4, 2); put32(bb + 8, 0); put32(bb + 12, RTP_SSRC);
+        if (rtpCtl >= 0) sendto(rtpCtl, bb, 16, 0, (sockaddr*)&p.ctl, sizeof p.ctl);
+    }
+    if (rtpCtl >= 0) close(rtpCtl);
+    if (rtpData >= 0) close(rtpData);
 }
 
 #else  // ohne ALSA

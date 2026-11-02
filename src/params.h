@@ -15,7 +15,7 @@ enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
-    K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
+    K_SCALE, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -39,7 +39,7 @@ static const ParamDef PDEF_NONE = {"", K_NONE, 0, 0};
 static const ParamDef COMMON_DEFS[NPARAMS] = {
     // TRIG
     {"NOTE", K_NOTE, 60, 127}, {"VEL", K_NUM, 100, 127}, {"LEN", K_LEN, 48, 127}, {"PROB", K_PCT, 100, 100},
-    {"RTRG", K_RTRG, 0, 6}, {"RFAD", K_BIP, 64, 127}, {"ENGINE", K_MACH, 0, M_COUNT - 1}, PDEF_NONE,
+    {"RTRG", K_RTRG, 0, 6}, {"RFAD", K_BIP, 64, 127}, {"ENGINE", K_MACH, 0, M_COUNT - 1}, {"SCALE", K_SCALE, 0, 120},
     // SRC (maschinenabhaengig, siehe SRC_DEFS)
     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
     // FILT
@@ -55,6 +55,33 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     {"TYPE", K_INS, 0, 6}, {"P1", K_NUM, 64, 127}, {"P2", K_NUM, 64, 127}, {"P3", K_NUM, 64, 127},
     {"MIX", K_NUM, 64, 127}, PDEF_NONE, PDEF_NONE, PDEF_NONE,
 };
+// Tonskalen pro Spur: Wert 0 = chromatisch, sonst 1 + Skala*12 + Grundton
+enum { NSCALES = 10 };
+static const char* const SCALE_NAMES[NSCALES] = {"MAJ", "MIN", "DOR", "PHR", "LYD", "MIX", "HMI", "PMA", "PMI", "BLU"};
+static const char* const SCALE_LONG[NSCALES] = {"DUR", "MOLL", "DORISCH", "PHRYGISCH", "LYDISCH", "MIXOLYDISCH",
+                                                "HARM. MOLL", "PENTA DUR", "PENTA MOLL", "BLUES"};
+static const uint16_t SCALE_MASK[NSCALES] = {   // Bit n = Halbton n ueber dem Grundton
+    0xAB5, 0x5AD, 0x6AD, 0x5AB, 0xAD5, 0x6B5, 0x9AD, 0x295, 0x4A9, 0x4E9};
+static const char* const NOTE_NAMES[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+inline bool inScale(int note, int sv) {
+    if (sv <= 0) return true;
+    int root = (sv - 1) % 12, sc = ((sv - 1) / 12) % NSCALES;
+    return (SCALE_MASK[sc] >> (((note - root) % 12 + 12) % 12)) & 1;
+}
+inline int quantizeNote(int note, int sv) {   // naechste Note in der Skala
+    if (sv <= 0) return note;
+    for (int d = 0; d < 7; d++) {
+        if (note + d <= 127 && inScale(note + d, sv)) return note + d;
+        if (note - d >= 0 && inScale(note - d, sv)) return note - d;
+    }
+    return note;
+}
+inline int stepScale(int note, int dir, int sv) {   // naechste Skalennote in Richtung dir
+    int n = note;
+    do { n += dir; } while (n >= 0 && n <= 127 && !inScale(n, sv));
+    return n < 0 ? note : (n > 127 ? note : n);
+}
+
 enum InsType { INS_OFF, INS_CHORUS, INS_PHASER, INS_FLANGER, INS_DRIVE, INS_RING, INS_APAN, INS_COUNT };
 static const char* const INS_NAMES[INS_COUNT] = {"OFF", "CHORS", "PHASE", "FLNGR", "DRIVE", "RING", "APAN"};
 static const char* const INS_PNAMES[INS_COUNT][3] = {
@@ -162,6 +189,10 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_BUFS: snprintf(buf, n, "%d", BUF_SIZES[v & 3]); break;
     case K_CLK: snprintf(buf, n, "%s", v == 1 ? "SEND" : (v == 2 ? "RECV" : "OFF")); break;
     case K_CHM: snprintf(buf, n, "%s", v ? "1-8" : "AUTO"); break;
+    case K_SCALE:
+        if (v <= 0) snprintf(buf, n, "CHROM");
+        else snprintf(buf, n, "%s%s", NOTE_NAMES[(v - 1) % 12], SCALE_NAMES[((v - 1) / 12) % NSCALES]);
+        break;
     case K_INS: snprintf(buf, n, "%s", v < INS_COUNT ? INS_NAMES[v] : "?"); break;
     case K_MS: snprintf(buf, n, "%.0fms", v * 250.f / 127.f); break;
     case K_MACH: snprintf(buf, n, "%s", v < M_COUNT ? MACHINE_NAMES[v] : "?"); break;

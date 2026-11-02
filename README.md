@@ -21,11 +21,11 @@ Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regle
 
 Jede Spur hat diese Seiten:
 
-* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE
-* **SRC**: Regler der Maschine (siehe Tabelle)
-* **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve
-* **AMP**: ADSR, Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
-* **LFO**: Tempo, Tiefe, Ziel (Pitch/Freq/Vol/Pan/Reso/Crush), Wellenform, Retrigger, Bitcrusher, Samplerate-Reduktion, Drive
+* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE, **SCALE**
+* **SRC**: Regler der Maschine (siehe Tabelle). Bei SYNTH zeigt die Seite die Oszillator-Wellenformen, bei SMPL die Wellenform des Samples mit Start, Ende und Abspielposition.
+* **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve.
+* **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
+* **LFO** (Welle mit laufender Phase): Tempo, Tiefe, Ziel (Pitch/Freq/Vol/Pan/Reso/Crush), Wellenform, Retrigger, Bitcrusher, Samplerate-Reduktion, Drive
 * **INS**: Insert-Effekt der Spur. Zuerst unter TYPE den Effekt wählen, dann MIX aufdrehen:
 
   | TYPE | Regler |
@@ -47,6 +47,16 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * **CMP**: Master-Kompressor mit **Sidechain** (siehe unten)
 * **MST**: BPM, Swing, Gesamtlautstärke und DRIVE (Sättigung der Summe)
 * **SYS**: Audio-Ausgang, Puffergröße, MIDI und USB-Modus (wird in `settings.cfg` gespeichert)
+
+## Tonskalen pro Spur
+
+Der Regler **SCALE** auf der TRG-Seite wählt Grundton und Skala der Spur.
+Zur Wahl stehen CHROM (aus), Dur, Moll, Dorisch, Phrygisch, Lydisch, Mixolydisch, Harmonisch Moll, Pentatonik Dur/Moll und Blues, jeweils auf allen 12 Grundtönen.
+Beim Drehen zeigt eine Mini-Tastatur die Skalentöne, der Grundton ist weiß.
+
+* NOTE (auch als Lock) springt nur noch zwischen Skalentönen.
+* Alle gespielten Noten rasten in die Skala ein: Sequencer, MIDI-Eingang und Aufnahme. Bestehende Melodien folgen also sofort einer neuen Skala.
+* Die Skala lässt sich wie alles andere pro Step locken.
 
 ## Kompressor und Sidechain (CMP-Seite)
 
@@ -122,9 +132,11 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | B | Spur vorhören |
 | X / Y | Wert + / − (halten = Wiederholung, nach 1 s schneller) |
 | Linker Stick ↑/↓ | Wert stufenlos ändern |
+| **Linker Stick ←/→** | **Regler wählen** (leise, statt L1/R1) |
+| **Rechter Stick ←/→** | **Seite wechseln** (leise, statt L2/R2) |
 | Rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass |
-| L1 / R1 | Regler wählen |
-| L2 / R2 | Seite wählen (TRG SRC FLT AMP LFO INS, global: FX CMP MST SYS) |
+| L1 / R1 | Regler wählen (alternativ) |
+| L2 / R2 | Seite wählen (alternativ) (TRG SRC FLT AMP LFO INS, global: FX CMP MST SYS) |
 | START | Play / Stop |
 | **SELECT halten** | Hilfe-Einblendung |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
@@ -136,6 +148,8 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | SELECT + L1/R1 | Pattern kopieren / einfügen |
 | SELECT + L2/R2 | Spurlänge (Polymetrie, 1 bis 16) |
 | SELECT + START | Speichern (2 s halten: Speichern und Beenden) |
+
+Im Header siehst du den **Akkustand**: grün beim Laden, gelb unter 30 %, rot und blinkend unter 10 %.
 
 Das Projekt liegt in `projects/project1.gbx`. Gespeichert wird automatisch beim Beenden und alle 2 Minuten, wenn sich etwas geändert hat.
 
@@ -163,7 +177,28 @@ Zum Synchronisieren gibt es zwei Wege:
 * Groovebox führt: CLK auf SEND, in Ableton beim Eingang **Sync** an und oben links EXT aktivieren.
 * Ableton führt: beim Ausgang **Sync** an, CLK auf RECV.
 
-### Kernel ohne USB-MIDI-Gadget: MIDI über USB-Seriell
+### Kernel nur mit Netzwerk-Gadget: Netzwerk-MIDI (RTP-MIDI)
+
+Der Standard-ArkOS-Kernel des R36S hat nur Netzwerk-Bausteine (`rndis`, `ecm`, `ncm`), also weder USB-MIDI noch USB-Audio.
+Der PC-Modus macht den R36S dann zu einer **USB-Netzwerkkarte**, und MIDI läuft darüber als **RTP-MIDI**.
+Diesen Standard kann macOS von Haus aus, unter Windows übernimmt das der kostenlose Treiber **rtpMIDI**. Ableton sieht danach einen normalen MIDI-Port.
+Audio zum PC ist mit diesem Kernel nicht möglich.
+
+**Windows**
+
+1. **rtpMIDI** (Tobias Erichsen) installieren.
+2. Auf dem R36S auf der SYS-Seite **USB = PC** stellen. Die App zeigt die Adresse des R36S an, z. B. `IP 192.168.77.1` (oder `169.254.77.1`).
+3. Den R36S per USB verbinden. Windows richtet „Remote NDIS“ automatisch ein. Ohne DHCP-Server auf dem R36S dauert es bis zu einer Minute, bis Windows sich eine 169.254-Adresse gibt.
+4. In rtpMIDI unter *My Sessions* mit **+** eine Session anlegen und aktivieren.
+5. Unter *Directory* mit **+** einen Eintrag anlegen: Name „R36S“, Host = die angezeigte IP, Port **5004**. Den Eintrag wählen und **Connect** drücken.
+6. Unter *Participants* erscheint „R36S Groovebox“. Auf der SYS-Seite steht bei MIDI „PC (NETZ-MIDI)“.
+7. In Ableton heißt der Port wie die Session. Spur, Sync und Fernsteuerung wie gewohnt aktivieren.
+
+**macOS:** Audio-MIDI-Setup → MIDI-Studio → Netzwerk. Dort eine Session anlegen und unter „Verzeichnis“ den R36S mit IP und Port 5004 hinzufügen.
+
+Netzwerk-MIDI funktioniert übrigens auch über einen USB-WLAN-Stick, denn die Groovebox lauscht immer auf Port 5004/5005.
+
+### Kernel ohne USB-MIDI-Gadget, aber mit Seriell: MIDI über USB-Seriell
 
 Manche ArkOS-Kernel haben zwar den USB-Geräte-Modus, aber keinen MIDI-Baustein (`usb_f_midi`).
 Dann meldet sich der R36S automatisch als **serielle Schnittstelle** am PC an (unter Windows als „USB Serial Device (COMx)“), und die Groovebox schickt und empfängt MIDI darüber.
@@ -196,7 +231,7 @@ Wenn es nicht klappt, steht der Grund in `groovebox/pc-modus.log`. Die App zeigt
    ports/groovebox/samples/...          (Start-Sample-Paket)
    ```
 2. Am R36S unter **Ports** den Eintrag **Groovebox** starten. Falls er nicht auftaucht, EmulationStation neu starten (Start → Quit → Restart EmulationStation).
-3. Beim ersten Start fragt die App alle Tasten einmal ab, weil die R36S-Klone unterschiedlich belegt sind. Das Ergebnis landet in `groovebox/input.cfg`. Später kannst du die Tasten über **Groovebox - Tasten lernen** neu belegen.
+3. Beim ersten Start fragt die App alle Tasten einmal ab, weil die R36S-Klone unterschiedlich belegt sind. Das Ergebnis landet in `groovebox/input.cfg`. Später kannst du die Tasten über **Groovebox - Tasten lernen** neu belegen. Ältere Belegungen kennen die Links/Rechts-Achsen der Sticks noch nicht, die App errät sie dann. Wenn Regler- oder Seitenwahl per Stick falsch herum oder gar nicht reagiert, einmal neu lernen.
 
 ### Als Startoberfläche (OS-Ebene)
 

@@ -39,6 +39,8 @@ bool Input::loadMap(const char* path) {
         if (k < 3 || key[0] == '#') continue;
         if (!strcmp(key, "LSTICK_Y")) { axLY = idx; sgnLY = val ? val : -1; continue; }
         if (!strcmp(key, "RSTICK_Y")) { axRY = idx; sgnRY = val ? val : -1; continue; }
+        if (!strcmp(key, "LSTICK_X")) { axLX = idx; sgnLX = val ? val : 1; haveLX = true; continue; }
+        if (!strcmp(key, "RSTICK_X")) { axRX = idx; sgnRX = val ? val : 1; haveRX = true; continue; }
         for (int b = 0; b < BT_COUNT; b++) {
             if (strcmp(key, BTN_NAMES[b])) continue;
             Binding& m = map[b];
@@ -47,6 +49,9 @@ bool Input::loadMap(const char* path) {
         }
     }
     fclose(f);
+    // aeltere Belegungen ohne X-Achse: X liegt meist direkt neben Y (0/1, 2/3)
+    if (!haveLX && axLY >= 0) { axLX = axLY ^ 1; sgnLX = 1; }
+    if (!haveRX && axRY >= 0) { axRX = axRY ^ 1; sgnRX = 1; }
     haveMap = true;
     return true;
 }
@@ -59,6 +64,8 @@ bool Input::saveMap(const char* path) {
     for (int b = 0; b < BT_COUNT; b++) fprintf(f, "%s %s %d %d\n", BTN_NAMES[b], tn[map[b].type], map[b].idx, map[b].val);
     fprintf(f, "LSTICK_Y axis %d %d\n", axLY, sgnLY);
     fprintf(f, "RSTICK_Y axis %d %d\n", axRY, sgnRY);
+    fprintf(f, "LSTICK_X axis %d %d\n", axLX, sgnLX);
+    fprintf(f, "RSTICK_X axis %d %d\n", axRX, sgnRX);
     fclose(f);
     return true;
 }
@@ -84,6 +91,8 @@ void Input::poll() {
     float kly = (ks[SDL_SCANCODE_I] ? 1.f : 0.f) - (ks[SDL_SCANCODE_K] ? 1.f : 0.f);
     float kry = (ks[SDL_SCANCODE_O] ? 1.f : 0.f) - (ks[SDL_SCANCODE_L] ? 1.f : 0.f);
     ly = kly; ry = kry;
+    lx = (ks[SDL_SCANCODE_SEMICOLON] ? 1.f : 0.f) - (ks[SDL_SCANCODE_J] ? 1.f : 0.f);
+    rx = (ks[SDL_SCANCODE_PERIOD] ? 1.f : 0.f) - (ks[SDL_SCANCODE_COMMA] ? 1.f : 0.f);
 
     if (gc && !haveMap) {
         static const int gcb[BT_COUNT] = {
@@ -99,6 +108,10 @@ void Input::poll() {
         float c = -SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.f;
         if (fabsf(a) > fabsf(ly)) ly = a;
         if (fabsf(c) > fabsf(ry)) ry = c;
+        float gx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX) / 32767.f;
+        float hx = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX) / 32767.f;
+        if (fabsf(gx) > fabsf(lx)) lx = gx;
+        if (fabsf(hx) > fabsf(rx)) rx = hx;
     } else if (joy) {
         int nb = SDL_JoystickNumButtons(joy), nh = SDL_JoystickNumHats(joy), na = SDL_JoystickNumAxes(joy);
         for (int b = 0; b < BT_COUNT; b++) {
@@ -110,6 +123,9 @@ void Input::poll() {
         float a = axisVal(joy, axLY) * sgnLY, c = axisVal(joy, axRY) * sgnRY;
         if (fabsf(a) > fabsf(ly)) ly = a;
         if (fabsf(c) > fabsf(ry)) ry = c;
+        float gx = axisVal(joy, axLX) * sgnLX, hx = axisVal(joy, axRX) * sgnRX;
+        if (fabsf(gx) > fabsf(lx)) lx = gx;
+        if (fabsf(hx) > fabsf(rx)) rx = hx;
     }
     Uint32 now = SDL_GetTicks();
     for (int b = 0; b < BT_COUNT; b++) {

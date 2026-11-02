@@ -65,7 +65,7 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     base = b;
     for (int i = 0; i < NPARAMS; i++) lk[i] = locks ? locks[i] : NO_LOCK;
     vel = clampf(P(P_VEL) / 127.f * velScale, 0.f, 1.f);
-    note = (float)P(P_NOTE);
+    note = (float)quantizeNote(P(P_NOTE), P(P_T7));
     gate = gateSamples;
     if (!wasActive || m != M_SYNTH || P(P_S7) == 0) curNote = note;
     active = true;
@@ -511,6 +511,7 @@ void Engine::allNotesOff() {
 
 void Engine::liveNoteOn(int t, int note, int vel) {
     Pattern& P = proj.pat[curPat];
+    note = quantizeNote(note, P.p[t][P_T7]);
     memset(liveLk[t], NO_LOCK, NPARAMS);
     liveLk[t][P_NOTE] = (uint8_t)note;
     liveLk[t][P_VEL] = (uint8_t)vel;
@@ -670,7 +671,7 @@ void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, boo
     v[t].noteOn(P.machine[t], b, lk, velScale, gs, (float)sr);
     if (toMidi && notesOut && midiOut) {
         if (midiNote[t] >= 0) emit(0x80 | t, (uint8_t)midiNote[t], 0, curOff);
-        int nn = val(P_NOTE);
+        int nn = quantizeNote(val(P_NOTE), val(P_T7));
         int vv = (int)(val(P_VEL) * velScale + 0.5f);
         emit(0x90 | t, (uint8_t)nn, (uint8_t)(vv < 1 ? 1 : (vv > 127 ? 127 : vv)), curOff);
         midiNote[t] = nn;

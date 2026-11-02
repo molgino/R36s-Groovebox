@@ -15,11 +15,14 @@ struct Input {
     SDL_GameController* gc = nullptr;
     Binding map[BT_COUNT];
     int axLY = -1, axRY = -1, sgnLY = -1, sgnRY = -1; // sgn: Vorzeichen fuer "oben"
+    int axLX = -1, axRX = -1, sgnLX = 1, sgnRX = 1;   // sgn: Vorzeichen fuer "rechts"
+    bool haveLX = false, haveRX = false;
     bool haveMap = false;
 
     bool down[BT_COUNT] = {false}, prev[BT_COUNT] = {false};
     Uint32 downSince[BT_COUNT] = {0}, lastRep[BT_COUNT] = {0};
     float ly = 0, ry = 0; // oben = positiv
+    float lx = 0, rx = 0; // rechts = positiv
 
     void open();
     bool loadMap(const char* path);

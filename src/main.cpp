@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include "engine.h"
 #include "input.h"
 #include "font.h"
@@ -52,7 +53,14 @@ static int bufOverride = 0;
 static int devCount = 0;
 static char devNames[16][128];
 static Uint32 audioApplyAt = 0, usbApplyAt = 0;
-static int usbMode = 0;   // 0 Host, 1 PC (MIDI), 2 PC (MIDI + Audio)
+static int usbMode = 0;
+static char netIp[32] = "";
+static void readNetIp() {
+    char p[700]; snprintf(p, sizeof p, "%snetmidi.ip", basePath);
+    netIp[0] = 0;
+    FILE* f = fopen(p, "r");
+    if (f) { if (fgets(netIp, sizeof netIp, f)) netIp[strcspn(netIp, "\r\n")] = 0; fclose(f); }
+}   // 0 Host, 1 PC (MIDI), 2 PC (MIDI + Audio)
 static int lastStepRec = 0;
 static Uint32 taps[4]; static int tapN = 0;
 static bool stickDj = false;
@@ -224,16 +232,51 @@ static void hint(int x, int y, const char* s, Col key, Col norm) {
 static float flash[NTRACKS], meterV[NTRACKS];
 static uint32_t lastTrigs[NTRACKS];
 static Uint32 pageAt = 0, lastFrame = 0;
-static int lastPage = -1;
+static int lastPage = -1, lastTrackA = -1;
 static float beatPulse = 0;
 static float grDisp = 0;
 static int lastBeat = -1;
+static float animDt = 0.016f, animTime = 0;
+static float slideOff = 0;                  // Seitenwechsel: Inhalt schiebt ein
+static float knobAnim[8];                   // Regler gleiten zum Zielwert
+static float hlY = -1, curXg = -1;          // Spur-Markierung und Cursor gleiten
+static float uiLfoPh = 0, oscDrift = 0;
+static int batPct = -1; static bool batChg = false; static Uint32 batAt = 0;
+static char batPath[300] = "";
+
+static void readBattery() {
+    if (!batPath[0]) {
+        DIR* d = opendir("/sys/class/power_supply");
+        if (!d) { batPct = -2; return; }
+        struct dirent* e;
+        while ((e = readdir(d))) {
+            if (e->d_name[0] == '.') continue;
+            char p[300], ty[32] = "";
+            snprintf(p, sizeof p, "/sys/class/power_supply/%s/type", e->d_name);
+            FILE* f = fopen(p, "r");
+            if (!f) continue;
+            if (fgets(ty, sizeof ty, f) && !strncmp(ty, "Battery", 7)) snprintf(batPath, sizeof batPath, "/sys/class/power_supply/%s", e->d_name);
+            fclose(f);
+            if (batPath[0]) break;
+        }
+        closedir(d);
+        if (!batPath[0]) { batPct = -2; return; }
+    }
+    char p[340], b[32] = "";
+    snprintf(p, sizeof p, "%s/capacity", batPath);
+    FILE* f = fopen(p, "r");
+    if (f) { if (fgets(b, sizeof b, f)) batPct = atoi(b); fclose(f); }
+    snprintf(p, sizeof p, "%s/status", batPath);
+    f = fopen(p, "r");
+    if (f) { if (fgets(b, sizeof b, f)) batChg = !strncmp(b, "Charging", 8) || !strncmp(b, "Full", 4); fclose(f); }
+}
 
 static void animate() {
     Uint32 now = SDL_GetTicks();
     float dt = lastFrame ? (now - lastFrame) / 1000.f : 0.016f;
     if (dt > 0.1f) dt = 0.1f;
     lastFrame = now;
+    animDt = dt; animTime += dt;
     for (int t = 0; t < NTRACKS; t++) {
         uint32_t tc = eng.v[t].trigs;
         if (tc != lastTrigs[t]) { lastTrigs[t] = tc; flash[t] = 1.f; }
@@ -247,8 +290,24 @@ static void animate() {
     grDisp = g > gd ? g : gd;
     int beat = eng.playing ? eng.playedStep[0] / 4 : -1;
     if (beat != lastBeat) { lastBeat = beat; if (beat >= 0) beatPulse = 1.f; }
-    beatPulse -= dt * 4.f; if (beatPulse < 0) beatPulse = 0;
-    if (page != lastPage) { if (lastPage >= 0) pageAt = now; lastPage = page; }
+    beatPulse -= dt * 3.f; if (beatPulse < 0) beatPulse = 0;
+    if (page != lastPage) {
+        if (lastPage >= 0) {
+            pageAt = now;
+            int fwd = (page - lastPage + NUI_PAGES) % NUI_PAGES;
+            slideOff = fwd <= NUI_PAGES / 2 ? 90.f : -90.f;
+        }
+        lastPage = page;
+    }
+    if (track != lastTrackA) { if (lastTrackA >= 0 && slideOff == 0) slideOff = 0; lastTrackA = track; }
+    slideOff *= expf(-dt * 16.f);
+    if (fabsf(slideOff) < 0.5f) slideOff = 0;
+    float k = 1.f - expf(-dt * 18.f);
+    float ty = 244.f + track * 18.f;
+    hlY = hlY < 0 ? ty : hlY + (ty - hlY) * k;
+    curXg = curXg < 0 ? cursor : curXg + (cursor - curXg) * k;
+    oscDrift += dt;
+    if (now - batAt > 10000 || batAt == 0) { batAt = now; readBattery(); }
 }
 
 // ---------------------------------------------------------------- Bildschirm
@@ -261,14 +320,33 @@ static bool stepHasLock(const Step& s) {
     return false;
 }
 
+static void battery(int x, int y) {
+    if (batPct < 0) return;
+    Col c = batPct <= 15 ? C_TRIG : (batPct <= 30 ? C_LOCK : C_DIM);
+    if (batChg) c = C_GREEN;
+    if (batPct <= 10 && !batChg && (SDL_GetTicks() / 500) % 2) c = dimC(C_TRIG, 0.4f);
+    rrect(x, y, 22, 11, 2, c);
+    rrect(x + 1, y + 1, 20, 9, 2, C_PANEL);
+    fill(x + 22, y + 3, 2, 5, c);
+    int w = clampi(batPct * 18 / 100, 0, 18);
+    if (w) rrect(x + 2, y + 2, w, 7, 1, c);
+    if (batChg) {   // Blitz
+        fill(x + 11, y + 2, 2, 4, C_PANEL); fill(x + 9, y + 5, 4, 1, C_PANEL); fill(x + 9, y + 6, 2, 3, C_PANEL);
+    }
+    char b[8]; snprintf(b, sizeof b, "%d%%", batPct);
+    text(x + 27, y - 3, b, c);
+}
+
 static void drawHeader() {
     char b[64];
     Col tc = TCOL[track];
     fill(0, 0, SW, 40, C_PANEL);
-    fill(0, 40, SW, 1, dimC(tc, 0.6f));
+    // pulsierende Linie im Takt
+    fill(0, 40, SW, 1, mix(dimC(tc, 0.5f), tc, beatPulse));
+    if (beatPulse > 0.01f) fill(0, 41, SW, 1, tc, (Uint8)(120 * beatPulse));
     snprintf(b, sizeof b, "P%02d", eng.curPat + 1);
     text(8, 4, b, C_TEXT, 2);
-    if (eng.nextPat >= 0) {   // Pattern in der Warteschlange: blinkend + Fortschritt bis zum Wechsel
+    if (eng.nextPat >= 0) {
         if ((SDL_GetTicks() / 250) % 2) { snprintf(b, sizeof b, ">%02d", eng.nextPat + 1); text(58, 4, b, C_ACC); }
         int prog = eng.playing ? (eng.playedStep[0] + 1) * 48 / NSTEPS : 0;
         fill(8, 36, 48, 2, C_OFF); fill(8, 36, prog, 2, C_ACC);
@@ -276,20 +354,21 @@ static void drawHeader() {
     playIcon(62, 20, eng.playing);
     snprintf(b, sizeof b, "%d BPM", eng.proj.bpm);
     text(84, 4, b, C_TEXT);
-    for (int i = 0; i < 4; i++) {   // Taktanzeige
+    for (int i = 0; i < 4; i++) {
         bool on = eng.playing && lastBeat == i;
+        int grow = on ? (int)(beatPulse * 3) : 0;
         Col c = on ? mix(C_ACC, C_PLAY, beatPulse * 0.6f) : C_OFF2;
-        rrect(146 + i * 10, 8, 7, 7, 2, c);
+        rrect(146 + i * 10 - grow / 2, 8 - grow / 2, 7 + grow, 7 + grow, 3, c);
     }
     snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]);
     text(84, 21, b, C_DIM);
     if (eng.recording) {
-        bool bl = (SDL_GetTicks() / 400) % 2;
-        rrect(140, 24, 9, 9, 4, bl ? C_TRIG : dimC(C_TRIG, 0.5f));
+        float pl = 0.5f + 0.5f * sinf(animTime * 6.f);
+        rrect(140, 24, 9, 9, 4, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
         text(152, 21, "REC", C_TRIG);
     }
     snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
-    text(196, 4, b, eng.mute[track] ? C_DIM : tc, 2);
+    text(196, 4, b, eng.mute[track] ? C_DIM : mix(tc, C_PLAY, flash[track] * 0.35f), 2);
     for (int p = 0; p < NUI_PAGES; p++) {
         int x = 330 + p * 28;
         if (p == page) { rrect(x - 1, 3, 29, 18, 4, C_ACC); textC(x + 14, 4, PAGE_NAMES[p], C_BG); }
@@ -303,13 +382,14 @@ static void drawHeader() {
         text(332, 23, b, C_DIM);
         if (strcmp(midiBackend(), "AUS")) {
             bool act = SDL_GetTicks() - midiActivity < 150;
-            rrect(554, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
-            text(564, 23, "MIDI", act ? C_GREEN : C_DIM);
+            rrect(462, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
+            text(471, 23, "MIDI", act ? C_GREEN : C_DIM);
         }
+        battery(530, 26);
     }
     int ml = clampi((int)(eng.peakL * 34), 0, 34), mr = clampi((int)(eng.peakR * 34), 0, 34);
     rrect(620, 3, 6, 34, 2, C_OFF); rrect(629, 3, 6, 34, 2, C_OFF);
-    if (eng.proj.cmp[CM_THR] < 127) {   // Gain-Reduktion des Kompressors (von oben nach unten)
+    if (eng.proj.cmp[CM_THR] < 127) {
         int gh = clampi((int)(grDisp / 24.f * 34), 0, 34);
         rrect(611, 3, 5, 34, 2, C_OFF);
         if (gh) rrect(611, 3, 5, gh, 2, C_TRIG);
@@ -342,7 +422,10 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         case SY_NOUT: val = cfg.notesOut; break;
         case SY_CLK: val = cfg.clk; break;
         case SY_MCH: val = cfg.chm; break;
-        case SY_USB: val = usbMode; snprintf(label, ln, "%s", usbMode ? "R36S AM PC" : "GERAETE AM R36S"); break;
+        case SY_USB: val = usbMode;
+            if (usbMode && netIp[0]) snprintf(label, ln, "IP %s", netIp);
+            else snprintf(label, ln, "%s", usbMode ? "R36S AM PC" : "GERAETE AM R36S");
+            break;
         default: {
             char nm[256]; val = midiPortInfo(nm, sizeof nm);
             snprintf(label, ln, "%.19s", strcmp(midiBackend(), "AUS") ? nm : "MIDI AUS");
@@ -355,11 +438,16 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         val = P.p[track][idx];
         if (d.kind == K_MACH) val = P.machine[track];
         else if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
-        if (page == PAGE_INS && k >= 1 && k <= 4) {   // Reglernamen haengen vom Effekttyp ab
+        if (page == PAGE_INS && k >= 1 && k <= 4) {
             int ty = (aHeld && holdS().lock[P_ITYP] != NO_LOCK) ? holdS().lock[P_ITYP] : P.p[track][P_ITYP];
             if (ty <= 0 || ty >= INS_COUNT || (k <= 3 && INS_PNAMES[ty][k - 1][0] == '-')) d = PDEF_NONE;
             else if (k <= 3) snprintf(label, ln, "%s", INS_PNAMES[ty][k - 1]);
         }
+        if (idx == P_NOTE) {   // Note in die Skala der Spur einrasten
+            int sv = (aHeld && holdS().lock[P_T7] != NO_LOCK) ? holdS().lock[P_T7] : P.p[track][P_T7];
+            val = quantizeNote(val, sv);
+        }
+        if (d.kind == K_SCALE && val > 0) snprintf(label, ln, "%s %s", NOTE_NAMES[(val - 1) % 12], SCALE_LONG[((val - 1) / 12) % NSCALES]);
         if (d.kind == K_SMPL) {
             d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
             snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
@@ -369,8 +457,18 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
     return d.kind != K_NONE;
 }
 
-static void knobText(const ParamDef& d, int val, char* b, int n) {
-    if (d.kind == K_GR) snprintf(b, n, "-%.1f", grDisp);
+static float envSec(int v) { return 0.0005f * exp2f(v * (15.f / 127.f)); }
+static bool isEnvTime(int k) {
+    return (page == 3 && (k == 0 || k == 1 || k == 3)) || (page == 2 && (k == 4 || k == 5 || k == 7));
+}
+static bool isEnvSus(int k) { return (page == 3 && k == 2) || (page == 2 && k == 6); }
+
+static void knobText(const ParamDef& d, int val, char* b, int n, int k = -1) {
+    if (k >= 0 && page < PAGE_FX && isEnvTime(k)) {
+        float s = envSec(val);
+        if (s < 1.f) snprintf(b, n, "%.0fms", s * 1000.f); else snprintf(b, n, "%.1fs", s);
+    } else if (k >= 0 && page < PAGE_FX && isEnvSus(k)) snprintf(b, n, "%d%%", val * 100 / 127);
+    else if (d.kind == K_GR) snprintf(b, n, "-%.1f", grDisp);
     else if (d.kind == K_SMPL) snprintf(b, n, "%d", val + 1);
     else if (d.kind == K_DEV) { if (val) snprintf(b, n, "#%d", val); else snprintf(b, n, "STD"); }
     else fmtParam(d, val, b, n);
@@ -381,35 +479,318 @@ static float knobFrac(const ParamDef& d, int val) {
     return d.max ? (float)val / d.max : 0.f;
 }
 
+// ---------------------------------------------------------------- Grafiken
+
+// Kurve aus Spaltenwerten zeichnen: gefuellt + dicke Linie
+static void curve(int x0, const int* ys, int n, int base, Col c, Uint8 fillA, const bool* hi = nullptr) {
+    for (int i = 0; i < n; i++) {
+        int y = ys[i];
+        if (fillA) fill(x0 + i, y, 1, base - y, c, fillA);
+        int py = i ? ys[i - 1] : y;
+        int a = py < y ? py : y, b = py < y ? y : py;
+        Col cc = (hi && hi[i]) ? mix(c, C_PLAY, 0.45f) : c;
+        fill(x0 + i, a - 1, 1, b - a + 3, cc);
+    }
+}
+static void glowDot(int x, int y, Col c) {
+    rrect(x - 7, y - 7, 14, 14, 7, c, 60);
+    rrect(x - 4, y - 4, 9, 9, 4, C_PLAY);
+}
+static void handle(int x, int y, Col c, bool sel) {
+    if (sel) {
+        float p = 0.5f + 0.5f * sinf(animTime * 7.f);
+        int r = 6 + (int)(p * 2);
+        rrect(x - r, y - r, 2 * r + 1, 2 * r + 1, r, c, 90);
+    }
+    rrect(x - 3, y - 3, 7, 7, 3, sel ? C_PLAY : c);
+}
+
+static void graphBox(int x, int y, int w, int h) {
+    rrect(x, y, w, h, 8, C_PANEL);
+    for (int i = 1; i < 4; i++) fill(x + 8, y + h * i / 4, w - 16, 1, C_SEL);
+}
+
+// ADSR-Huellkurve mit Live-Punkt
+static void envGraph(int gx, int gy, int gw, int gh, int a, int d, int s, int r, int sel, const ADSR* live, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int x0 = gx + 10, top = gy + 8, bot = gy + gh - 8, H = bot - top;
+    float span = (gw - 20) * 0.27f;
+    int wA = 4 + (int)(a / 127.f * span), wD = 4 + (int)(d / 127.f * span), wR = 4 + (int)(r / 127.f * span);
+    int wS = (int)((gw - 20) * 0.16f);
+    float sv = s / 127.f;
+    int n = wA + wD + wS + wR;
+    static int ys[700]; static bool hi[700];
+    if (n > 690) n = 690;
+    for (int i = 0; i < n; i++) {
+        float v; int seg;
+        if (i < wA) { v = (float)i / wA; seg = 0; }
+        else if (i < wA + wD) { float t = (float)(i - wA) / wD; v = sv + (1.f - sv) * expf(-6.9f * t); seg = 1; }
+        else if (i < wA + wD + wS) { v = sv; seg = 2; }
+        else { float t = (float)(i - wA - wD - wS) / wR; v = sv * expf(-6.9f * t); seg = 3; }
+        ys[i] = bot - (int)(v * H);
+        hi[i] = seg == sel;
+    }
+    curve(x0, ys, n, bot, c, 40, hi);
+    handle(x0 + wA, top, c, sel == 0);
+    handle(x0 + wA + wD, bot - (int)(sv * H), c, sel == 1 || sel == 2);
+    handle(x0 + wA + wD + wS, bot - (int)(sv * H), c, sel == 2);
+    handle(x0 + n - 1, bot, c, sel == 3);
+    // Live: aktueller Huellkurvenwert der Stimme
+    if (live && live->st) {
+        float v = live->v, px;
+        switch (live->st) {
+        case 1: px = v * wA; break;
+        case 2: px = wA + (sv < 0.999f ? clampi((int)(logf(fmaxf((v - sv) / (1.f - sv), 1e-4f)) / -6.9f * wD), 0, wD) : 0); break;
+        case 3: px = wA + wD + wS * 0.5f; break;
+        default: px = wA + wD + wS + (sv > 0.001f ? clampi((int)(logf(fmaxf(v / sv, 1e-4f)) / -6.9f * wR), 0, wR) : 0); break;
+        }
+        int ly = bot - (int)(v * H);
+        fill(gx + 8, ly, gw - 16, 1, c, 70);
+        glowDot(x0 + (int)px, ly, c);
+    }
+}
+
+// Filterkurve (SVF LP/BP/HP) mit Live-Cutoff
+static void filterGraph(int gx, int gy, int gw, int gh, int freq, int res, int type, int env, int sel, float liveUnits, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int x0 = gx + 10, W = gw - 20, top = gy + 8, bot = gy + gh - 8, H = bot - top;
+    float k = 2.f - 1.96f * (res / 127.f) * 0.97f;
+    auto mag = [&](float f, float units) {
+        float fc = 16.f * exp2f(units * (10.3f / 127.f));
+        float w = f / fc, den = sqrtf((1 - w * w) * (1 - w * w) + (w * k) * (w * k));
+        float m = type == 0 ? 1.f / den : (type == 1 ? (w * k) / den : (w * w) / den);
+        float db = 20.f * log10f(m + 1e-6f);
+        return bot - (int)((clampi((int)db, -30, 18) + 30) / 48.f * H);
+    };
+    static int ys[700];
+    if (W > 690) W = 690;
+    // Ziel der Filterhuellkurve (gestrichelt)
+    if (env != 64) {
+        float tu = freq + (env - 64) * 2.f;
+        for (int i = 0; i < W; i += 3) { float f = 20.f * powf(1000.f, (float)i / W); int y = mag(f, tu); fill(x0 + i, y, 2, 2, c, 110); }
+    }
+    for (int i = 0; i < W; i++) ys[i] = mag(20.f * powf(1000.f, (float)i / W), (float)freq);
+    curve(x0, ys, W, bot, c, 45);
+    float fc = 16.f * exp2f(freq * (10.3f / 127.f));
+    int xc = x0 + (int)(log10f(fminf(fmaxf(fc, 20.f), 20000.f) / 20.f) / 3.f * W);
+    for (int y = top; y < bot; y += 4) fill(xc, y, 1, 2, sel == 0 ? C_PLAY : c, 160);
+    handle(xc, ys[clampi(xc - x0, 0, W - 1)], c, sel == 0 || sel == 1);
+    if (liveUnits >= 0) {
+        float lf = 16.f * exp2f(liveUnits * (10.3f / 127.f));
+        int xl = x0 + (int)(log10f(fminf(fmaxf(lf, 20.f), 20000.f) / 20.f) / 3.f * W);
+        fill(xl, top, 2, H, C_PLAY, 90);
+        glowDot(xl, ys[clampi(xl - x0, 0, W - 1)], c);
+    }
+    static const char* tn[3] = {"LOWPASS", "BANDPASS", "HIGHPASS"};
+    text(gx + gw - 10 - textW(tn[type % 3]), gy + 6, tn[type % 3], sel == 2 ? C_PLAY : dimC(c, 0.8f));
+}
+
+static float waveAt(int w, float ph, float pw) {
+    ph -= floorf(ph);
+    switch (w) {
+    case 0: return 2.f * ph - 1.f;
+    case 1: return ph < pw ? 1.f : -1.f;
+    case 2: return 1.f - 4.f * fabsf(ph - 0.5f);
+    default: return sinf(ph * 6.2831853f);
+    }
+}
+
+// LFO-Welle mit laufender Phase
+static void lfoGraph(int gx, int gy, int gw, int gh, int spd, int dep, int wave, float ph, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 18) / 2;
+    float amp = (dep - 64) / 64.f;
+    fill(x0, mid, W, 1, C_OFF2);
+    static int ys[700];
+    if (W > 690) W = 690;
+    for (int i = 0; i < W; i++) {
+        float p = (float)i / W * 2.f, v;
+        if (wave == 4) { int seg = (int)(p * 4); v = sinf(seg * 12.9898f) * 0.9f; }   // S&H-Andeutung
+        else { int w = wave == 0 ? 3 : (wave == 1 ? 2 : (wave == 2 ? 0 : 1)); v = waveAt(w, p, 0.5f); }
+        ys[i] = mid - (int)(v * amp * A);
+    }
+    for (int i = 0; i < W; i += 3) {   // Wellenform bei voller Tiefe als Geisterkurve
+        float p = (float)i / W * 2.f, v;
+        if (wave == 4) { int seg = (int)(p * 4); v = sinf(seg * 12.9898f) * 0.9f; }
+        else { int w = wave == 0 ? 3 : (wave == 1 ? 2 : (wave == 2 ? 0 : 1)); v = waveAt(w, p, 0.5f); }
+        fill(x0 + i, mid - (int)(v * A), 2, 1, C_OFF2);
+    }
+    curve(x0, ys, W, mid, c, 35);
+    float pp = ph - floorf(ph);
+    int px = x0 + (int)(pp * W / 2.f);
+    glowDot(px, ys[clampi(px - x0, 0, W - 1)], c);
+    glowDot(px + W / 2, ys[clampi(px + W / 2 - x0, 0, W - 1)], dimC(c, 0.6f));
+    char b[24];
+    snprintf(b, sizeof b, "%.2f HZ", 0.05f * exp2f(spd * (9.f / 127.f)));
+    text(gx + gw - 10 - textW(b), gy + 6, b, dimC(c, 0.8f));
+}
+
+// Oszillatoren: OSC1, OSC2 und Mischung (OSC2 driftet mit der Verstimmung)
+static void oscGraph(int gx, int gy, int gw, int gh, int w1, int w2, int det, int mixv, int pwv, int sel, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 20) / 2;
+    float pw = 0.5f + (pwv - 64) / 140.f, m = mixv / 127.f;
+    float drift = oscDrift * (det - 64) / 64.f * 0.6f;
+    static int y1[700], y2[700], ym[700];
+    if (W > 690) W = 690;
+    for (int i = 0; i < W; i++) {
+        float p = (float)i / W * 2.f;
+        float a = waveAt(w1, p, pw), b = waveAt(w2, p + drift, pw);
+        y1[i] = mid - (int)(a * A * 0.9f); y2[i] = mid - (int)(b * A * 0.9f);
+        ym[i] = mid - (int)((a * (1 - m) + b * m) * A * 0.9f);
+    }
+    fill(x0, mid, W, 1, C_OFF2);
+    for (int i = 0; i < W; i += 2) { fill(x0 + i, y1[i], 1, 2, dimC(c, sel == 0 ? 0.9f : 0.45f)); fill(x0 + i, y2[i], 1, 2, mix(dimC(c, sel == 1 ? 0.9f : 0.45f), C_PLAY, 0.3f)); }
+    curve(x0, ym, W, mid, c, 30);
+}
+
+// Sample-Wellenform mit Start/Ende und Abspielposition
+static void sampleGraph(int gx, int gy, int gw, int gh, int idx, int st, int en, bool loop, int sel, Col c) {
+    graphBox(gx, gy, gw, gh);
+    const Sample* sm = sampleGet(idx);
+    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, "KEINE SAMPLES IM ORDNER samples/", C_DIM); return; }
+    int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 16) / 2;
+    static int cIdx = -1, cW = 0; static float pk[700];
+    if (W > 690) W = 690;
+    if (cIdx != idx || cW != W) {   // Peaks einmal pro Sample berechnen
+        cIdx = idx; cW = W;
+        for (int i = 0; i < W; i++) {
+            int a = (int)((long)sm->len * i / W), b = (int)((long)sm->len * (i + 1) / W);
+            float m = 0;
+            int stp = (b - a) / 64 + 1;
+            for (int j = a; j < b; j += stp) { float v = fabsf(sm->data[j]); if (v > m) m = v; }
+            pk[i] = m;
+        }
+    }
+    int xs = x0 + st * (W - 1) / 127, xe = x0 + en * (W - 1) / 127;
+    int lo = xs < xe ? xs : xe, hi = xs < xe ? xe : xs;
+    for (int i = 0; i < W; i++) {
+        int h = (int)(sqrtf(pk[i]) * A);
+        bool in = x0 + i >= lo && x0 + i <= hi;
+        fill(x0 + i, mid - h, 1, 2 * h + 1, in ? c : C_OFF2);
+    }
+    fill(xs, gy + 4, 2, gh - 8, sel == 3 ? C_PLAY : C_GREEN);
+    fill(xe, gy + 4, 2, gh - 8, C_TRIG);
+    if (loop) text(lo + 4, gy + gh - 20, "LOOP", C_PLAY);
+    if (en < st) text(lo + 4, gy + 4, "<< RUECKWAERTS", C_PLAY);
+    const Voice& v = eng.v[track];
+    if (v.active && v.machine == M_SAMPLE && v.smp == sm) {
+        int px = x0 + (int)(v.spos / sm->len * (W - 1));
+        fill(px, gy + 4, 2, gh - 8, C_PLAY);
+    }
+    char b[64];
+    snprintf(b, sizeof b, "%.30s  %.2fs", sm->name, (float)sm->len / sm->rate);
+    text(gx + gw - 10 - textW(b), gy + 4, b, dimC(c, 0.8f));
+}
+
+// Wert-Chip unter einer Grafik
+static void paramChip(int k, int x, int y, Col tc) {
+    char b[32], label[24];
+    ParamDef d; int val, baseVal; bool locked;
+    bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
+    bool sel = k == slot;
+    rrect(x + 4, y, 152, 26, 7, sel ? C_SEL : C_BG);
+    if (!ok) return;
+    Col c = locked ? C_LOCK : tc;
+    knobAnim[k] += (knobFrac(d, val) - knobAnim[k]) * (1.f - expf(-animDt * 16.f));
+    int bw = (int)(140 * knobAnim[k]);
+    fill(x + 10, y + 22, 140, 2, C_OFF2);
+    if (bw > 0) fill(x + 10, y + 22, bw, 2, sel ? c : dimC(c, 0.7f));
+    knobText(d, val, b, sizeof b, k);
+    char nm[24];
+    int maxc = (140 - textW(b) - 8) / FONT_W;
+    snprintf(nm, sizeof nm, "%.*s", maxc < 1 ? 1 : (maxc > 23 ? 23 : maxc), label[0] ? label : d.name);
+    text(x + 10, y + 3, nm, sel ? C_TEXT : C_DIM);
+    text(x + 150 - textW(b), y + 3, b, locked ? C_LOCK : (sel ? c : C_TEXT));
+}
+
+// welche Reihe (0/1) der aktuellen Seite als Grafik erscheint
+static int graphKind(int row) {
+    if (page == 3 && row == 0) return 1;                  // AMP: Huellkurve
+    if (page == 2) return row == 0 ? 2 : 1;               // FLT: Filter + Huellkurve
+    if (page == 4 && row == 0) return 3;                  // LFO
+    if (page == 1 && row == 0) {
+        int m = curP().machine[track];
+        if (m == M_SYNTH) return 4;
+        if (m == M_SAMPLE) return 5;
+    }
+    return 0;
+}
+static int pv(int idx) {   // Wert (inkl. Lock beim Halten) eines Spurparameters
+    const Pattern& P = curP();
+    if (aHeld && holdS().lock[idx] != NO_LOCK) return holdS().lock[idx];
+    return P.p[track][idx];
+}
+
 static void drawKnobs() {
     char b[32], label[24];
     Col tc = TCOL[track];
     Uint32 now = SDL_GetTicks();
-    for (int k = 0; k < 8; k++) {
-        int x = (k % 4) * 160, y = 44 + (k / 4) * 96;
-        bool sel = k == slot;
-        ParamDef d; int val, baseVal; bool locked;
-        bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
-        if (sel) { rrect(x + 3, y + 1, 154, 92, 8, C_SEL); rrect(x + 3, y + 10, 3, 74, 1, ok ? tc : C_DIM); }
-        int cx = x + 80, cy = y + 38;
-        if (!ok) {
-            arc(cx, cy, 27, 135, 405, C_OFF, 2);
-            textC(cx, cy - 8, "-", C_DIM);
+    int ox = (int)slideOff;
+    for (int row = 0; row < 2; row++) {
+        int y = 44 + row * 96;
+        int gk = graphKind(row);
+        if (gk) {
+            int gx = 4 + ox, gy = y + 2, gw = 632, gh = 62;
+            int selRel = (slot / 4 == row) ? slot % 4 : -1;
+            const Voice& v = eng.v[track];
+            switch (gk) {
+            case 1: {
+                int base = page == 3 ? P_AATK : P_FATK;
+                envGraph(gx, gy, gw, gh, pv(base), pv(base + 1), pv(base + 2), pv(base + 3), selRel,
+                         v.active ? (page == 3 ? &v.aenv : &v.fenv) : nullptr, tc);
+            } break;
+            case 2:
+                filterGraph(gx, gy, gw, gh, pv(P_FREQ), pv(P_RESO), pv(P_FTYP), pv(P_FENV), selRel,
+                            v.active ? v.fBase + v.fEnv * v.fenv.v : -1.f, tc);
+                break;
+            case 3: {
+                float rate = 0.05f * exp2f(pv(P_LSPD) * (9.f / 127.f));
+                uiLfoPh += rate * animDt;
+                float ph = (v.active && pv(P_LTRG)) ? v.lfoPh : uiLfoPh;
+                lfoGraph(gx, gy, gw, gh, pv(P_LSPD), pv(P_LDEP), pv(P_LWAV), ph, tc);
+            } break;
+            case 4:
+                oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), selRel, tc);
+                break;
+            case 5:
+                sampleGraph(gx, gy, gw, gh, pv(P_S0), pv(P_S3), pv(P_S4), pv(P_S5) != 0, selRel, tc);
+                break;
+            }
+            for (int k = row * 4; k < row * 4 + 4; k++) paramChip(k, (k % 4) * 160 + ox, y + 66, tc);
             continue;
         }
-        float frac = knobFrac(d, val);
-        bool justEdited = sel && editAt && now - editAt < 300;
-        Col kc = locked ? C_LOCK : (sel ? (page >= PAGE_FX ? C_ACC : tc) : C_TEXT);
-        if (d.kind == K_GR) kc = C_TRIG;
-        if (justEdited) kc = mix(kc, C_PLAY, 0.5f * (1.f - (now - editAt) / 300.f));
-        knob(cx, cy, 27, frac, d.kind == K_BIP, kc);
-        if (locked) {   // Grundwert als Markierung
-            float a = (135 + 270 * knobFrac(d, baseVal)) * 0.0174533f;
-            fill(cx + (int)(31 * cosf(a)) - 1, cy + (int)(31 * sinf(a)) - 1, 3, 3, C_DIM);
+        for (int k = row * 4; k < row * 4 + 4; k++) {
+            int x = (k % 4) * 160 + ox;
+            bool sel = k == slot;
+            ParamDef d; int val, baseVal; bool locked;
+            bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
+            if (sel) { rrect(x + 3, y + 1, 154, 92, 10, C_SEL); rrect(x + 3, y + 12, 3, 70, 1, ok ? tc : C_DIM); }
+            int cx = x + 80, cy = y + 38;
+            if (!ok) {
+                arc(cx, cy, 27, 135, 405, C_OFF, 2);
+                textC(cx, cy - 8, "-", C_DIM);
+                continue;
+            }
+            float target = knobFrac(d, val);
+            knobAnim[k] += (target - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
+            bool justEdited = sel && editAt && now - editAt < 300;
+            Col kc = locked ? C_LOCK : (sel ? (page >= PAGE_FX ? C_ACC : tc) : C_TEXT);
+            if (d.kind == K_GR) kc = C_TRIG;
+            if (justEdited) kc = mix(kc, C_PLAY, 0.5f * (1.f - (now - editAt) / 300.f));
+            if (sel) {   // atmender Ring um den gewaehlten Regler
+                float br = 0.35f + 0.25f * sinf(animTime * 3.f);
+                arc(cx, cy, 33, 135, 405, dimC(kc, br), 1);
+            }
+            knob(cx, cy, 27, knobAnim[k], d.kind == K_BIP, kc);
+            if (locked) {
+                float a = (135 + 270 * knobFrac(d, baseVal)) * 0.0174533f;
+                fill(cx + (int)(31 * cosf(a)) - 1, cy + (int)(31 * sinf(a)) - 1, 3, 3, C_DIM);
+            }
+            knobText(d, val, b, sizeof b, k);
+            textC(cx, cy - 8, b, locked ? C_LOCK : C_TEXT);
+            textC(cx, y + 70, label[0] ? label : d.name, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
         }
-        knobText(d, val, b, sizeof b);
-        textC(cx, cy - 8, b, locked ? C_LOCK : C_TEXT);
-        textC(cx, y + 70, label[0] ? label : d.name, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
     }
     // grosse Werteanzeige beim Drehen bzw. Meldung (die juengste gewinnt)
     bool showEdit = editAt && (now - editAt < 900 || editAt == 1) && editAt >= msgAt;
@@ -417,26 +798,42 @@ static void drawKnobs() {
     if (showEdit) {
         ParamDef d; int val, baseVal; bool locked;
         if (knobInfo(editSlot, d, val, locked, baseVal, label, sizeof label)) {
-            knobText(d, val, b, sizeof b);
+            knobText(d, val, b, sizeof b, editSlot);
             Col c = locked ? C_LOCK : (page >= PAGE_FX ? C_ACC : tc);
-            rrect(150, 204, 340, 34, 8, C_BG, 240);
-            rrect(150, 204, 4, 34, 2, c);
-            text(164, 213, label[0] ? label : d.name, C_DIM);
+            float t = editAt == 1 ? 1.f : fminf((now - editAt) / 120.f, 1.f);   // kurzes Aufpoppen
+            int oy = 204 + (int)((1.f - t) * 8);
+            rrect(150, oy, 340, 34, 8, C_BG);
+            rrect(150, oy, 4, 34, 2, c);
+            text(164, oy + 9, label[0] ? label : d.name, C_DIM);
             int bx = 330, bw = 100;
-            rrect(bx, 217, bw, 8, 3, C_OFF2);
-            int fw = (int)(bw * knobFrac(d, val));
-            if (fw > 0) rrect(bx, 217, fw, 8, 3, c);
-            text(478 - textW(b, 1) - 2, 213, b, c);
-            if (locked) text(bx, 205, "LOCK", C_LOCK);
-            if (d.kind == K_MACH || d.kind == K_INS) {   // Auswahlleiste (Engines bzw. Effekte)
+            if (d.kind == K_SCALE) {   // Mini-Tastatur mit den Skalentoenen
+                static const int white[7] = {0, 2, 4, 5, 7, 9, 11}, black[5] = {1, 3, 6, 8, 10};
+                static const int bpos[5] = {0, 1, 3, 4, 5};
+                int kx = 300, kw = 14;
+                for (int i = 0; i < 7; i++) {
+                    bool on = val == 0 || inScale(white[i], val), root = val > 0 && (val - 1) % 12 == white[i];
+                    rrect(kx + i * kw, oy + 6, kw - 2, 22, 2, root ? C_PLAY : (on ? c : C_OFF2));
+                }
+                for (int i = 0; i < 5; i++) {
+                    bool on = val == 0 || inScale(black[i], val), root = val > 0 && (val - 1) % 12 == black[i];
+                    rrect(kx + bpos[i] * kw + kw - 5, oy + 6, 9, 13, 2, root ? C_PLAY : (on ? dimC(c, 0.7f) : C_BG));
+                }
+            } else {
+                rrect(bx, oy + 13, bw, 8, 3, C_OFF2);
+                int fw = (int)(bw * knobFrac(d, val));
+                if (fw > 0) rrect(bx, oy + 13, fw, 8, 3, c);
+            }
+            text(478 - textW(b, 1) - 2, oy + 9, b, c);
+            if (locked) text(bx, oy + 1, "LOCK", C_LOCK);
+            if (d.kind == K_MACH || d.kind == K_INS) {
                 const char* const* names = d.kind == K_MACH ? MACHINE_NAMES : INS_NAMES;
                 int cnt = d.kind == K_MACH ? M_COUNT : INS_COUNT;
-                rrect(150, 204, 340, 34, 8, C_BG, 250);
-                rrect(150, 204, 4, 34, 2, c);
+                rrect(150, oy, 340, 34, 8, C_BG, 250);
+                rrect(150, oy, 4, 34, 2, c);
                 for (int m = 0; m < cnt; m++) {
                     int mx = 160 + m * 47;
-                    if (m == val) rrect(mx - 2, 211, 46, 20, 5, c);
-                    textC(mx + 21, 213, names[m], m == val ? C_BG : C_DIM);
+                    if (m == val) rrect(mx - 2, oy + 7, 46, 20, 5, c);
+                    textC(mx + 21, oy + 9, names[m], m == val ? C_BG : C_DIM);
                 }
             }
         }
@@ -445,10 +842,9 @@ static void drawKnobs() {
         rrect(320 - w / 2, 210, w, 26, 8, C_ACC);
         textC(320, 215, msg, C_BG);
     }
-    // Seitenwechsel: Seitenname kurz gross einblenden
     if (pageAt && now - pageAt < 450) {
-        textAlpha = (Uint8)(255 * (1.f - (now - pageAt) / 450.f));
-        textC(320, 120, PAGE_NAMES[page], C_PLAY, 4);
+        textAlpha = (Uint8)(200 * (1.f - (now - pageAt) / 450.f));
+        textC(320 - (int)slideOff, 120, PAGE_NAMES[page], C_PLAY, 4);
         textAlpha = 255;
     }
 }
@@ -459,15 +855,16 @@ static void drawGrid() {
     const Pattern& P = curP();
     char b[16];
     int y0 = 244;
+    rrect(0, (int)hlY - 2, SW, 18, 4, C_PANEL);   // gleitende Spur-Markierung
     for (int t = 0; t < NTRACKS; t++) {
         int y = y0 + t * 18;
         Col tc = eng.mute[t] ? dimC(TCOL[t], 0.35f) : TCOL[t];
-        if (t == track) rrect(0, y - 2, SW, 18, 4, C_PANEL);
-        rrect(4, y, 4, 14, 1, mix(tc, C_PLAY, flash[t] * 0.7f));   // Farbchip, blitzt beim Trig
+        int chipH = 14 + (int)(flash[t] * 4);
+        rrect(4, y + 7 - chipH / 2, 4, chipH, 1, mix(tc, C_PLAY, flash[t] * 0.7f));
         snprintf(b, sizeof b, "%d %s", t + 1, MACHINE_NAMES[P.machine[t]]);
         text(12, y - 2, b, eng.mute[t] ? C_DIM : (t == track ? TCOL[t] : C_TEXT));
         if (eng.mute[t]) { fill(12, y + 5, textW(b), 1, C_DIM); text(68, y - 2, "M", C_TRIG); }
-        int mw = clampi((int)(sqrtf(meterV[t]) * 62), 0, 62);   // Pegel der Spur
+        int mw = clampi((int)(sqrtf(meterV[t]) * 62), 0, 62);
         fill(12, y + 13, 62, 2, C_OFF);
         if (mw) fill(12, y + 13, mw, 2, tc);
         int len = P.len[t];
@@ -476,13 +873,18 @@ static void drawGrid() {
             if (s >= len) continue;
             const Step& st = P.s[t][s];
             bool ph = eng.playing && eng.playedStep[t] == s;
-            if (t == track && s == cursor) rrect(x - 2, y - 1, 35, 16, 4, aHeld ? C_LOCK : C_TEXT);
             Col c = st.on ? tc : offCol(s);
-            if (ph) c = st.on ? mix(tc, C_PLAY, 0.25f + flash[t] * 0.6f) : mix(c, C_PLAY, 0.18f);
-            rrect(x, y + 1, 31, 12, 3, c);
+            int grow = 0;
+            if (ph) { c = st.on ? mix(tc, C_PLAY, 0.25f + flash[t] * 0.6f) : mix(c, C_PLAY, 0.18f); if (st.on) grow = (int)(flash[t] * 3); }
+            rrect(x - grow, y + 1 - grow / 2, 31 + 2 * grow, 12 + grow, 3, c);
             if (st.on && stepHasLock(st)) fill(x + 25, y + 3, 3, 3, C_BG);
         }
     }
+    // gleitender Cursor
+    int cx = 82 + (int)(curXg * 34 + 0.5f), cy = y0 + track * 18;
+    Col cc = aHeld ? C_LOCK : C_TEXT;
+    rrect(cx - 3, cy - 2, 37, 2, 1, cc); rrect(cx - 3, cy + 14, 37, 2, 1, cc);
+    rrect(cx - 3, cy - 2, 2, 18, 1, cc); rrect(cx + 32, cy - 2, 2, 18, 1, cc);
 }
 
 static void drawSteps() {
@@ -490,49 +892,56 @@ static void drawSteps() {
     char b[8];
     Col tc = eng.mute[track] ? dimC(TCOL[track], 0.35f) : TCOL[track];
     int len = P.len[track];
-    if (eng.recording) rrect(2, 388, 628, 54, 8, (SDL_GetTicks() / 400) % 2 ? C_TRIG : dimC(C_TRIG, 0.5f));
-    if (eng.recording) rrect(4, 390, 624, 50, 7, C_BG);
+    int sv = P.p[track][P_T7];
+    if (eng.recording) {
+        float pl = 0.5f + 0.5f * sinf(animTime * 6.f);
+        rrect(2, 388, 628, 54, 8, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
+        rrect(4, 390, 624, 50, 7, C_BG);
+    }
+    // gleitender Cursor hinter den Tasten
+    int ccx = 6 + (int)(curXg * 39 + 0.5f);
+    rrect(ccx - 3, 389, 42, 52, 8, aHeld ? C_LOCK : C_TEXT);
     for (int s = 0; s < NSTEPS; s++) {
         int x = 6 + s * 39, y = 392;
         if (s >= len) { rrect(x, y, 36, 46, 6, C_DARK); continue; }
         const Step& st = P.s[track][s];
         bool ph = eng.playing && eng.playedStep[track] == s;
-        if (s == cursor) rrect(x - 3, y - 3, 42, 52, 8, aHeld ? C_LOCK : C_TEXT);
         Col c = st.on ? tc : offCol(s);
-        if (ph && st.on) c = mix(tc, C_PLAY, 0.2f + flash[track] * 0.6f);
-        rrect(x, y, 36, 46, 6, c);
-        if (ph) rrect(x + 6, y + 4, 24, 4, 2, st.on ? C_BG : C_PLAY);
-        if (st.on && stepHasLock(st)) rrect(x + 27, y + 11, 5, 5, 2, C_BG);
-        if (st.on && st.lock[P_NOTE] != NO_LOCK) {   // gelockte Note auf der Taste
+        int lift = 0;
+        if (ph && st.on) { c = mix(tc, C_PLAY, 0.2f + flash[track] * 0.6f); lift = (int)(flash[track] * 3); }
+        rrect(x, y - lift, 36, 46, 6, c);
+        if (ph) rrect(x + 6, y + 4 - lift, 24, 4, 2, st.on ? C_BG : C_PLAY);
+        if (st.on && stepHasLock(st)) rrect(x + 27, y + 11 - lift, 5, 5, 2, C_BG);
+        if (st.on && st.lock[P_NOTE] != NO_LOCK) {
             char nb[8];
-            fmtParam(COMMON_DEFS[P_NOTE], st.lock[P_NOTE], nb, sizeof nb);
-            textC(x + 18, y + 13, nb, dimC(C_BG, 0.85f));
+            int nsv = st.lock[P_T7] != NO_LOCK ? st.lock[P_T7] : sv;
+            fmtParam(COMMON_DEFS[P_NOTE], quantizeNote(st.lock[P_NOTE], nsv), nb, sizeof nb);
+            textC(x + 18, y + 13 - lift, nb, dimC(C_BG, 0.85f));
         }
         snprintf(b, sizeof b, "%d", s + 1);
-        textC(x + 18, y + 27, b, st.on ? C_BG : C_DIM);
+        textC(x + 18, y + 27 - lift, b, st.on ? C_BG : C_DIM);
     }
     const char* h;
     if (aHeld) h = "[X/Y/STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]MASCH [L1/R1]CPY/PST";
-    else if (page == PAGE_SYS) h = "[X/Y] AENDERN  [L1/R1] EINSTELLUNG  [L2/R2] SEITE  [START] PLAY";
-    else if (page == PAGE_INS) h = "[X/Y] WERT [L1/R1] REGLER   TYPE WAEHLEN, DANN MIX AUFDREHEN";
-    else if (page == PAGE_FX) h = "[X/Y] WERT [L1/R1] REGLER   SENDS PRO SPUR: AMP-SEITE (DLY/REV)";
-    else if (page == PAGE_CMP) h = "[X/Y] WERT [L1/R1] REGLER   SC=T1 + RATIO HOCH = KICK DUCKT ALLES";
-    else if (page == PAGE_MST) h = "[X/Y] WERT  [L1/R1] REGLER  [L2/R2] SEITE  [SEL+v] TAP-TEMPO";
-    else h = "[A]TRIG [B]HOER [X/Y]WERT [L1/R1]REGLER [L2/R2]SEITE [SEL]FUNC";
+    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]ENGINE [L1/R1]CPY/PST";
+    else if (page == PAGE_SYS) h = "[X/Y] AENDERN   [L-STICK <>] EINSTELLUNG   [R-STICK <>] SEITE";
+    else if (page == PAGE_INS) h = "[X/Y] WERT  [L-STICK <>] REGLER  [R-STICK <>] SEITE  TYPE, DANN MIX";
+    else if (page == PAGE_FX) h = "[X/Y] WERT  [L-STICK <>] REGLER  [R-STICK <>] SEITE  SENDS: AMP";
+    else if (page == PAGE_CMP) h = "[X/Y] WERT  [L-STICK <>] REGLER   SC=T1 + RATIO HOCH = KICK PUMPT";
+    else if (page == PAGE_MST) h = "[X/Y] WERT  [L-STICK <>] REGLER  [R-STICK <>] SEITE  [SEL+v] TAP";
+    else h = "[A]TRIG [B]HOER [X/Y]WERT [L-STICK]REGLER [R-STICK<>]SEITE [SEL]FUNC";
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
 static void drawHelp() {
-    rrect(30, 30, 580, 420, 12, C_ACC);
-    rrect(32, 32, 576, 416, 11, C_BG, 245);
+    rrect(30, 22, 580, 436, 12, C_ACC);
+    rrect(32, 24, 576, 432, 11, C_BG, 245);
     static const char* lines[] = {
         "SELECT (FUNC) GEHALTEN +",
         "  LINKS/RECHTS   Pattern wechseln",
         "  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo",
-        "  A              Spur stumm",
-        "  B              Spur loeschen",
-        "  X / Y          Maschine wechseln",
+        "  A / B          Spur stumm / Spur loeschen",
+        "  X / Y          Engine wechseln",
         "  L1 / R1        Pattern kopieren / einfuegen",
         "  L2 / R2        Spurlaenge -/+",
         "  START          Speichern (2s halten: Ende)",
@@ -542,12 +951,13 @@ static void drawHelp() {
         "  A halten+X/Y   Parameter-Lock auf Step",
         "  A halten+B     Locks des Steps loeschen",
         "  B              Spur vorhoeren",
-        "  Linker Stick   Wert stufenlos",
-        "  Rechter Stick  DJ-Filter (LP/HP)",
+        "  Linker Stick   hoch/runter: Wert  links/rechts: Regler",
+        "  Rechter Stick  links/rechts: Seite  hoch/runter: DJ-Filter",
+        "  L1/R1  L2/R2   Regler / Seite (wie die Sticks)",
         "  START          Play / Stop",
     };
     for (unsigned i = 0; i < sizeof lines / sizeof *lines; i++)
-        text(48, 44 + i * 21, lines[i], i == 0 || i == 10 ? C_ACC : C_TEXT);
+        text(48, 36 + i * 22, lines[i], i == 0 || i == 9 ? C_ACC : C_TEXT);
 }
 
 static void drawAll(bool help) {
@@ -617,9 +1027,20 @@ static void editValue(int delta) {
     if (aHeld) {
         Step& s = holdS();
         int cur = s.lock[idx] != NO_LOCK ? s.lock[idx] : eng.proj.pat[holdPat].p[holdTrack][idx];
+        if (idx == P_NOTE) {   // in Skalenschritten
+            int sv = s.lock[P_T7] != NO_LOCK ? s.lock[P_T7] : eng.proj.pat[holdPat].p[holdTrack][P_T7];
+            if (sv > 0) { int n = quantizeNote(cur, sv); for (int i = 0; i < abs(delta); i++) n = stepScale(n, delta > 0 ? 1 : -1, sv); s.lock[idx] = (uint8_t)n; }
+            else s.lock[idx] = (uint8_t)clampi(cur + delta, 0, d.max);
+        } else
         s.lock[idx] = (uint8_t)clampi(cur + delta, 0, d.max);
         aEdited = true;
     } else {
+        int sv = P.p[track][P_T7];
+        if (idx == P_NOTE && sv > 0) {
+            int n = quantizeNote(P.p[track][idx], sv);
+            for (int i = 0; i < abs(delta); i++) n = stepScale(n, delta > 0 ? 1 : -1, sv);
+            P.p[track][idx] = (uint8_t)n;
+        } else
         P.p[track][idx] = (uint8_t)clampi(P.p[track][idx] + delta, 0, d.max);
     }
     if (idx == P_NOTE || d.kind == K_SMPL) { lockA(); eng.preview(track, aHeld ? &holdS() : nullptr); unlockA(); }
@@ -631,6 +1052,17 @@ static int curMax() {
     if (page == PAGE_CMP) return CMP_DEFS[slot].max;
     if (page == PAGE_FX) return FX_DEFS[slot].max;
     return paramDef(curP().machine[track], page * 8 + slot).max;
+}
+
+// Stick-"Antippen": ein Schritt pro Auslenkung, beim Halten wiederholt
+static int flLX = 0, flRX = 0; static Uint32 flLXt = 0, flRXt = 0;
+static int flick(float v, int& state, Uint32& t, Uint32 now) {
+    if (fabsf(v) < 0.35f) { state = 0; return 0; }
+    if (fabsf(v) < 0.65f) return 0;
+    int d = v > 0 ? 1 : -1;
+    if (state != d) { state = d; t = now + 420; return d; }
+    if (now >= t) { t = now + 220; return d; }
+    return 0;
 }
 
 static void handleInput(Uint32 now, float dt) {
@@ -716,6 +1148,11 @@ static void handleInput(Uint32 now, float dt) {
             if (aHeld) { memset(holdS().lock, NO_LOCK, NPARAMS); aEdited = true; toast("LOCKS GELOESCHT"); }
             else { lockA(); eng.preview(track, &curP().s[track][cursor]); unlockA(); }
         }
+        // leise Bedienung: linker Stick links/rechts = Regler, rechter Stick links/rechts = Seite
+        if (fabsf(I.lx) > fabsf(I.ly)) { int f = flick(I.lx, flLX, flLXt, now); if (f) slot = (slot + 8 + f) % 8; }
+        else flLX = 0;
+        if (fabsf(I.rx) > fabsf(I.ry)) { int f = flick(I.rx, flRX, flRXt, now); if (f) page = (page + NUI_PAGES + f) % NUI_PAGES; }
+        else flRX = 0;
         if (I.repeat(BT_L1, now)) slot = (slot + 7) % 8;
         if (I.repeat(BT_R1, now)) slot = (slot + 1) % 8;
         if (I.pressed(BT_L2)) page = (page + NUI_PAGES - 1) % NUI_PAGES;
@@ -730,7 +1167,7 @@ static void handleInput(Uint32 now, float dt) {
         int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
         if (I.repeat(BT_X, now, 300, 45)) editValue(mul);
         if (I.repeat(BT_Y, now, 300, 45)) editValue(-mul);
-        float ly = I.ly;
+        float ly = fabsf(I.ly) > fabsf(I.lx) ? I.ly : 0.f;
         if (fabsf(ly) > 0.25f) {
             float dz = (fabsf(ly) - 0.25f) / 0.75f;
             float rate = (big ? 90.f : 8.f) * dz * dz + 2.f;
@@ -745,7 +1182,7 @@ static void handleInput(Uint32 now, float dt) {
         aHeld = false;
     }
     if (aHeld && !I.down[BT_A]) aHeld = false;
-    float ry = I.ry;
+    float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;
     if (fabsf(ry) > 0.2f) { eng.dj = ry > 0 ? (ry - 0.2f) / 0.8f : (ry + 0.2f) / 0.8f; stickDj = true; }
     else if (stickDj) { eng.dj = 0.f; stickDj = false; }
     // Zustand fuer MIDI-Eingang / Step-Aufnahme
@@ -763,14 +1200,15 @@ static void handleInput(Uint32 now, float dt) {
 static bool runLearn() {
     SDL_Joystick* j = in.joy;
     if (!j) { printf("Kein Gamepad gefunden - Lernmodus uebersprungen\n"); return false; }
-    static const char* prompts[BT_COUNT + 2] = {
+    static const char* prompts[BT_COUNT + 4] = {
         "STEUERKREUZ HOCH", "STEUERKREUZ RUNTER", "STEUERKREUZ LINKS", "STEUERKREUZ RECHTS",
         "A", "B", "X", "Y", "L1", "R1", "L2", "R2", "SELECT", "START",
-        "LINKEN STICK NACH OBEN", "RECHTEN STICK NACH OBEN"};
+        "LINKEN STICK NACH OBEN", "RECHTEN STICK NACH OBEN",
+        "LINKEN STICK NACH RECHTS", "RECHTEN STICK NACH RECHTS"};
     int nb = SDL_JoystickNumButtons(j), nh = SDL_JoystickNumHats(j), na = SDL_JoystickNumAxes(j);
     Binding res[BT_COUNT];
-    int axL = -1, axR = -1, sL = -1, sR = -1;
-    for (int item = 0; item < BT_COUNT + 2; item++) {
+    int axL = -1, axR = -1, sL = -1, sR = -1, axLx = -1, axRx = -1, sLx = 1, sRx = 1;
+    for (int item = 0; item < BT_COUNT + 4; item++) {
         bool stick = item >= BT_COUNT;
         Uint8 bb[64] = {0}; Uint8 bh[8] = {0}; float ba[16] = {0};
         SDL_PumpEvents();
@@ -797,7 +1235,11 @@ static bool runLearn() {
                 float a = SDL_JoystickGetAxis(j, i) / 32767.f;
                 if (fabsf(a - ba[i]) > 0.6f) {
                     int sg = a > ba[i] ? 1 : -1;
-                    if (stick) { if (item == BT_COUNT) { axL = i; sL = sg; } else { axR = i; sR = sg; } }
+                    if (stick) {
+                        int si = item - BT_COUNT;
+                        if (si == 0) { axL = i; sL = sg; } else if (si == 1) { axR = i; sR = sg; }
+                        else if (si == 2) { axLx = i; sLx = sg; } else { axRx = i; sRx = sg; }
+                    }
                     else { res[item].type = 3; res[item].idx = i; res[item].val = sg; }
                     done = true;
                 }
@@ -810,7 +1252,7 @@ static bool runLearn() {
             textC(SW / 2, 150, "DRUECKE:", C_DIM);
             textC(SW / 2, 190, prompts[item], C_TEXT, 2);
             char b[64];
-            snprintf(b, sizeof b, "%d / %d", item + 1, BT_COUNT + 2);
+            snprintf(b, sizeof b, "%d / %d", item + 1, BT_COUNT + 4);
             textC(SW / 2, 260, b, C_DIM);
             if (stick) { snprintf(b, sizeof b, "Kein Stick? Ueberspringen in %ds", left); textC(SW / 2, 300, b, C_DIM); }
             SDL_RenderPresent(ren);
@@ -831,6 +1273,7 @@ static bool runLearn() {
     }
     for (int b = 0; b < BT_COUNT; b++) in.map[b] = res[b];
     in.axLY = axL; in.sgnLY = sL; in.axRY = axR; in.sgnRY = sR;
+    in.axLX = axLx; in.sgnLX = sLx; in.axRX = axRx; in.sgnRX = sRx; in.haveLX = in.haveRX = true;
     in.haveMap = true;
     if (in.gc) { in.gc = nullptr; }  // ab jetzt Rohdaten des Joysticks benutzen
     bool ok = in.saveMap(cfgPath);
@@ -944,6 +1387,7 @@ static void applyUsbMode() {
         msgUntil = SDL_GetTicks() + 4000;
     } else toast("USB: HOST-MODUS");
     usbMode = now;
+    readNetIp();
     refreshDevices();
 }
 
@@ -997,6 +1441,7 @@ int main(int argc, char** argv) {
         eng.load(projPath);
         SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_RGBA32);
         ren = SDL_CreateSoftwareRenderer(surf);
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         makeFont();
         eng.start();
         static float tmp[44100];
@@ -1006,6 +1451,7 @@ int main(int argc, char** argv) {
         refreshDevices();
         if (shotPage == 11) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
         if (page == PAGE_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
+        if (shotPage == 14) { page = 0; slot = 7; track = 4; curP().p[4][P_T7] = 1 + 1 * 12 + 9; editSlot = 7; editAt = 1; }
         if (shotPage == 13) { page = 0; slot = 6; track = 4; editSlot = 6; editAt = 1; }
         if (shotPage == 6) {   // Sidechain-Beispiel
             eng.proj.cmp[CM_SRC] = 1; eng.proj.cmp[CM_THR] = 40; eng.proj.cmp[CM_RAT] = 6; slot = 5;
@@ -1045,6 +1491,7 @@ int main(int argc, char** argv) {
 
     loadSettings();
     usbMode = detectUsbMode();
+    readNetIp();
     refreshDevices();
     for (int i = 0; i < devCount; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, devNames[i]);
     eng.init(44100);

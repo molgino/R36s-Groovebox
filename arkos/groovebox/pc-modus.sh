@@ -14,9 +14,12 @@ pause() { [ -z "$NOSLEEP" ] && sleep "$1"; }
 say() { echo "$*"; [ -z "$NOSLEEP" ] && echo "$*" > /dev/tty1 2>/dev/null; }
 
 teardown() {
+  [ -f /run/groovebox-dhcp.pid ] && kill "$(cat /run/groovebox-dhcp.pid)" 2>/dev/null; rm -f /run/groovebox-dhcp.pid "$GBDIR/netmidi.ip"
   [ -d "$G" ] || return 0
+  rm -f "$G"/os_desc/c.1 2>/dev/null
   echo "" > "$G/UDC" 2>/dev/null
   rm -f "$G"/configs/c.1/*.usb0 2>/dev/null
+  rmdir "$G"/functions/*/os_desc/* 2>/dev/null
   rmdir "$G"/configs/c.1/strings/0x409 "$G"/configs/c.1 "$G"/functions/* "$G"/strings/0x409 "$G" 2>/dev/null
 }
 setrole() {   # $1 = host | peripheral
@@ -80,8 +83,25 @@ aus)
   elif mkdir -p functions/acm.usb0 2>/dev/null; then
     ln -s functions/acm.usb0 configs/c.1/ && MIDIOK="SERIELL"
     echo "kein usb_f_midi - MIDI laeuft ueber USB-Seriell (ttyGS0)"
-  else
-    echo "weder usb_f_midi noch usb_f_acm vorhanden - kein MIDI zum PC"
+  fi
+  NETFN=""
+  if [ -z "$MIDIOK" ]; then   # nur Netzwerk-Gadgets: MIDI ueber Netzwerk (RTP-MIDI)
+    for fn in rndis ecm ncm; do
+      if mkdir -p functions/$fn.usb0 2>/dev/null; then NETFN=$fn; break; fi
+    done
+    if [ "$NETFN" = rndis ]; then   # Windows bindet den RNDIS-Treiber dann automatisch
+      echo 1 > os_desc/use 2>/dev/null; echo 0xcd > os_desc/b_vendor_code 2>/dev/null; echo MSFT100 > os_desc/qw_sign 2>/dev/null
+      mkdir -p functions/rndis.usb0/os_desc/interface.rndis 2>/dev/null
+      echo RNDIS > functions/rndis.usb0/os_desc/interface.rndis/compatible_id 2>/dev/null
+      echo 5162001 > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id 2>/dev/null
+    fi
+    if [ -n "$NETFN" ]; then
+      ln -s functions/$NETFN.usb0 configs/c.1/ && MIDIOK="NETZWERK-MIDI"
+      [ "$NETFN" = rndis ] && ln -s configs/c.1 os_desc/ 2>/dev/null
+      echo "MIDI ueber USB-Netzwerk ($NETFN) + RTP-MIDI"
+    else
+      echo "weder MIDI-, Seriell- noch Netzwerk-Gadget vorhanden - kein MIDI zum PC"
+    fi
   fi
   if [ -n "$AUDIO" ]; then
     if mkdir -p functions/uac2.usb0 2>/dev/null; then
@@ -96,10 +116,30 @@ aus)
   fi
   if [ -z "$MIDIOK" ] && [ -z "$AUDOK" ]; then
     cd /; teardown; setrole host
-    say "FEHLER: Kernel hat weder MIDI-, Seriell- noch Audio-Gadget"; pause 5; exit 1
+    say "FEHLER: Kernel hat keine passende Gadget-Funktion"; pause 5; exit 1
   fi
   if echo "$UDC" > UDC; then
-    say "OK: PC-Modus aktiv: ${MIDIOK:-kein MIDI} ${AUDOK}"
+    IPINFO=""
+    if [ -n "$NETFN" ]; then
+      sleep 1
+      IF=$(cat functions/$NETFN.usb0/ifname 2>/dev/null); [ -z "$IF" ] || [ "$IF" = "(unnamed net_device)" ] && IF=usb0
+      ip link set "$IF" up 2>/dev/null || ifconfig "$IF" up
+      ip addr add 169.254.77.1/16 dev "$IF" 2>/dev/null || ifconfig "$IF" 169.254.77.1 netmask 255.255.0.0
+      ip addr add 192.168.77.1/24 dev "$IF" 2>/dev/null || ifconfig "$IF:1" 192.168.77.1 netmask 255.255.255.0
+      IP=169.254.77.1
+      if command -v dnsmasq >/dev/null 2>&1; then
+        dnsmasq --interface="$IF" --bind-interfaces --port=0 --dhcp-range=192.168.77.10,192.168.77.50,12h \
+                --dhcp-option=3 --dhcp-option=6 --pid-file=/run/groovebox-dhcp.pid && IP=192.168.77.1
+      elif command -v udhcpd >/dev/null 2>&1 || busybox udhcpd --help >/dev/null 2>&1; then
+        printf "start 192.168.77.10\nend 192.168.77.50\ninterface %s\noption subnet 255.255.255.0\npidfile /run/groovebox-dhcp.pid\nlease_file /tmp/gb-udhcpd.leases\n" "$IF" > /tmp/gb-udhcpd.conf
+        touch /tmp/gb-udhcpd.leases
+        (command -v udhcpd >/dev/null 2>&1 && udhcpd /tmp/gb-udhcpd.conf || busybox udhcpd /tmp/gb-udhcpd.conf) && IP=192.168.77.1
+      fi
+      echo "$IP" > "$GBDIR/netmidi.ip"
+      echo "Netzwerk: $IF  R36S-Adresse: $IP (ohne DHCP: PC bekommt nach ~1 min eine 169.254.x.x-Adresse)"
+      IPINFO=" $IP:5004"
+    fi
+    say "OK: PC-Modus aktiv: ${MIDIOK:-kein MIDI}${IPINFO} ${AUDOK}"
     echo "R36S mit dem PC verbinden (am besten USB-A-auf-USB-C-Kabel)"
   else
     cd /; teardown; setrole host
