@@ -177,6 +177,19 @@ Zum Synchronisieren gibt es zwei Wege:
 * Groovebox führt: CLK auf SEND, in Ableton beim Eingang **Sync** an und oben links EXT aktivieren.
 * Ableton führt: beim Ausgang **Sync** an, CLK auf RECV.
 
+### OTG-Port freischalten (ArkOS auf dem R36S)
+
+Im Device Tree von ArkOS ist der OTG-Anschluss fest auf Host gestellt (`otg-port { status = "disabled"; }`).
+Der R36S kann dann nie als Gerät am PC erscheinen, die Diagnose zeigt „No support otg“ und „not attached“.
+
+**Groovebox - OTG-Port freischalten** ersetzt die von `boot.ini` geladene `.dtb` durch eine Version, in der nur diese eine Zeile auf `okay` steht.
+Das Original bleibt als `<name>.dtb.orig` erhalten. Geändert wird nur, wenn die Prüfsumme genau zur bekannten Originaldatei passt. Danach startet der R36S neu.
+
+* Rückgängig: **Groovebox - OTG-Port Original**.
+* Startet der R36S nicht mehr: SD-Karte in den PC, auf der Partition **BOOT** die Datei `rg351mp-kernel.dtb` löschen und `rg351mp-kernel.dtb.orig` in `rg351mp-kernel.dtb` umbenennen.
+* Die Groovebox stellt den Port beim Start auf Host, damit S-1 & Co. weiter funktionieren. Im PC-Modus schaltet sie auf Gerät, und die 5 V am Port werden abgeschaltet.
+* Am PC am besten ein USB-A-auf-USB-C-Kabel verwenden.
+
 ### Kernel nur mit Netzwerk-Gadget: Netzwerk-MIDI (RTP-MIDI)
 
 Der Standard-ArkOS-Kernel des R36S hat nur Netzwerk-Bausteine (`rndis`, `ecm`, `ncm`), also weder USB-MIDI noch USB-Audio.

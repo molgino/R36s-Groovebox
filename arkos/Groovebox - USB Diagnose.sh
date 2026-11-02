@@ -7,6 +7,8 @@ OUT="$GBDIR/usb-diagnose.txt"
 K=$(uname -r)
 {
   echo "== Kernel"; uname -a
+  echo; echo "== Device Tree"; tr -d '\0' < /proc/device-tree/model 2>/dev/null; echo
+  for d in /boot /flash; do [ -f $d/boot.ini ] && { echo "boot.ini ($d):"; grep -n "dtb" $d/boot.ini; ls -la $d/*.dtb* 2>/dev/null; }; done
   echo; echo "== Gadget-Controller (/sys/class/udc) - leer = R36S kann NICHT als USB-Geraet am PC auftreten"
   ls /sys/class/udc
   echo; echo "== dr_mode im Device-Tree (host / peripheral / otg)"

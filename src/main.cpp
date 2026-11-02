@@ -1495,6 +1495,20 @@ int main(int argc, char** argv) {
     loadSettings();
     usbMode = detectUsbMode();
     readNetIp();
+    {   // freigeschalteter OTG-Port startet evtl. im Automatik-/Geraetemodus: fuer S-1 & Co. auf Host stellen
+        FILE* f = fopen("/sys/devices/platform/ff2c0000.syscon/ff2c0000.syscon:usb2-phy@100/otg_mode", "r");
+        if (f) {
+            char m[32] = "";
+            if (!fgets(m, sizeof m, f)) m[0] = 0;
+            fclose(f);
+            if (!usbMode && strncmp(m, "host", 4) && strncmp(m, "UNKNOWN", 7)) {
+                char cmd[700];
+                snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' aus nosleep", basePath);
+                printf("OTG-Port im Modus '%.*s' - stelle auf Host\n", (int)strcspn(m, "\n"), m);
+                if (system(cmd) != 0) printf("Host-Umschaltung fehlgeschlagen\n");
+            }
+        }
+    }
     refreshDevices();
     for (int i = 0; i < devCount; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, devNames[i]);
     eng.init(44100);
