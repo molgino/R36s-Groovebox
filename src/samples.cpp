@@ -6,16 +6,19 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-static Sample g_s[MAX_SAMPLES];
+static Sample g_bank[2][MAX_SAMPLES];
+static int g_cnt[2] = {0, 0};
+static long g_tot[2] = {0, 0};
+static int g_cur = 0;                 // aktive Bank, die andere wird beim Neuladen befuellt
+static Sample* g_s = g_bank[0];
 static int g_n = 0;
 static const long MAX_TOTAL = 48L * 1024 * 1024;   // max. 48M Frames (~190 MB) insgesamt
 static const int MAX_LEN = 60 * 48000;             // max. 60 s pro Sample
-static long g_total = 0;
 
 static uint32_t rd32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }
 static uint16_t rd16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 
-static bool loadWav(const char* path, Sample& s) {
+static bool loadWav(const char* path, Sample& s, long& g_total) {
     FILE* f = fopen(path, "rb");
     if (!f) return false;
     uint8_t h[12];
@@ -101,23 +104,45 @@ static void scan(const char* root, const char* sub, Entry* out, int& n, int dept
     closedir(d);
 }
 
-int samplesLoad(const char* dir) {
+static int loadInto(const char* dir, int b) {
     static Entry ents[MAX_SAMPLES * 2];
+    for (int i = 0; i < g_cnt[b]; i++) free(g_bank[b][i].data);
+    g_cnt[b] = 0; g_tot[b] = 0;
     int n = 0;
     scan(dir, "", ents, n, 0);
     qsort(ents, n, sizeof(Entry), cmpEntry);
-    for (int i = 0; i < n && g_n < MAX_SAMPLES; i++) {
+    for (int i = 0; i < n && g_cnt[b] < MAX_SAMPLES; i++) {
         char full[700];
         snprintf(full, sizeof full, "%s/%s", dir, ents[i].rel);
         Sample s;
         memset(&s, 0, sizeof s);
-        if (!loadWav(full, s)) { printf("Sample uebersprungen: %s\n", ents[i].rel); continue; }
+        if (!loadWav(full, s, g_tot[b])) { printf("Sample uebersprungen: %s\n", ents[i].rel); continue; }
         size_t l = strlen(ents[i].rel);
         if (l > 4) ents[i].rel[l - 4] = 0;   // ".wav" abschneiden
         snprintf(s.name, sizeof s.name, "%s", ents[i].rel);
-        g_s[g_n++] = s;
+        g_bank[b][g_cnt[b]++] = s;
     }
+    return g_cnt[b];
+}
+
+int samplesLoad(const char* dir) {
+    g_n = loadInto(dir, g_cur);
+    g_s = g_bank[g_cur];
     return g_n;
+}
+
+int samplesPrepare(const char* dir) { return loadInto(dir, 1 - g_cur); }
+
+void samplesSwap() {
+    g_cur = 1 - g_cur;
+    g_s = g_bank[g_cur];
+    g_n = g_cnt[g_cur];
+}
+
+void samplesFreeBack() {
+    int b = 1 - g_cur;
+    for (int i = 0; i < g_cnt[b]; i++) free(g_bank[b][i].data);
+    g_cnt[b] = 0; g_tot[b] = 0;
 }
 
 int sampleCount() { return g_n; }

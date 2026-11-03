@@ -13,5 +13,9 @@ struct Sample {
 
 int samplesLoad(const char* dir);  // liefert Anzahl geladener Samples
 int sampleCount();
+// Neu laden ohne Aussetzer: samplesPrepare (ohne Audio-Sperre) -> samplesSwap (unter Sperre) -> samplesFreeBack
+int samplesPrepare(const char* dir);
+void samplesSwap();
+void samplesFreeBack();
 const Sample* sampleGet(int i);   // nullptr, wenn nicht vorhanden
 const char* sampleName(int i);

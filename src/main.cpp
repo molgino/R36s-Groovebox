@@ -11,6 +11,7 @@
 #include "input.h"
 #include "font.h"
 #include "samples.h"
+#include "web.h"
 #include "midi.h"
 
 static const int SW = 640, SH = 480;
@@ -2032,7 +2033,7 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_IP,
+    SI_H_USB, SI_USB, SI_IP, SI_WEB,
     SI_H_SYS, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
@@ -2079,6 +2080,11 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         snprintf(v, vn, "%s", usbMode == 0 ? "HOST (Geraete am R36S)" : (usbMode == 1 ? "PC (Netz-MIDI, SSH)" : "PC + AUDIO"));
         break;
     case SI_IP: snprintf(l, ln, "Adresse"); snprintf(v, vn, "%s", usbMode && netIp[0] ? netIp : "-"); break;
+    case SI_WEB: snprintf(l, ln, "Samples per Browser");
+        if (!webPort()) snprintf(v, vn, "-");
+        else if (usbMode && netIp[0]) snprintf(v, vn, webPort() == 80 ? "http://%s" : "http://%s:%d", netIp, webPort());
+        else snprintf(v, vn, "erst PC-Modus an");
+        break;
     case SI_H_SYS: snprintf(l, ln, "SYSTEM"); break;
     case SI_LEARN: snprintf(l, ln, "Tasten neu lernen"); break;
     case SI_INFO: snprintf(l, ln, "Info");
@@ -2640,6 +2646,37 @@ static void setupPaths() {
 
 int runDhcpd(const char* ifname);
 
+// Samples nach Upload neu laden: Bank im Hintergrund fuellen, kurz unter Audio-Sperre tauschen,
+// Sample-Nummern in allen Patterns ueber den Namen neu zuordnen
+static void reloadSamples() {
+    static char oldNames[MAX_SAMPLES][48];
+    int on = sampleCount();
+    for (int i = 0; i < on; i++) snprintf(oldNames[i], 48, "%s", sampleName(i));
+    char sdir[600];
+    snprintf(sdir, sizeof sdir, "%ssamples", basePath);
+    int nn = samplesPrepare(sdir);
+    int map[MAX_SAMPLES];
+    for (int i = 0; i < on; i++) map[i] = -1;
+    lockA();
+    eng.dropSamples();
+    samplesSwap();
+    for (int i = 0; i < on; i++)
+        for (int j = 0; j < nn; j++) if (!strcmp(oldNames[i], sampleName(j))) { map[i] = j; break; }
+    auto fix = [&](uint8_t& v) { if (v < on) v = (uint8_t)(map[v] >= 0 ? map[v] : 0); };
+    auto fixPat = [&](Pattern& P) {
+        for (int t = 0; t < NTRACKS; t++) {
+            if (!machineUsesSample(P.machine[t])) continue;
+            fix(P.p[t][P_S0]);
+            for (int s = 0; s < NSTEPS; s++) if (P.s[t][s].lock[P_S0] != NO_LOCK) fix(P.s[t][s].lock[P_S0]);
+        }
+    };
+    for (int p = 0; p < NPATTERNS; p++) fixPat(eng.proj.pat[p]);
+    if (haveClip) fixPat(clip);
+    unlockA();
+    samplesFreeBack();
+    printf("Samples neu geladen: %d\n", nn);
+}
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !strcmp(argv[1], "--dhcpd")) return runDhcpd(argv[2]);   // Hilfsdienst fuer den PC-Modus
     bool learn = false, windowed = false;
@@ -2802,6 +2839,8 @@ int main(int argc, char** argv) {
     midiStart();
     openAudio();
     toast("%d SAMPLES GELADEN", sampleCount());
+    webStart(basePath);
+    int webSeq = 0;
     if (cfg.usb && !usbMode) { usbMode = cfg.usb; usbApplyAt = SDL_GetTicks() + 1500; }   // PC-Modus nach Neustart wiederherstellen
     Uint32 lastAuto = SDL_GetTicks();
 
@@ -2819,6 +2858,12 @@ int main(int argc, char** argv) {
         handleInput(now, dt);
         if (audioApplyAt && now >= audioApplyAt) { audioApplyAt = 0; openAudio(); }
         if (usbApplyAt && now >= usbApplyAt) { usbApplyAt = 0; applyUsbMode(); }
+        {   // Browser-Upload: Meldung und Samples neu laden, sobald 1,5 s nichts mehr kommt
+            char wm[96];
+            int sq = webLastEvent(wm, sizeof wm);
+            if (sq != webSeq) { webSeq = sq; toast("%s", wm); }
+            if (webTakeChange(now, 1500)) { reloadSamples(); toast("%d SAMPLES GELADEN", sampleCount()); }
+        }
         if (now - lastAuto > 120000) {   // Autosave alle 2 Minuten bei Aenderungen
             lastAuto = now;
             if (memcmp(&lastSaved, &eng.proj, sizeof(Project))) saveProject();

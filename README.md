@@ -203,6 +203,15 @@ WAV-Dateien kommen in den Ordner `groovebox/samples/`, gern mit einer Ebene Unte
 Erlaubt sind 8/16/24/32-Bit-PCM und 32-Bit-Float in jeder Samplerate. Stereo wird zu Mono gemischt.
 Gelesen wird beim Start, alphabetisch sortiert, höchstens 128 Dateien zu je höchstens 60 s.
 
+### Samples per Browser hochladen (ohne SD-Karte)
+
+1. R36S per USB-Kabel mit dem PC verbinden und **PC-Modus** einschalten (SET → USB = PC).
+2. Im Browser **http://192.168.77.1** öffnen. Die Adresse steht auch in SET unter „Samples per Browser“.
+3. Dateien in das Feld ziehen. **WAV, MP3, FLAC, AIFF, OGG …** wandelt der Browser automatisch in Mono-WAV mit 44,1 kHz um (abschaltbar, optional normalisieren). Mit „neuer Ordner“ legst du einen Unterordner an.
+4. Etwa 1,5 Sekunden nach dem letzten Upload lädt die Groovebox die Samples neu, ohne Aussetzer. Bestehende Spuren behalten ihr Sample, die Zuordnung läuft über den Namen.
+
+Auf derselben Seite kannst du Samples anhören und löschen sowie Projekte (SONG 01–32) sichern und hochladen.
+
 Ein Start-Paket mit 13 selbst erzeugten Samples liegt bei: Drums, Keys, eine Vokal-Fläche und FX.
 Es wird mit `tools/gensamples.py` erzeugt.
 
@@ -210,7 +219,7 @@ Es wird mit `tools/gensamples.py` erzeugt.
 * Den Sample-Regler auf der SRC-Seite kannst du pro Step locken. So spielt eine einzige Spur verschiedene Samples, wie beim Digitakt.
 * NOTE C-4 ist die Originaltonhöhe.
 * Ohne LOOP läuft ein Sample als One-Shot bis zum Ende. Mit LOOP gilt die Trig-Länge (LEN) bzw. die Haltedauer der MIDI-Taste.
-* Das Projekt merkt sich die Sample-**Nummer**. Wenn du später Dateien hinzufügst, benenne sie so, dass sie hinten einsortiert werden. Sonst verschieben sich die Nummern.
+* Das Projekt merkt sich die Sample-**Nummer**. Beim Upload per Browser werden die Nummern automatisch nachgeführt. Kopierst du Dateien von Hand auf die Karte, benenne sie so, dass sie hinten einsortiert werden, sonst verschieben sich die Nummern.
 
 ## USB-Audio
 

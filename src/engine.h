@@ -185,6 +185,7 @@ public:
     void start();
     void stop();
     void preview(int t, const Step* s);
+    void dropSamples() { for (int t = 0; t < NTRACKS; t++) if (v[t].smp) { v[t].smp = nullptr; v[t].active = false; } }   // vor dem Austausch der Sample-Bank
     void render(float* out, int frames);
     bool save(const char* path);
     bool load(const char* path);
