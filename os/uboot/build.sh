@@ -69,5 +69,5 @@ dd if=idbloader.img of=uboot.bin bs=512 seek=0 conv=fsync,notrunc status=none
 dd if=uboot.img of=uboot.bin bs=512 seek=16320 conv=fsync,notrunc status=none
 dd if=trust.img of=uboot.bin bs=512 seek=24512 conv=fsync,notrunc status=none
 cp uboot.bin "$OUT/uboot.bin"
-cp tools/mkimage "$OUT/mkimage" 2>/dev/null || true
+./tools/mkimage -q -A arm64 -T script -C none -d "$HERE/boot.cmd" "$OUT/boot.scr"
 echo ">> U-Boot fertig: $(stat -c %s $OUT/uboot.bin) Bytes"

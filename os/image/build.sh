@@ -11,7 +11,7 @@ OS="$(dirname "$HERE")"
 O="$OS/out"
 IMG="$O/r36s-groovebox-os.img"
 K="$O/kernel"
-for f in "$O/uboot/uboot.bin" "$K/Image" "$K/rk3326-groovebox-r36s.dtb" "$O/rootfs/etc/groovebox-os"; do
+for f in "$O/uboot/uboot.bin" "$O/uboot/boot.scr" "$K/Image" "$K/rk3326-groovebox-r36s.dtb" "$O/rootfs/etc/groovebox-os"; do
     [ -e "$f" ] || { echo "!! fehlt: $f"; exit 1; }
 done
 
@@ -49,6 +49,7 @@ Anderes Display testen: in extlinux/extlinux.conf die FDT-Zeile auf
 EOF
 export MTOOLS_SKIP_CHECK=1
 mcopy -i "$B" "$K/Image" "$K/rk3326-groovebox-r36s.dtb" "$O/bootfiles/LIESMICH.txt" ::
+mcopy -i "$B" "$O/uboot/boot.scr" ::
 [ -f "$K/rk3326-gameconsole-r36s.dtb" ] && mcopy -i "$B" "$K/rk3326-gameconsole-r36s.dtb" ::
 mcopy -i "$B" -s "$O/bootfiles/extlinux" ::
 
