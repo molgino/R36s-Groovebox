@@ -31,6 +31,9 @@ static Input in;
 // UI-Zustand
 static int track = 0, cursor = 0, page = 0, slot = 0;
 static bool aHeld = false, aJustOn = false, aEdited = false;
+static bool lockLatch = false;   // Lock-Modus eingerastet (A lange gedrueckt)
+static Uint32 aDownAt = 0;
+static int rsAxis = 0;            // rechter Stick: 0 frei, 1 senkrecht, 2 waagerecht (rastet bis zur Mitte ein)
 static int holdPat = 0, holdTrack = 0, holdStep = 0;
 static bool funcUsed = false;
 static float stickAcc = 0;
@@ -417,7 +420,7 @@ static void drawHeader() {
         }
     }
     if (aHeld) {
-        snprintf(b, sizeof b, "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
+        snprintf(b, sizeof b, lockLatch ? "LOCK-MODUS STEP %02d" : "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
         text(332, 23, b, C_LOCK);
     } else {
         text(334, 23, GROUP_NAMES[PG_GROUP[page]], dimC(C_ACC, 0.8f));
@@ -1717,11 +1720,12 @@ static void drawSteps() {
         textC(x + 18, y + 22 - lift, b, st.on ? C_BG : C_DIM);
     }
     const char* h;
-    if (aHeld) h = "[X/Y/R-STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
+    if (lockLatch) h = "LOCK-MODUS [R-STICK/X/Y]WERT [</>]STEP [B]LOCKS WEG [A]FERTIG";
+    else if (aHeld) h = "[X/Y/R-STICK] LOCK  [B] LOESCHEN  LANGE HALTEN = LOCK-MODUS";
     else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
     else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
     else if (page == PG_PRJ) h = "[L-STICK]WAEHLEN [R-STICK^v]PLATZ [A/X]AUSFUEHREN [SEL]MENUE";
-    else h = "[A]TRIG [B]HOER [L-STICK]REGLER [R-STICK]WERT/SEITE [SEL]MENUE";
+    else h = "[A]TRIG [B]HOER [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE";
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -1740,12 +1744,12 @@ static void drawHelp() {
         "",
         "OHNE FUNC",
         "  A              Trig setzen/loeschen",
-        "  A halten+X/Y   Parameter-Lock auf Step",
-        "  A halten+B     Locks des Steps loeschen",
+        "  A lang halten  LOCK-MODUS: R-Stick/X/Y lockt, </> Step",
+        "                 B Locks loeschen, A antippen = fertig",
         "  B              Spur vorhoeren",
         "  Linker Stick   auf Regler zeigen (oben 1-4, unten 5-8)",
-        "  Rechter Stick  hoch/runter: Wert  links/rechts: Seite",
-        "  SELECT antippen: Seitenmenue  SELECT+R-Stick: DJ-Filter",
+        "  Rechter Stick  hoch/runter: Wert (nur Werte)",
+        "  SEL+R-Stick    links/rechts: Seite  hoch/runter: DJ-Filter",
         "  START          Play / Stop",
     };
     for (unsigned i = 0; i < sizeof lines / sizeof *lines; i++)
@@ -2211,6 +2215,11 @@ static void handleInput(Uint32 now, float dt) {
         return;
     }
     if (menuOpen) { menuInput(I, now); return; }
+    {   // rechter Stick: Achse beim Auslenken festlegen, erst in der Mitte wieder frei
+        float m = sqrtf(I.rx * I.rx + I.ry * I.ry);
+        if (m < 0.22f) rsAxis = 0;
+        else if (rsAxis == 0 && m > 0.3f) rsAxis = fabsf(I.ry) >= fabsf(I.rx) ? 1 : 2;
+    }
     bool func = I.down[BT_SELECT];
     if (I.pressed(BT_SELECT)) { funcUsed = false; selDownAt = now; }
     if (I.released(BT_SELECT) && !funcUsed && now - selDownAt < 400) { menuOpen = true; menuSel = page; return; }
@@ -2279,10 +2288,27 @@ static void handleInput(Uint32 now, float dt) {
         }
         if (I.down[BT_START] && I.heldMs(BT_START, now) > 2000) quitReq = true;
         // SELECT + rechter Stick hoch/runter = DJ-Filter
-        if (fabsf(I.ry) > 0.2f) { funcUsed = true; eng.dj = I.ry > 0 ? (I.ry - 0.2f) / 0.8f : (I.ry + 0.2f) / 0.8f; stickDj = true; }
+        // SELECT + rechter Stick links/rechts = Seite wechseln
+        if (rsAxis == 2) { int f = flick(I.rx, flRX, flRXt, now); if (f) { funcUsed = true; gotoPage(f); } }
+        else flRX = 0;
+        if (rsAxis == 1 && fabsf(I.ry) > 0.2f) { funcUsed = true; eng.dj = I.ry > 0 ? (I.ry - 0.2f) / 0.8f : (I.ry + 0.2f) / 0.8f; stickDj = true; }
         else if (stickDj) { eng.dj = 0.f; stickDj = false; }
     } else {
         if (stickDj) { eng.dj = 0.f; stickDj = false; }
+        if (lockLatch) {   // Lock-Modus: links/rechts springt zum naechsten Step und bleibt im Modus
+            int cl = curP().len[track] < 1 ? 1 : curP().len[track];
+            int d = (I.repeat(BT_RIGHT, now, 250, 90) ? 1 : 0) - (I.repeat(BT_LEFT, now, 250, 90) ? 1 : 0);
+            if (d) {
+                Step& o = holdS();
+                if (aJustOn && !aEdited) o.on = 0;
+                cursor = ((cursor + d) % cl + cl) % cl;
+                holdStep = cursor;
+                Step& s = holdS();
+                aJustOn = !s.on; aEdited = false;
+                if (!s.on) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
+                toast("LOCK STEP %d", cursor + 1);
+            }
+        }
         if (!aHeld) {
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             if (I.repeat(BT_LEFT, now, 250, 70)) cursor = (cursor % cl + cl - 1) % cl;
@@ -2291,7 +2317,12 @@ static void handleInput(Uint32 now, float dt) {
             if (I.repeat(BT_DOWN, now)) track = (track + 1) % NTRACKS;
         }
         bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
-        if (I.pressed(BT_A)) {
+        if (I.pressed(BT_A) && lockLatch) {   // Lock-Modus beenden
+            Step& s = holdS();
+            if (aJustOn && !aEdited) { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
+            lockLatch = false; aHeld = false;
+            toast("LOCK-MODUS AUS");
+        } else if (I.pressed(BT_A)) {
             if (mixP) { eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
             else if (prjAct) prjTrigger(slot);
             else {
@@ -2299,8 +2330,13 @@ static void handleInput(Uint32 now, float dt) {
                 Step& s = holdS();
                 aJustOn = !s.on;
                 if (!s.on) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
-                aHeld = true; aEdited = false;
+                aHeld = true; aEdited = false; aDownAt = now;
             }
+        }
+        // A lange halten (ohne zu drehen) = Lock-Modus einrasten: Daumen frei fuer Stick und X/Y
+        if (aHeld && !lockLatch && I.down[BT_A] && !aEdited && now - aDownAt > 450) {
+            lockLatch = true;
+            toast("LOCK-MODUS STEP %d  (A = FERTIG)", holdStep + 1);
         }
         if (I.pressed(BT_B)) {
             if (aHeld) { memset(holdS().lock, NO_LOCK, NPARAMS); aEdited = true; toast("LOCKS GELOESCHT"); }
@@ -2313,8 +2349,7 @@ static void handleInput(Uint32 now, float dt) {
             int g = flick(I.lx, flLX, flLXt, now); if (g) track = (track + NTRACKS + g) % NTRACKS;
         } else stickPointSlot(I.lx, I.ly);
         // Rechter Stick: links/rechts = Seite, hoch/runter = Wert
-        if (fabsf(I.rx) > fabsf(I.ry)) { int f = flick(I.rx, flRX, flRXt, now); if (f) gotoPage(f); }
-        else flRX = 0;
+        flRX = 0;   // Seite wechseln nur mit SELECT + rechtem Stick, L2/R2 oder dem Menue
         {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             int dl = (I.repeat(BT_R1, now) ? 1 : 0) - (I.repeat(BT_L1, now) ? 1 : 0);
@@ -2339,7 +2374,7 @@ static void handleInput(Uint32 now, float dt) {
             int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
             if (I.repeat(BT_X, now, 300, 45)) editValue(mul);
             if (I.repeat(BT_Y, now, 300, 45)) editValue(-mul);
-            float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;
+            float ry = rsAxis == 1 ? I.ry : 0.f;
             if (fabsf(ry) > 0.25f) {
                 float dz = (fabsf(ry) - 0.25f) / 0.75f;
                 float rate = (big ? 90.f : 8.f) * dz * dz + 2.f;
@@ -2349,12 +2384,12 @@ static void handleInput(Uint32 now, float dt) {
             } else stickAcc = 0;
         }
     }
-    if (I.released(BT_A) && aHeld) {
+    if (I.released(BT_A) && aHeld && !lockLatch) {
         Step& s = holdS();
         if (!aJustOn && !aEdited) { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
         aHeld = false;
     }
-    if (aHeld && !I.down[BT_A]) aHeld = false;
+    if (aHeld && !lockLatch && !I.down[BT_A]) aHeld = false;
     if (!pageAvail(page)) page = PG_SRC;
     { int cl = curP().len[track] < 1 ? 1 : curP().len[track]; if (cursor >= cl) cursor = cl - 1; }
     // Zustand fuer MIDI-Eingang / Step-Aufnahme

@@ -153,7 +153,7 @@ Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im 
 
 ## Einstellungen (SET-Seite)
 
-Über das SELECT-Menü (Gruppe PROJEKT) oder mit dem rechten Stick erreichst du die Einstellungsliste:
+Über das SELECT-Menü (Gruppe PROJEKT) oder mit SELECT + rechtem Stick erreichst du die Einstellungsliste:
 
 * **PATTERN:** Pattern wählen, Länge der Spur bzw. aller Spuren, Tempo, Swing, Tonskala, Pattern kopieren/einfügen/leeren
 * **AUDIO:** Ausgang (interner Lautsprecher, S-1, USB-Interface …), Puffer mit Latenz in ms, Lautstärke
@@ -250,18 +250,19 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | Steuerkreuz ←/→ | Step-Cursor |
 | Steuerkreuz ↑/↓ | Spur wählen |
 | A | Trig setzen oder löschen |
-| **A halten** + X/Y oder rechter Stick | **Parameter-Lock** auf diesen Step (gelb) |
+| **A lang halten** (ca. ½ s) | **Lock-Modus** rastet ein: Du kannst A loslassen und mit rechtem Stick oder X/Y Locks setzen, ←/→ springt zum nächsten Step, B löscht die Locks des Steps, A antippen = fertig |
+| A halten + X/Y | Parameter-Lock auf diesen Step (gelb), wie bisher |
 | A halten + B | alle Locks des Steps löschen |
 | B | Spur vorhören |
 | **Linker Stick** | **direkt auf einen Regler zeigen**: links oben = Regler 1 … rechts oben = 4, links unten = 5 … rechts unten = 8 |
 | **Rechter Stick ↑/↓** | **Wert stufenlos ändern** |
-| **Rechter Stick ←/→** | **Seite wechseln** |
+| **SELECT + rechter Stick ←/→** | **Seite wechseln** (der rechte Stick allein ändert nur Werte) |
 | X / Y | Wert + / − in Einzelschritten (halten = Wiederholung) |
 | **SELECT kurz antippen** | **Seitenmenü**: alle Seiten nach Gruppen (SPUR / MIX & FX / PROJEKT), Steuerkreuz wählt, A öffnet |
 | SELECT halten | Hilfe-Einblendung |
-| SELECT + rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass |
+| SELECT + rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass. Die Richtung rastet beim Auslenken ein, schräg drücken wechselt nicht aus Versehen |
 | L1/R1 | auf Spurseiten: Step-Seite ±16, sonst Regler |
-| L2/R2 | Seite (alternativ zum rechten Stick) |
+| L2/R2 | Seite (alternativ zu SELECT + rechtem Stick oder SELECT-Menü) |
 | START | Play / Stop |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
 | SELECT + ↑ | Aufnahme an/aus (für MIDI-Eingabe) |
