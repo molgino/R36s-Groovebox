@@ -816,7 +816,7 @@ void Engine::liveNoteOn(int t, int note, int vel) {
         stepRecCount++;
     }
     Step& st = P.s[t][s];
-    if (!st.on) { memset(st.lock, NO_LOCK, NPARAMS); st.on = 1; }
+    if (st.on != 1) { if (st.on == 0) memset(st.lock, NO_LOCK, NPARAMS); st.on = 1; }
     st.lock[P_NOTE] = (uint8_t)note;
     st.lock[P_VEL] = (uint8_t)vel;
 }
@@ -1148,7 +1148,7 @@ void Engine::stepTrack(int t) {
     tmReg[t] = ((r0 >> 1) | (top << (L - 1))) & mask;
     auto isOn = [&](int pos, uint32_t b) {
         if (puls > 0 || dens > 0) return (puls > 0 && euclidHit(pos, puls, len, rot)) || (dens > 0 && b);
-        return P.s[t][pos].on != 0;
+        return P.s[t][pos].on == 1;   // 2 = trigless (nur Locks, kein Ton)
     };
     auto micro = [&](int pos) {
         const Step& q = P.s[t][pos];
@@ -1167,7 +1167,14 @@ void Engine::stepTrack(int t) {
             else trigger(t, lk, 1.f, true);
         }
     }
-    (void)st;
+    // Trigless Lock: Parameter des klingenden Tons aendern, ohne neu anzuschlagen (gilt bis zum naechsten Trig)
+    if (st.on == 2 && !skip) {
+        for (int i = 0; i < NPARAMS; i++)
+            if (st.lock[i] != NO_LOCK && i != P_NOTE && i != P_LEN && i != P_COND && i != P_PROB) {
+                v[t].lk[i] = st.lock[i];
+                ar[t].lk[i] = st.lock[i];
+            }
+    }
     // naechste Position je nach Richtung
     int next = s;
     switch (dir) {

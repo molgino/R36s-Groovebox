@@ -14,6 +14,7 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 - Projektformat v9 (`PROJECT_VERSION`; `Project` in engine.h: 96 Parameter, 128 Steps, `speed` pro Spur, `song[64]`/`songLen`; Index 5 = MTIM, bis v6 RFAD; Seite 10 FLT2 = Base-Width-Filter `P_BASE/P_WDTH` + `P_KEYT/P_VELF`; Seite 11 ARP `P_AMOD..P_AACC`) mit Migration v1–v8 in `Engine::load` (`remapLegacy`, v5-Zweig) – bei Strukturänderungen Version erhöhen + migrieren
 - Sequencer: 12 Ticks pro 16tel (`doTick`/`stepTrack`), Tempo-Faktor `SPEED_TPS`, Trig-Bedingungen `P_COND` (`condOk`, Durchläufe `loopCount` über `stepCnt`), FILL `eng.fill`; SEQ-Seite: Richtung `P_DIR`, Euklid `P_PULS/P_EROT`, Turing-Generator `P_DENS/P_CHNG/P_RANGE` (`tmReg`), LEN/SPD zeigen auf `Pattern.len/speed`
 - Arpeggiator: `Engine::Arp ar[]` in trigger() (fromSeq, nicht bei Drums), Timer im render-Block wie Retrig, `playNote()`; Song: `songOn/songPos/songRep`, Wechsel am Pattern-Ende in doTick, Seite SNG (`drawSong/songInput`); Pattern-Mutation `mutatePattern()` mit Undo (SET)
+- Trigless Locks: `Step.on` 0 leer / 1 Trig / 2 trigless; stepTrack schreibt die Locks von on==2 in `v[t].lk`/`ar[t].lk` (ohne Note/LEN/COND/PROB), gelten bis zum nächsten Trig; UI: `aPrevOn` (A antippen auf Trig mit Locks → 2, auf 2 → 1), Lock-Modus SELECT+A toggelt, B löscht (2 → 0); Raster zeichnet 2 als Umriss
 - Projekte `projects/songNN.gbx` (32 Plätze, aktiver Platz in settings.cfg `song`), Presets `presets/<ENGINE>/NN.gbp`
 
 ## Groovebox-OS (`os/`)

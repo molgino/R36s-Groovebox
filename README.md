@@ -97,6 +97,15 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * Die Grafik zeigt den Euklid-Kreis mit wanderndem Playhead, die Richtung und das Schieberegister mit den erzeugten Tonhöhen.
 * Alle SEQ-Regler außer LEN und SPD sind auch **LFO-Ziele**. Ein langsamer LFO auf PULS oder DENS lässt einen Beat „atmen“.
 
+## Trigless Locks (nur Parameter, kein Ton)
+
+Ein trigless Step trägt nur Parameter-Locks und schlägt keinen Ton an. Er ändert die Werte des gerade klingenden Tons, z. B. Filter oder Resonanz mitten in einer langen Fläche. Die Werte gelten bis zum nächsten Trig. Im Raster erscheint er als **Umriss mit Punkt**.
+
+* **Trig mit Locks löschen** (A antippen): Der Ton fällt weg, die Locks bleiben als trigless Step stehen.
+* **Trigless Step antippen:** Er wird wieder ein normaler Trig (Locks bleiben).
+* **Trigless Step halten + Werte drehen:** Locks bearbeiten, der Step bleibt trigless.
+* **Im Lock-Modus** (A lang halten): **SELECT + A** schaltet zwischen Trig und trigless um, **B** löscht die Locks. Ein trigless Step verschwindet damit ganz.
+
 ## Arpeggiator (ARP-Seite)
 
 Für alle Spuren mit Tonhöhe (Synth, FM, Wavetable, Samples …). Ein Trig spielt dann statt eines Tons die Akkordtöne – so lange, wie der Trig dauert (LEN auf der TRG-Seite).
@@ -116,6 +125,7 @@ Alle Werte lassen sich pro Step locken. Die Grafik zeigt die Tonfolge über die 
 
 Eine Kette aus Patterns mit Wiederholungen (bis 64 Einträge):
 * ↑/↓ Eintrag wählen, ←/→ Pattern ändern, X/Y Wiederholungen, A neuer Eintrag, B löschen
+* Seite wechseln wie überall mit L2/R2, SELECT + rechtem Stick oder dem SELECT-Menü (rechter Stick links/rechts geht hier auch ohne SELECT)
 * **START** spielt den Song ab dem gewählten Eintrag, **R1** schaltet den Song-Modus an/aus
 * Im Song-Modus steht im Kopf „SNG 2/5“; START auf anderen Seiten setzt den Song fort
 

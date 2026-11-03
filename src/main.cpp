@@ -42,7 +42,8 @@ static Input in;
 // UI-Zustand
 static int track = 0, cursor = 0, page = 0, slot = 0;
 static bool aHeld = false, aJustOn = false, aEdited = false;
-static bool lockLatch = false;   // Lock-Modus eingerastet (A lange gedrueckt)
+static bool lockLatch = false;
+static int aPrevOn = 0;          // Zustand des gehaltenen Steps vor dem Druck: 0 leer, 1 Trig, 2 trigless   // Lock-Modus eingerastet (A lange gedrueckt)
 static Uint32 aDownAt = 0;
 static int rsAxis = 0;            // rechter Stick: 0 frei, 1 senkrecht, 2 waagerecht (rastet bis zur Mitte ein)
 static int holdPat = 0, holdTrack = 0, holdStep = 0;
@@ -1924,15 +1925,20 @@ static void drawGrid() {
             const Step& st = P.s[t][s];
             bool ph = eng.playing && eng.playedStep[t] == s;
             int pul = P.p[t][P_PULS];
-            bool shown = pul > 0 ? euclidHitUi(s, pul, len, P.p[t][P_EROT]) : st.on;
+            bool shown = pul > 0 ? euclidHitUi(s, pul, len, P.p[t][P_EROT]) : st.on == 1;
             Col c = shown ? (pul > 0 ? mix(tc, C_PLAY, 0.15f) : tc) : offCol(s);
             int grow = 0;
-            if (ph) { c = st.on ? mix(tc, C_PLAY, 0.25f + flash[t] * 0.6f) : mix(c, C_PLAY, 0.18f); if (st.on) grow = (int)(flash[t] * 3); }
+            if (ph) { c = st.on == 1 ? mix(tc, C_PLAY, 0.25f + flash[t] * 0.6f) : mix(c, C_PLAY, 0.18f); if (st.on == 1) grow = (int)(flash[t] * 3); }
             int mt = st.lock[P_MTIM] != NO_LOCK ? st.lock[P_MTIM] : P.p[t][P_MTIM];
             int mo = shown ? (mt - 23) * 10 / 23 : 0;   // Mikrotiming sichtbar verschoben
             rrect(x - grow + mo, y + 1 - grow / 2, 31 + 2 * grow, 12 + grow, 3, c);
             if (mo) fill(x + 15, y + 6, 1, 3, C_BG);
-            if (st.on && stepHasLock(st)) fill(x + 25, y + 3, 3, 3, C_BG);
+            if (st.on == 1 && stepHasLock(st)) fill(x + 25, y + 3, 3, 3, C_BG);
+            if (st.on == 2 && !shown) {   // trigless: nur Umriss + Lock-Punkt
+                rrect(x, y + 1, 31, 12, 3, tc);
+                rrect(x + 2, y + 3, 27, 8, 2, ph ? mix(offCol(s), C_PLAY, 0.18f) : offCol(s));
+                fill(x + 14, y + 6, 3, 3, tc);
+            }
         }
     }
     // gleitender Cursor
@@ -1975,23 +1981,28 @@ static void drawSteps() {
         const Step& st = P.s[track][s];
         bool ph = eng.playing && eng.playedStep[track] == s;
         int pul = P.p[track][P_PULS];
-        bool shown = pul > 0 ? euclidHitUi(s, pul, len, P.p[track][P_EROT]) : st.on;
+        bool shown = pul > 0 ? euclidHitUi(s, pul, len, P.p[track][P_EROT]) : st.on == 1;
         Col c = shown ? (pul > 0 ? mix(tc, C_PLAY, 0.15f) : tc) : offCol(s);
         int lift = 0;
         if (ph && shown) { c = mix(tc, C_PLAY, 0.2f + flash[track] * 0.6f); lift = (int)(flash[track] * 3); }
         rrect(x, y - lift, 36, 40, 6, c);
-        if (ph) rrect(x + 6, y + 3 - lift, 24, 4, 2, st.on ? C_BG : C_PLAY);
-        if (st.on && stepHasLock(st)) rrect(x + 27, y + 9 - lift, 5, 5, 2, C_BG);
-        if (st.on && st.lock[P_NOTE] != NO_LOCK) {
+        if (st.on == 2 && !shown) {   // trigless: Umriss in Spurfarbe + Lock-Punkt
+            rrect(x, y, 36, 40, 6, tc);
+            rrect(x + 3, y + 3, 30, 34, 4, offCol(s));
+            rrect(x + 27, y + 9, 5, 5, 2, tc);
+        }
+        if (ph) rrect(x + 6, y + 3 - lift, 24, 4, 2, st.on == 1 ? C_BG : C_PLAY);
+        if (st.on == 1 && stepHasLock(st)) rrect(x + 27, y + 9 - lift, 5, 5, 2, C_BG);
+        if (st.on == 1 && st.lock[P_NOTE] != NO_LOCK) {
             char nb[8];
             fmtParam(COMMON_DEFS[P_NOTE], quantizeNote(st.lock[P_NOTE], sv), nb, sizeof nb);
             textC(x + 18, y + 9 - lift, nb, dimC(C_BG, 0.85f));
         }
         snprintf(b, sizeof b, "%d", s + 1);
-        textC(x + 18, y + 22 - lift, b, st.on ? C_BG : C_DIM);
+        textC(x + 18, y + 22 - lift, b, st.on == 1 ? C_BG : (st.on == 2 ? tc : C_DIM));
     }
     const char* h;
-    if (lockLatch) h = "LOCK-MODUS [R-STICK/X/Y]WERT [</>]STEP [B]LOCKS WEG [A]FERTIG";
+    if (lockLatch) h = "LOCK [R-STICK/X/Y]WERT [</>]STEP [B]LOCKS WEG [SEL+A]TRIGLESS [A]FERTIG";
     else if (aHeld) h = "[X/Y/R-STICK] LOCK  [B] LOESCHEN  LANGE HALTEN = LOCK-MODUS";
     else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
     else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
@@ -2567,12 +2578,13 @@ static void mutatePattern() {
     for (int t = 0; t < NTRACKS; t++) {
         int len = P.len[t] < 1 ? 1 : P.len[t];
         bool drum = machineIsDrum(P.machine[t]);
-        int trigs = 0; for (int s = 0; s < len; s++) trigs += P.s[t][s].on;
+        int trigs = 0; for (int s = 0; s < len; s++) trigs += P.s[t][s].on == 1;
         if (!trigs) continue;   // leere Spuren bleiben leer
         for (int s = 0; s < len; s++) {
             Step& st = P.s[t][s];
-            if (st.on) {
-                if (s != 0 && mrand() < a * 0.5f) { st.on = 0; continue; }   // Trig weg (Taktanfang bleibt)
+            if (st.on == 2) continue;   // trigless Locks bleiben unangetastet
+            if (st.on == 1) {
+                if (s != 0 && mrand() < a * 0.5f) { st.on = stepHasLock(st) ? 2 : 0; continue; }   // Trig weg (Taktanfang bleibt)
                 if (mrand() < a * 2.f) {   // Velocity variieren
                     int vv = st.lock[P_VEL] != NO_LOCK ? st.lock[P_VEL] : P.p[t][P_VEL];
                     st.lock[P_VEL] = (uint8_t)clampi(vv + (int)((mrand() - 0.5f) * 80.f * a * 3.f), 20, 127);
@@ -2591,7 +2603,7 @@ static void mutatePattern() {
                 st.lock[P_VEL] = (uint8_t)(50 + (int)(mrand() * 60.f));
                 if (!drum) for (int k = 1; k < len; k++) {
                     const Step& q = P.s[t][(s - k + len) % len];
-                    if (q.on && q.lock[P_NOTE] != NO_LOCK) { st.lock[P_NOTE] = q.lock[P_NOTE]; break; }
+                    if (q.on == 1 && q.lock[P_NOTE] != NO_LOCK) { st.lock[P_NOTE] = q.lock[P_NOTE]; break; }
                 }
             }
         }
@@ -2761,6 +2773,9 @@ static void drawSong() {
 
 static void songInput(Input& I, Uint32 now) {
     Project& J = eng.proj;
+    if (I.pressed(BT_L2)) { gotoPage(-1); return; }   // Seitenwechsel wie ueberall
+    if (I.pressed(BT_R2)) { gotoPage(1); return; }
+    if (rsAxis == 2) { int f = flick(I.rx, flRX, flRXt, now); if (f) { gotoPage(f); return; } } else flRX = 0;
     int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
     if (dy && J.songLen) songSel = clampi(songSel + dy, 0, J.songLen - 1);
     int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + flick(I.lx, flLX, flLXt, now);
@@ -2922,7 +2937,12 @@ static void handleInput(Uint32 now, float dt) {
                 toast("TAP %d BPM", eng.proj.bpm);
             } else toast("TAP ...");
         }
-        if (I.pressed(BT_A)) { funcUsed = true; eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
+        if (I.pressed(BT_A) && lockLatch) {   // im Lock-Modus: Trig <-> trigless (nur Locks) umschalten
+            funcUsed = true;
+            Step& hs = holdS();
+            hs.on = hs.on == 2 ? 1 : 2; aEdited = true;
+            toast(hs.on == 2 ? "STEP %d: TRIGLESS (NUR LOCKS)" : "STEP %d: TRIG", holdStep + 1);
+        } else if (I.pressed(BT_A)) { funcUsed = true; eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
         if (I.pressed(BT_B)) {
             funcUsed = true;
             lockA();
@@ -2967,12 +2987,12 @@ static void handleInput(Uint32 now, float dt) {
             int d = (I.repeat(BT_RIGHT, now, 250, 90) ? 1 : 0) - (I.repeat(BT_LEFT, now, 250, 90) ? 1 : 0);
             if (d) {
                 Step& o = holdS();
-                if (aJustOn && !aEdited) o.on = 0;
+                if (aPrevOn == 0 && !aEdited) o.on = 0;
                 cursor = ((cursor + d) % cl + cl) % cl;
                 holdStep = cursor;
                 Step& s = holdS();
-                aJustOn = !s.on; aEdited = false;
-                if (!s.on) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
+                aPrevOn = s.on; aJustOn = s.on == 0; aEdited = false;
+                if (s.on == 0) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
                 toast("LOCK STEP %d", cursor + 1);
             }
         }
@@ -2986,7 +3006,7 @@ static void handleInput(Uint32 now, float dt) {
         bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
         if (I.pressed(BT_A) && lockLatch) {   // Lock-Modus beenden
             Step& s = holdS();
-            if (aJustOn && !aEdited) { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
+            if (aPrevOn == 0 && !aEdited) { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
             lockLatch = false; aHeld = false;
             toast("LOCK-MODUS AUS");
         } else if (I.pressed(BT_A)) {
@@ -2995,8 +3015,8 @@ static void handleInput(Uint32 now, float dt) {
             else {
                 holdPat = eng.curPat; holdTrack = track; holdStep = cursor;
                 Step& s = holdS();
-                aJustOn = !s.on;
-                if (!s.on) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
+                aPrevOn = s.on; aJustOn = s.on == 0;
+                if (s.on == 0) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }   // trigless bleibt beim Halten trigless
                 aHeld = true; aEdited = false; aDownAt = now;
             }
         }
@@ -3006,7 +3026,11 @@ static void handleInput(Uint32 now, float dt) {
             toast("LOCK-MODUS STEP %d  (A = FERTIG)", holdStep + 1);
         }
         if (I.pressed(BT_B)) {
-            if (aHeld) { memset(holdS().lock, NO_LOCK, NPARAMS); aEdited = true; toast("LOCKS GELOESCHT"); }
+            if (aHeld) {
+                Step& hs = holdS();
+                memset(hs.lock, NO_LOCK, NPARAMS); aEdited = true;
+                if (hs.on == 2) { hs.on = 0; toast("TRIGLESS LOCKS GELOESCHT"); } else toast("LOCKS GELOESCHT");
+            }
             else if (mixP) { eng.solo[track] = !eng.solo[track]; toast(eng.solo[track] ? "SPUR %d SOLO" : "SPUR %d SOLO AUS", track + 1); }
             else { lockA(); eng.preview(track, &curP().s[track][cursor]); unlockA(); }
         }
@@ -3057,7 +3081,12 @@ static void handleInput(Uint32 now, float dt) {
     }
     if (I.released(BT_A) && aHeld && !lockLatch) {
         Step& s = holdS();
-        if (!aJustOn && !aEdited) { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
+        if (!aEdited) {
+            if (aPrevOn == 1) {   // Trig antippen = Trig weg; Locks bleiben als trigless Step
+                if (stepHasLock(s)) { s.on = 2; toast("TRIG WEG - LOCKS BLEIBEN (TRIGLESS)"); }
+                else { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
+            } else if (aPrevOn == 2) { s.on = 1; toast("TRIGLESS -> TRIG"); }
+        }
         aHeld = false;
     }
     if (aHeld && !lockLatch && !I.down[BT_A]) aHeld = false;
@@ -3411,6 +3440,7 @@ int main(int argc, char** argv) {
             for (int k = 0; k < 4; k++) eng.render(tmp, 22050 / 2);
             animate();
         }
+        if (page == PG_TRG && shotPage == 0) { Step& tq = curP().s[4][5]; tq.on = 2; memset(tq.lock, NO_LOCK, NPARAMS); tq.lock[P_FREQ] = 20; }
         if (page == PG_ARP) { Pattern& Pa = curP(); Pa.p[track][P_AMOD] = 3; Pa.p[track][P_AOCT] = 1; Pa.p[track][P_ARAT] = 0; Pa.p[track][P_LEN] = 80; Pa.p[track][P_AACC] = 60; }
         if (page == PG_SONG) { eng.proj.songLen = 5; uint8_t sp[5][2] = {{0, 4}, {1, 2}, {0, 2}, {2, 1}, {3, 4}}; for (int k = 0; k < 5; k++) { eng.proj.song[k].pat = sp[k][0]; eng.proj.song[k].rep = sp[k][1]; }
                                eng.songOn = true; eng.songPos = 1; eng.songRep = 1; eng.playing = true; songSel = 2; }
