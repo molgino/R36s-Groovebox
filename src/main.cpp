@@ -66,8 +66,9 @@ static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80};   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1};
+static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
 static char setPath[600];
 static int bufOverride = 0;
@@ -123,6 +124,7 @@ static void loadSettings() {
         else if (!strcmp(line, "usb_mode")) cfg.usb = clampi(atoi(v), 0, 2);
         else if (!strcmp(line, "song")) cfg.song = clampi(atoi(v), 0, 31);
         else if (!strcmp(line, "usb_audio")) cfg.usbAudio = atoi(v) != 0;
+        else if (!strcmp(line, "pc_in")) cfg.pcIn = atoi(v) != 0;
         else if (!strcmp(line, "hw_volume")) cfg.hwVol = clampi(atoi(v), 0, 100);
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
@@ -131,8 +133,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -335,6 +337,34 @@ static float uiLfoPh = 0, oscDrift = 0;
 static int batPct = -1; static bool batChg = false; static Uint32 batAt = 0;
 static char batPath[300] = "";
 
+// Aufnahme vom PC als Sample speichern: samples/pc/pc-NN.wav (16 Bit Stereo), danach Samples neu laden
+static void reloadSamples();
+static void savePcRecording(const int16_t* d, int frames) {
+    char dir[700], path[760];
+    snprintf(dir, sizeof dir, "%ssamples/pc", basePath);
+    mkdir(dir, 0755);
+    int no = 1;
+    struct stat st;
+    for (; no < 100; no++) { snprintf(path, sizeof path, "%s/pc-%02d.wav", dir, no); if (stat(path, &st) != 0) break; }
+    // Stille am Ende abschneiden
+    while (frames > 1000 && abs(d[(frames - 1) * 2]) < 200 && abs(d[(frames - 1) * 2 + 1]) < 200) frames--;
+    FILE* f = fopen(path, "wb");
+    if (f) {
+        uint32_t bytes = (uint32_t)frames * 4, v32; uint16_t v16;
+        fwrite("RIFF", 1, 4, f); v32 = 36 + bytes; fwrite(&v32, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
+        v32 = 16; fwrite(&v32, 4, 1, f); v16 = 1; fwrite(&v16, 2, 1, f); v16 = 2; fwrite(&v16, 2, 1, f);
+        v32 = 44100; fwrite(&v32, 4, 1, f); v32 = 44100 * 4; fwrite(&v32, 4, 1, f); v16 = 4; fwrite(&v16, 2, 1, f); v16 = 16; fwrite(&v16, 2, 1, f);
+        fwrite("data", 1, 4, f); fwrite(&bytes, 4, 1, f); fwrite(d, 4, (size_t)frames, f);
+        fclose(f);
+        sync();
+    }
+    pcRecDone();
+    if (!f) { toast("AUFNAHME: SPEICHERN FEHLGESCHLAGEN"); return; }
+    reloadSamples();
+    toast("SAMPLE pc/pc-%02d GESPEICHERT (%.1f s)", no, frames / 44100.f);
+    printf("PC-Aufnahme gespeichert: %s (%d Frames)\n", path, frames);
+}
+
 // Lautstaerketasten (Kernel-Geraet "gpio-keys-vol", im Groovebox-OS nicht ueber SDL sichtbar)
 static int volKeyFd = -2;
 static void pollVolumeKeys() {
@@ -447,6 +477,17 @@ static void animate() {
             bool want = cfg.usbAudio && usbMode == 2 && !driveOn;
             if (want && !usbAudioActive()) usbAudioStart();
             if (!want && usbAudioActive()) usbAudioStop();
+            bool rec = pcRecState() == 1 || pcRecState() == 2;
+            pcInGain = cfg.pcIn ? 1.f : 0.f;
+            bool wantIn = (cfg.pcIn || rec) && usbMode == 2 && !driveOn;
+            if (wantIn && !pcInActive()) pcInStart();
+            if (!wantIn && pcInActive()) pcInStop();
+        }
+        {   // fertige PC-Aufnahme als Sample speichern
+            int16_t* d = nullptr;
+            int n = pcRecTake(&d);
+            if (n > 0) savePcRecording(d, n);
+            else if (pcRecState() == 3) pcRecDone();
         }
     }
 }
@@ -2286,13 +2327,13 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBTONE, SI_IP, SI_WEB, SI_DRIVE,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
     SI_H_SYS, SI_DISP, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
 static float setScroll = 0;
 static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SYS; }
-static bool setIsAction(int i) { return i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
+static bool setIsAction(int i) { return i == SI_PCREC || i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
 static bool runLearn();
 static char versionStr[32] = "";
 
@@ -2338,6 +2379,16 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else snprintf(v, vn, usbAudioStatus() == 2 ? "AN - PC LIEST MIT" : (usbAudioActive() ? "AN - WARTET AUF PC" : "AN - SUCHE GERAET"));
         break;
     case SI_USBTONE: snprintf(l, ln, "Testton an PC (5 s, 1 kHz)"); if (!usbAudioActive()) snprintf(v, vn, "erst Audio an PC"); break;
+    case SI_PCIN: snprintf(l, ln, "PC-Ton ueber R36S");
+        if (!cfg.pcIn) snprintf(v, vn, "AUS");
+        else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
+        else snprintf(v, vn, pcInStatus() == 2 ? "AN - PC SPIELT" : "AN - STILL");
+        break;
+    case SI_PCREC: snprintf(l, ln, "PC-Ton als Sample aufnehmen");
+        if (pcRecState() == 1) snprintf(v, vn, "WARTET AUF TON (A = ABBRECHEN)");
+        else if (pcRecState() == 2) snprintf(v, vn, "AUFNAHME %.1f s (A = STOP)", pcRecSeconds());
+        else if (usbMode != 2) snprintf(v, vn, "erst PC MIDI+Audio");
+        break;
     case SI_IP: snprintf(l, ln, "Adresse"); snprintf(v, vn, "%s", usbMode && netIp[0] ? netIp : "-"); break;
     case SI_WEB: snprintf(l, ln, "Samples per Browser");
         if (!webPort()) snprintf(v, vn, "-");
@@ -2391,6 +2442,7 @@ static void setChange(int i, int d) {
     case SI_MCH: cfg.chm = !cfg.chm; applyMidiSettings(); saveSettings(); break;
     case SI_USB: usbMode = clampi(usbMode + (d > 0 ? 1 : -1), 0, 2); usbApplyAt = SDL_GetTicks() + 1200; break;
     case SI_USBAUDIO: cfg.usbAudio = !cfg.usbAudio; saveSettings(); break;
+    case SI_PCIN: cfg.pcIn = !cfg.pcIn; saveSettings(); break;
     case SI_DISP: cfg.dispOff = clampi(cfg.dispOff + (d > 0 ? 3 : -3), -1920, 1920);   // 1 Pixel je Schritt, Farbanteil bleibt drmOutSetByteOffset(cfg.dispOff); saveSettings(); break;
     default: break;
     }
@@ -2477,6 +2529,11 @@ static void setAction(int i) {
     case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, "ALLE STEPS VON PATTERN %02d LOESCHEN?", eng.curPat + 1); break;
     case SI_LEARN: runLearn(); break;
     case SI_DRIVE: startDrive(); break;
+    case SI_PCREC:
+        if (pcRecState() == 1 || pcRecState() == 2) { pcRecStop(); toast(pcRecState() ? "AUFNAHME BEENDET" : "ABGEBROCHEN"); }
+        else if (usbMode != 2) toast("ERST USB = PC (MIDI + AUDIO)");
+        else if (pcRecStart()) toast("AM PC ABSPIELEN - AUFNAHME STARTET MIT DEM TON");
+        break;
     case SI_USBTONE: if (usbAudioActive()) { usbAudioTestTone(5000); toast("TESTTON 5 S AN DEN PC"); } else toast("ERST USB = PC (MIDI + AUDIO)"); break;
     case SI_QUIT: askConfirm(ACT_QUIT, 0, "GROOVEBOX BEENDEN? (PROJEKT WIRD GESPEICHERT)"); break;
     default: setChange(i, 1); break;   // Umschalter: A schaltet weiter
@@ -2877,6 +2934,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     while (midiInPop(mm)) eng.midiIn(mm.st, mm.d1, mm.d2);
     eng.render((float*)stream, frames);
     usbAudioPush((const float*)stream, frames);   // parallel an den PC (falls aktiv)
+    pcInMix((float*)stream, frames, pcInGain);    // PC-Ton dazumischen (nach dem Senden: kein Echo zum PC)
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
     cpuLoad = cpuLoad * 0.9f + 0.1f * (float)(el / avail);
