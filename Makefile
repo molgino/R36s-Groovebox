@@ -13,7 +13,7 @@ ifeq ($(DRM),1)
 CXXFLAGS += -DWITH_DRM $(shell pkg-config --cflags libdrm)
 LIBS     += -ldrm
 endif
-SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp src/dhcpd.cpp src/web.cpp src/webpage.cpp src/drmout.cpp
+SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp src/dhcpd.cpp src/web.cpp src/webpage.cpp src/drmout.cpp src/usbaudio.cpp
 OBJ = $(SRC:.cpp=.o)
 OUT ?= groovebox
 

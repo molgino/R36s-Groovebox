@@ -14,6 +14,7 @@
 #include "web.h"
 #include "midi.h"
 #include "drmout.h"
+#include "usbaudio.h"
 
 static const int SW = 640, SH = 480;
 
@@ -60,8 +61,8 @@ static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277};   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1};   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
 static char setPath[600];
 static int bufOverride = 0;
@@ -116,6 +117,7 @@ static void loadSettings() {
         else if (!strcmp(line, "midi_channels")) cfg.chm = atoi(v) != 0;
         else if (!strcmp(line, "usb_mode")) cfg.usb = clampi(atoi(v), 0, 2);
         else if (!strcmp(line, "song")) cfg.song = clampi(atoi(v), 0, 31);
+        else if (!strcmp(line, "usb_audio")) cfg.usbAudio = atoi(v) != 0;
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
@@ -123,8 +125,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -138,6 +140,7 @@ static void refreshDevices() {
     devCount = 0;
     for (int i = 0; i < n && devCount < 16; i++) {
         const char* nm = SDL_GetAudioDeviceName(i, 0);
+        if (nm && (strcasestr(nm, "uac2") || strcasestr(nm, "gadget"))) continue;   // USB zum PC: eigener Schalter "Audio an PC"
         if (nm) snprintf(devNames[devCount++], 128, "%s", nm);
     }
 }
@@ -396,6 +399,15 @@ static void animate() {
     oscDrift += dt;
     if (now - batAt > 10000 || batAt == 0) { batAt = now; readBattery(); }
     { static Uint32 jackAt = 0; if (now - jackAt > 500) { jackAt = now; audioJackPoll(); } }
+    {   // USB-Audio zum PC an/aus je nach Modus (Geraet erscheint erst nach dem Umschalten in den PC-Modus)
+        static Uint32 uaAt = 0;
+        if (now - uaAt > 1500) {
+            uaAt = now;
+            bool want = cfg.usbAudio && usbMode == 2 && !driveOn;
+            if (want && !usbAudioActive()) usbAudioStart();
+            if (!want && usbAudioActive()) usbAudioStop();
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Bildschirm
@@ -2233,7 +2245,7 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_IP, SI_WEB, SI_DRIVE,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_IP, SI_WEB, SI_DRIVE,
     SI_H_SYS, SI_DISP, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
@@ -2278,6 +2290,11 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_H_USB: snprintf(l, ln, "USB"); break;
     case SI_USB: snprintf(l, ln, "USB-Modus");
         snprintf(v, vn, "%s", usbMode == 0 ? "HOST (Geraete am R36S)" : (usbMode == 1 ? "PC (Netz-MIDI, SSH)" : "PC + AUDIO"));
+        break;
+    case SI_USBAUDIO: snprintf(l, ln, "Audio an PC (USB)");
+        if (!cfg.usbAudio) snprintf(v, vn, "AUS");
+        else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
+        else snprintf(v, vn, usbAudioStatus() == 2 ? "AN - PC LIEST MIT" : (usbAudioActive() ? "AN - WARTET AUF PC" : "AN - SUCHE GERAET"));
         break;
     case SI_IP: snprintf(l, ln, "Adresse"); snprintf(v, vn, "%s", usbMode && netIp[0] ? netIp : "-"); break;
     case SI_WEB: snprintf(l, ln, "Samples per Browser");
@@ -2331,6 +2348,7 @@ static void setChange(int i, int d) {
     case SI_CLK: cfg.clk = (cfg.clk + (d > 0 ? 1 : 2)) % 3; applyMidiSettings(); saveSettings(); break;
     case SI_MCH: cfg.chm = !cfg.chm; applyMidiSettings(); saveSettings(); break;
     case SI_USB: usbMode = clampi(usbMode + (d > 0 ? 1 : -1), 0, 2); usbApplyAt = SDL_GetTicks() + 1200; break;
+    case SI_USBAUDIO: cfg.usbAudio = !cfg.usbAudio; saveSettings(); break;
     case SI_DISP: cfg.dispOff = clampi(cfg.dispOff + (d > 0 ? 3 : -3), -1920, 1920);   // 1 Pixel je Schritt, Farbanteil bleibt drmOutSetByteOffset(cfg.dispOff); saveSettings(); break;
     default: break;
     }
@@ -2367,6 +2385,7 @@ static void startDrive() {
     drawAll(false); present();
     char m[200];
     driveSavedDev[0] = 0;
+    usbAudioStop();
     if (usbMode) {   // aus dem PC-Modus: erst USB-Audio freigeben und das Geraet sauber abmelden
         if (isUsbAudioDev(cfg.dev)) { snprintf(driveSavedDev, sizeof driveSavedDev, "%s", cfg.dev); cfg.dev[0] = 0; openAudio(); }
         usbScript("aus nosleep", m, sizeof m);
@@ -2814,6 +2833,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     MidiMsg mm;
     while (midiInPop(mm)) eng.midiIn(mm.st, mm.d1, mm.d2);
     eng.render((float*)stream, frames);
+    usbAudioPush((const float*)stream, frames);   // parallel an den PC (falls aktiv)
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
     cpuLoad = cpuLoad * 0.9f + 0.1f * (float)(el / avail);
@@ -2838,6 +2858,7 @@ static bool writeWav(const char* path, const float* data, int frames, int sr) {
 
 static void openAudio() {
     if (audioDev) { SDL_CloseAudioDevice(audioDev); audioDev = 0; }
+    if (isUsbAudioDev(cfg.dev)) { cfg.dev[0] = 0; saveSettings(); }   // USB zum PC laeuft parallel, nie als Takt-Ausgang
     SDL_AudioSpec want, have;
     SDL_zero(want);
     want.freq = 44100; want.format = AUDIO_F32SYS; want.channels = 2;
@@ -2871,6 +2892,7 @@ static int detectUsbMode() {
 }
 
 static void applyUsbMode() {
+    usbAudioStop();   // Gadget wird gleich neu aufgebaut
     char cmd[800];
     static const char* args[3] = {"aus", "an", "an audio"};
     snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s nosleep", basePath, args[usbMode]);

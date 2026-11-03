@@ -384,7 +384,7 @@ Dadurch funktioniert der R36S am PC als **echtes USB-Audiointerface und USB-MIDI
 | **PC (MIDI)** | MIDI-Gerät + Netzwerk |
 | SET → **USB-Laufwerk** | Die Partition GROOVEBOX als normales USB-Laufwerk: Samples reinkopieren, am PC auswerfen, am R36S A drücken |
 
-* Damit der Klang zum PC geht, in SET unter **Ausgang** das Gerät mit „UAC2“ bzw. „Groovebox“ im Namen wählen.
+* Der Klang geht im Modus **PC (MIDI + Audio)** automatisch **zusätzlich** zum PC (SET → „Audio an PC (USB)“, Standard AN). Lautsprecher/Kopfhörer laufen weiter und geben den Takt vor – liest der PC nicht mit, läuft der Sequencer trotzdem weiter. In SET steht, ob der PC gerade mitliest.
 * SSH: `ssh ark@192.168.77.1`, Passwort `ark`.
 
 ### App aktualisieren ohne neues Image
