@@ -2177,6 +2177,13 @@ static void stopDrive() {
     drawAll(false); present();
     usbScript("laufwerk-aus nosleep", m, sizeof m);
     driveOn = false; usbMode = 2;
+    {   // Update-Datei ueber das Laufwerk kopiert? -> neu starten, groovebox-run installiert
+        char ud[700]; snprintf(ud, sizeof ud, "%supdate", basePath);
+        DIR* d = opendir(ud); struct dirent* e; bool upd = false;
+        while (d && (e = readdir(d))) { size_t l = strlen(e->d_name); if (l > 4 && !strcmp(e->d_name + l - 4, ".tgz")) upd = true; }
+        if (d) closedir(d);
+        if (upd) { toast("UPDATE GEFUNDEN - NEUSTART ..."); msgUntil = SDL_GetTicks() + 5000; quitReq = true; }
+    }
     reloadSamples();
     toast("%d SAMPLES GELADEN", sampleCount());
 }
@@ -2941,6 +2948,9 @@ int main(int argc, char** argv) {
             int sq = webLastEvent(wm, sizeof wm);
             if (sq != webSeq) { webSeq = sq; toast("%s", wm); }
             if (webTakeChange(now, 1500)) { reloadSamples(); toast("%d SAMPLES GELADEN", sampleCount()); }
+            static Uint32 updAt = 0;
+            if (webUpdateReady() && !updAt) { updAt = now; toast("UPDATE EMPFANGEN - NEUSTART ..."); msgUntil = now + 5000; saveProject(); }
+            if (updAt && now - updAt > 1500) quitReq = true;   // Dienst startet neu, groovebox-run installiert
         }
         if (now - lastAuto > 120000) {   // Autosave alle 2 Minuten bei Aenderungen
             lastAuto = now;

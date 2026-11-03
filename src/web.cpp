@@ -24,6 +24,9 @@ static volatile int g_changed = 0;
 static volatile Uint32 g_changedAt = 0;
 static char g_last[96];
 static volatile int g_lastSeq = 0;
+static volatile int g_updateReady = 0;
+static bool isOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0; }
+bool webUpdateReady() { return g_updateReady != 0; }
 
 extern const char WEB_PAGE[];
 
@@ -176,7 +179,10 @@ static void handleList(int fd) {
     listDir(b, pd, "", ".gbx", pf, 1, nullptr, dummy);
     struct statvfs vs;
     long long freeB = statvfs(sd, &vs) == 0 ? (long long)vs.f_bavail * (long long)vs.f_frsize : -1;
-    snprintf(num, sizeof num, "],\"free\":%lld,\"max\":%d}", freeB, 128);
+    char ver[64] = "";
+    { char vp[700]; snprintf(vp, sizeof vp, "%sVERSION", g_base); FILE* vf = fopen(vp, "r");
+      if (vf) { if (fgets(ver, sizeof ver, vf)) ver[strcspn(ver, "\r\n\"\\")] = 0; fclose(vf); } }
+    snprintf(num, sizeof num, "],\"free\":%lld,\"max\":%d,\"os\":%s,\"version\":\"%s\"}", freeB, 128, isOS() ? "true" : "false", ver);
     bstr(b, num);
     reply(fd, 200, "application/json", b.p, b.n);
     free(b.p); free(f.p);
@@ -213,6 +219,38 @@ static void handle(int fd) {
         return;
     }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/list")) { handleList(fd); return; }
+    if (!strcmp(method, "PUT") && !strcmp(target, "/api/update")) {   // Groovebox-OS: Programm-Update (.tgz)
+        if (!isOS()) { replyText(fd, 400, "Updates per Browser nur im Groovebox-OS (ArkOS: deploy.ps1)"); return; }
+        if (clen <= 1000 || clen > 64LL * 1024 * 1024) { replyText(fd, 413, "Update-Datei ungueltig"); return; }
+        char udir[700], tmp[800], fin[800];
+        snprintf(udir, sizeof udir, "%supdate", g_base);
+        mkdir(udir, 0755);
+        snprintf(tmp, sizeof tmp, "%s/groovebox-update.part", udir);
+        snprintf(fin, sizeof fin, "%s/groovebox-update.tgz", udir);
+        FILE* f = fopen(tmp, "wb");
+        if (!f) { replyText(fd, 400, "Kann Update nicht speichern"); return; }
+        long long got = 0;
+        int pre = hl - (int)(bodyStart - hb);
+        if (pre > 0) { if (pre > clen) pre = (int)clen; fwrite(bodyStart, 1, (size_t)pre, f); got = pre; }
+        static char ubuf[65536];
+        bool ok = true;
+        while (got < clen) {
+            ssize_t r = recv(fd, ubuf, (size_t)(clen - got < (long long)sizeof ubuf ? clen - got : (long long)sizeof ubuf), 0);
+            if (r <= 0 || fwrite(ubuf, 1, (size_t)r, f) != (size_t)r) { ok = false; break; }
+            got += r;
+        }
+        if (fclose(f) != 0) ok = false;
+        unsigned char mg[2] = {0, 0};
+        FILE* chk = ok ? fopen(tmp, "rb") : nullptr;
+        if (chk) { if (fread(mg, 1, 2, chk) != 2) mg[0] = 0; fclose(chk); }
+        if (!ok || mg[0] != 0x1f || mg[1] != 0x8b) { unlink(tmp); replyText(fd, 400, "Keine gueltige Update-Datei (.tgz)"); return; }
+        sync();
+        rename(tmp, fin);
+        note("UPDATE: %.60s", "WIRD INSTALLIERT");
+        replyText(fd, 200, "ok - Groovebox startet neu und installiert das Update");
+        g_updateReady = 1;
+        return;
+    }
 
     if (!rootDir(root, dir, sizeof dir)) { replyText(fd, 400, "root?"); return; }
     bool isS = !strcmp(root, "samples");

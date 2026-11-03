@@ -9,6 +9,16 @@ IP=${R36S_IP:-192.168.77.1}; USER_=${R36S_USER:-ark}; REPO=${GB_REPO:-molgino/R3
 OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5)
 ping -c1 -W1 "$IP" >/dev/null 2>&1 || { ping -c1 -W1 169.254.77.1 >/dev/null 2>&1 && IP=169.254.77.1; }
 T="$USER_@$IP"
+# Groovebox-OS? Dann App-Update ueber die Upload-Schnittstelle (kein SSH noetig)
+if [ "${1:-}" != "--setup-key" ] && [ "${1:-}" != "--shell" ] && [ "${1:-}" != "--log" ] && \
+   curl -fs --max-time 5 "http://$IP/api/list" | grep -q '"os":true'; then
+  UPD=${1:-}
+  if [ -z "$UPD" ]; then UPD=$(mktemp --suffix=.tgz); curl -fL -o "$UPD" "https://github.com/$REPO/releases/download/nightly/groovebox-os-update.tgz"; fi
+  curl -fsS -T "$UPD" "http://$IP/api/update"; echo
+  echo "Groovebox startet neu und installiert das Update ..."; sleep 20
+  curl -fs --max-time 10 "http://$IP/api/list" | grep -o '"version":"[^"]*"' || echo "noch nicht erreichbar - Log: GROOVEBOX/logs/update.log"
+  exit 0
+fi
 case "${1:-}" in
   --setup-key) [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519; ssh-copy-id "${OPTS[@]}" -i ~/.ssh/id_ed25519.pub "$T"; exit ;;
   --shell) exec ssh "${OPTS[@]}" "$T" ;;

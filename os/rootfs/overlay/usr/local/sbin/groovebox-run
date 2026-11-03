@@ -1,6 +1,63 @@
 #!/bin/bash
-# Startet die Groovebox und schreibt das Log auf die Datenpartition (am PC lesbar)
-mkdir -p /data/logs
-[ -f /data/logs/groovebox.log ] && mv -f /data/logs/groovebox.log /data/logs/groovebox.old.log
-cd /opt/groovebox
-exec stdbuf -oL -eL ./groovebox >> /data/logs/groovebox.log 2>&1
+# Startet die Groovebox (vom Dienst groovebox.service, der sie nach dem Beenden neu startet).
+# - installiert vorher ein Update aus /data/update/*.tgz (Browser-Upload, Laufwerk oder deploy-Skript)
+# - stuerzt die neue Version 3x direkt nach dem Start ab, wird die alte wiederhergestellt
+# Log: /data/logs/groovebox.log (am PC lesbar), Update-Log: /data/logs/update.log
+GB=/opt/groovebox
+UPD=/data/update
+LOG=/data/logs
+FRESH=$GB/.update-fresh
+mkdir -p $LOG $UPD
+
+is_arm64_elf() {   # ELF-Kennung + e_machine 0xB7 (aarch64)
+    [ "$(od -An -tx1 -N4 "$1" | tr -d ' \n')" = "7f454c46" ] && [ "$(od -An -tx1 -j18 -N2 "$1" | tr -d ' \n')" = "b700" ]
+}
+
+install_update() {
+    local f t
+    f=$(ls -t $UPD/*.tgz 2>/dev/null | head -1)
+    [ -n "$f" ] || return 0
+    {
+        echo "=== $(date) Update: $f"
+        t=$(mktemp -d)
+        if ! tar -xzf "$f" -C "$t" 2>&1; then echo "FEHLER: Archiv defekt"; mv -f "$f" "$f.defekt"; rm -rf "$t"; return 0; fi
+        if [ ! -f "$t/groovebox" ] || ! is_arm64_elf "$t/groovebox"; then
+            echo "FEHLER: kein Groovebox-Programm fuer den R36S"; mv -f "$f" "$f.defekt"; rm -rf "$t"; return 0
+        fi
+        cp -f $GB/groovebox $GB/groovebox.bak
+        [ -f $GB/VERSION ] && cp -f $GB/VERSION $GB/VERSION.bak
+        install -m 755 "$t/groovebox" $GB/groovebox.new && mv -f $GB/groovebox.new $GB/groovebox
+        for s in pc-modus.sh VERSION gamecontrollerdb.txt; do [ -f "$t/$s" ] && install -m 644 "$t/$s" "$GB/$s"; done
+        chmod 755 $GB/pc-modus.sh
+        if [ -d "$t/sbin" ]; then for s in "$t"/sbin/*; do install -m 755 "$s" /usr/local/sbin/; done; fi
+        echo "installiert: $(cat $GB/VERSION 2>/dev/null)"
+        echo 0 > $FRESH
+        rm -f "$f"; rm -rf "$t"; sync
+    } >> $LOG/update.log 2>&1
+}
+
+rollback() {
+    {
+        echo "=== $(date) neue Version startet nicht -> alte Version wiederhergestellt"
+        mv -f $GB/groovebox.bak $GB/groovebox
+        [ -f $GB/VERSION.bak ] && mv -f $GB/VERSION.bak $GB/VERSION
+        rm -f $FRESH; sync
+    } >> $LOG/update.log 2>&1
+}
+
+install_update
+
+[ -f $LOG/groovebox.log ] && mv -f $LOG/groovebox.log $LOG/groovebox.old.log
+cd $GB
+if [ -f $FRESH ]; then   # nach 60 s Laufzeit gilt das Update als gut
+    ( sleep 60; [ -f $FRESH ] && rm -f $FRESH $GB/VERSION.bak ) &
+fi
+START=$(date +%s)
+stdbuf -oL -eL ./groovebox >> $LOG/groovebox.log 2>&1
+RC=$?
+if [ -f $FRESH ] && [ $(( $(date +%s) - START )) -lt 15 ] && [ $RC -ne 0 ]; then
+    N=$(( $(cat $FRESH 2>/dev/null || echo 0) + 1 ))
+    echo $N > $FRESH
+    [ $N -ge 3 ] && [ -f $GB/groovebox.bak ] && rollback
+fi
+exit $RC

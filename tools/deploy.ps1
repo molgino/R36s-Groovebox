@@ -11,6 +11,8 @@
     .\deploy.ps1 -SetupKey           # einmalig: SSH-Schluessel hinterlegen (danach kein Passwort mehr)
     .\deploy.ps1 -Log                # nur das Log live anzeigen
     .\deploy.ps1 -Shell              # SSH-Konsole oeffnen
+    .\deploy.ps1 -Update .\groovebox-os-update.tgz   # Groovebox-OS: bestimmtes App-Update aufspielen
+  Beim Groovebox-OS wird automatisch das App-Update (groovebox-os-update.tgz) per Browser-Schnittstelle uebertragen.
 #>
 param(
     [string]$Ip = "192.168.77.1",
@@ -20,7 +22,8 @@ param(
     [switch]$SetupKey,
     [switch]$Log,
     [switch]$Shell,
-    [switch]$NoRestart
+    [switch]$NoRestart,
+    [string]$Update = ""
 )
 $ErrorActionPreference = "Stop"
 $Target = "$User@$Ip"
@@ -34,6 +37,24 @@ if (-not (Test-Connection -Count 1 -Quiet $Ip)) {
     else { Write-Host "R36S unter $Ip nicht erreichbar. PC-Modus aktiv? Kabel steckt? (Windows braucht nach dem Einstecken bis zu 1 Minute)" -ForegroundColor Red; exit 1 }
 }
 Write-Host "R36S erreichbar: $Ip" -ForegroundColor Green
+
+# Groovebox-OS? Dann App-Update ueber die Upload-Schnittstelle (kein SSH noetig)
+$isOs = $false
+try { $info = Invoke-RestMethod -Uri "http://$Ip/api/list" -TimeoutSec 5; $isOs = [bool]$info.os } catch { }
+if ($isOs -and -not $SetupKey -and -not $Shell -and -not $Log) {
+    Write-Host "Groovebox-OS erkannt (installiert: $($info.version))" -ForegroundColor Green
+    if (-not $Update) {
+        $Update = Join-Path $env:TEMP "groovebox-os-update.tgz"
+        $url = "https://github.com/$Repo/releases/download/nightly/groovebox-os-update.tgz"
+        Write-Host "Lade $url"
+        Invoke-WebRequest -Uri $url -OutFile $Update -UseBasicParsing
+    }
+    Invoke-WebRequest -Uri "http://$Ip/api/update" -Method Put -InFile $Update -ContentType "application/octet-stream" -UseBasicParsing | Out-Null
+    Write-Host "Update uebertragen - die Groovebox startet neu und installiert es (ca. 15 s)." -ForegroundColor Green
+    Start-Sleep -Seconds 20
+    try { $info = Invoke-RestMethod -Uri "http://$Ip/api/list" -TimeoutSec 10; Write-Host "Jetzt installiert: $($info.version)" -ForegroundColor Green } catch { Write-Host "Noch nicht wieder erreichbar - Log: GROOVEBOX/logs/update.log" }
+    exit 0
+}
 
 if ($SetupKey) {
     $key = Join-Path $env:USERPROFILE ".ssh\id_ed25519"

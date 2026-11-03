@@ -4,4 +4,5 @@
 bool webStart(const char* basePath);           // basePath endet mit '/'
 int webPort();                                 // 0 = laeuft nicht
 bool webTakeChange(Uint32 now, Uint32 quietMs); // true, wenn Samples geaendert wurden und es seit quietMs ruhig ist
-int webLastEvent(char* out, int n);            // laufende Nummer + Text des letzten Uploads
+int webLastEvent(char* out, int n);
+bool webUpdateReady();                         // Groovebox-OS: Update hochgeladen -> Neustart            // laufende Nummer + Text des letzten Uploads

@@ -44,6 +44,12 @@ button:hover{border-color:var(--acc)}button.del:hover{border-color:var(--bad);co
 <h2>Samples auf der Karte</h2>
 <div id="samples" class="list"></div>
 
+<div id="upd" style="display:none">
+<h2>Groovebox aktualisieren</h2>
+<div class="row"><span>Installiert: <b id="ver">?</b></span><button id="uup">Update-Datei (.tgz) wählen</button><input type="file" id="upick" accept=".tgz" hidden>
+<span id="ust" class="dim">Datei groovebox-os-update.tgz aus dem Release „nightly“</span></div>
+</div>
+
 <h2>Projekte</h2>
 <div class="row"><span>Platz <select id="pslot"></select></span><button id="pup">Projekt (.gbx) hochladen</button><input type="file" id="ppick" accept=".gbx" hidden>
 <span class="dim">Laden am Gerät unter PRJ → SONG. Herunterladen = Sicherung.</span></div>
@@ -56,6 +62,7 @@ const fmt=b=>b>1e9?(b/1e9).toFixed(1)+' GB':b>1e6?(b/1e6).toFixed(1)+' MB':Math.
 const clean=s=>s.normalize('NFKD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9 _\-.()+#]/g,'_').replace(/^[.\s]+/,'').slice(0,40)||'sample';
 async function refresh(){
  try{const r=await fetch('/api/list');state=await r.json();}catch(e){$('#info').textContent='keine Verbindung zum R36S';return;}
+ if(state.os){$('#upd').style.display='';$('#ver').textContent=state.version||'?';}
  $('#info').textContent=`${state.samples.length} von ${state.max} Samples · ${fmt(state.free)} frei auf der Karte · max. 60 s pro Sample`;
  const sel=$('#folder'),cur=sel.value;sel.innerHTML='<option value="">(Hauptordner)</option>'+state.folders.map(f=>`<option>${f}</option>`).join('');
  if(cur&&state.folders.includes(cur))sel.value=cur;
@@ -123,5 +130,10 @@ $('#pup').onclick=()=>$('#ppick').click();
 $('#ppick').onchange=async e=>{const f=e.target.files[0];if(!f)return;const n=$('#pslot').value;
  if(state.projects.some(p=>p.path===n)&&!confirm(n+' ist belegt – überschreiben?'))return;
  const r=await fetch('/api/upload?root=projects&path='+encodeURIComponent(n),{method:'PUT',body:f});if(!r.ok)alert(await r.text());e.target.value='';refresh();};
+$('#uup').onclick=()=>$('#upick').click();
+$('#upick').onchange=async e=>{const f=e.target.files[0];if(!f)return;const st=$('#ust');st.className='';st.textContent='lade hoch …';
+ try{const r=await fetch('/api/update',{method:'PUT',body:f});const t=await r.text();if(!r.ok)throw new Error(t);
+  st.className='ok';st.textContent='✓ übertragen – Groovebox startet neu und installiert (ca. 15 s)';setTimeout(refresh,15000);}
+ catch(err){st.className='bad';st.textContent='✗ '+(err.message||err);}e.target.value='';};
 refresh();setInterval(refresh,8000);
 </script></body></html>)HTML";

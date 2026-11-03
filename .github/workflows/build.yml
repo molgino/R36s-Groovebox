@@ -11,7 +11,24 @@ permissions:
   contents: write
 
 jobs:
+  # App-Update fuer das Groovebox-OS (arm64, DRM-Ausgabe) -> dist/groovebox-os-update.tgz
+  os-app:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Abhaengigkeiten
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev libasound2-dev libdrm-dev pkg-config
+      - name: Bauen
+        run: |
+          make -j4 DRM=1
+          ./tools/os-update.sh groovebox
+      - uses: actions/upload-artifact@v4
+        with: { name: groovebox-os-update, path: dist/groovebox-os-update.tgz }
+
   build:
+    needs: os-app
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -37,15 +54,18 @@ jobs:
           name: r36s-groovebox-arkos
           path: dist/r36s-groovebox-arkos.zip
 
+      - uses: actions/download-artifact@v4
+        with: { name: groovebox-os-update, path: dist }
+
       - name: Release "nightly" aktualisieren
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete nightly --yes --cleanup-tag || true
-          gh release create nightly dist/r36s-groovebox-arkos.zip --prerelease \
+          gh release create nightly dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz --prerelease \
             --title "Nightly ($(git rev-parse --short HEAD))" \
-            --notes "Automatischer Build von main ($(git rev-parse --short HEAD))." --target "$GITHUB_SHA"
+            --notes "Automatischer Build von main ($(git rev-parse --short HEAD)). ArkOS: r36s-groovebox-arkos.zip. Groovebox-OS: groovebox-os-update.tgz (App-Update ohne neues Image)." --target "$GITHUB_SHA"
 
       - name: Versions-Release
         if: startsWith(github.ref, 'refs/tags/v')

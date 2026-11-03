@@ -386,6 +386,16 @@ Dadurch funktioniert der R36S am PC als **echtes USB-Audiointerface und USB-MIDI
 * Damit der Klang zum PC geht, in SET unter **Ausgang** das Gerät mit „UAC2“ bzw. „Groovebox“ im Namen wählen.
 * SSH: `ssh ark@192.168.77.1`, Passwort `ark`.
 
+### App aktualisieren ohne neues Image
+
+Neue Groovebox-Versionen kommen als **`groovebox-os-update.tgz`** im Release **nightly**. Das Image muss dafür nicht neu geflasht werden. Drei Wege:
+
+1. **Browser:** PC-Modus an, http://192.168.77.1 öffnen, unter „Groovebox aktualisieren“ die Datei wählen.
+2. **Laufwerk:** Die Datei in den Ordner `update/` auf GROOVEBOX kopieren (SET → USB-Laufwerk oder Karte im PC). Beim nächsten Start wird sie installiert.
+3. **Skript vom PC:** `tools\deploy.ps1` (Windows) bzw. `tools/deploy.sh` – erkennt das Groovebox-OS selbst und spielt das neueste Update ein.
+
+Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, wird automatisch die vorige wiederhergestellt. Protokoll: `logs/update.log`.
+
 **Wenn etwas nicht klappt:** Die Karte in den PC stecken. Auf dem Laufwerk **GROOVEBOX** liegen im Ordner `logs/` die Dateien `boot.txt` (Display, Tasten, Sound, USB) und `groovebox.log`. Diese bitte schicken.
 Bleibt das Display schwarz und die Partition GROOVEBOX fehlt, startet das System gar nicht – dann bitte melden, wie sich die LED verhält.
 Auf der Partition **GBBOOT** lässt sich in `extlinux/extlinux.conf` testweise das ROCKNIX-Standard-Display wählen (siehe `LIESMICH.txt`).

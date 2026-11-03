@@ -41,6 +41,8 @@ cd "$ROOT/opt/groovebox"
 for d in samples projects presets; do ln -sfn /data/$d $d; done
 ln -sfn /data/config/settings.cfg settings.cfg
 ln -sfn /data/config/input.cfg input.cfg
+ln -sfn /data/update update
+echo "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null) $(date +%Y-%m-%d)" > VERSION
 cd - >/dev/null
 
 echo "Groovebox-OS $(date +%Y-%m-%d) ($(git -C "$REPO" rev-parse --short HEAD 2>/dev/null))" > "$ROOT/etc/groovebox-os"

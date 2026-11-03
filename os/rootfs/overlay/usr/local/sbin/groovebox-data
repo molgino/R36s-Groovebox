@@ -24,7 +24,7 @@ if [ -z "$DEV" ]; then
 fi
 mkdir -p /data
 mountpoint -q /data || { fsck.vfat -a "$DEV" >/dev/null 2>&1; mount -t vfat -o rw,noatime,flush,umask=000,utf8 "$DEV" /data; }
-mkdir -p /data/samples /data/projects /data/presets /data/config $LOGDIR
+mkdir -p /data/samples /data/projects /data/presets /data/config /data/update $LOGDIR
 if [ ! -f /data/config/.defaults ]; then
     cp -rn /opt/groovebox/defaults/samples/. /data/samples/ 2>/dev/null
     touch /data/config/.defaults
