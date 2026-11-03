@@ -243,13 +243,26 @@ static void handle(int fd) {
         if (q) queryGet(q, "name", nm, sizeof nm);
         static const char* const LOGS[][2] = {
             {"groovebox.log", "/var/log/groovebox/groovebox.log"}, {"groovebox.old.log", "/var/log/groovebox/groovebox.old.log"},
-            {"boot.txt", "/data/logs/boot.txt"}, {"update.log", "/data/logs/update.log"}, {"pc-modus.log", ""}};
+            {"boot.txt", "/data/logs/boot.txt"}, {"update.log", "/data/logs/update.log"}, {"pc-modus.log", ""}, {"usb-diagnose", "-"}};
         for (auto& l : LOGS)
             if (!strcmp(nm, l[0])) {
                 if (l[1][0]) snprintf(path, sizeof path, "%s", l[1]);
                 else snprintf(path, sizeof path, "%s%s", g_base, l[0]);
             }
         if (!path[0] && !strcmp(nm, "groovebox.log")) snprintf(path, sizeof path, "%sgroovebox.log", g_base);
+        if (!strcmp(path, "-")) {   // feste Diagnose-Befehle (keine Parameter aus der Anfrage)
+            FILE* pp = popen("{ echo '=== Soundkarten'; cat /proc/asound/cards; echo '=== Gadget'; G=/sys/kernel/config/usb_gadget/groovebox;"
+                             " echo UDC=$(cat $G/UDC 2>/dev/null); ls $G/configs/c.1 2>/dev/null; for f in $G/functions/uac2.usb0/*; do [ -f $f ] && echo \"$(basename $f)=$(cat $f 2>/dev/null)\"; done;"
+                             " echo '=== USB-Geschwindigkeit'; cat /sys/class/udc/*/current_speed /sys/class/udc/*/state 2>/dev/null;"
+                             " for c in $(ls /proc/asound | grep -o 'card[0-9]*' | tr -d card); do grep -qi uac /proc/asound/card$c/id 2>/dev/null && { echo \"=== Regler Karte $c\"; amixer -c $c contents; echo \"=== PCM Karte $c\"; cat /proc/asound/card$c/pcm0p/sub0/hw_params /proc/asound/card$c/pcm0p/sub0/status 2>/dev/null; }; done;"
+                             " echo '=== Kernel (USB/Audio)'; dmesg | grep -iE 'dwc2|uac|gadget|u_audio|usb|configfs' | tail -80; } 2>&1", "r");
+            if (!pp) { replyText(fd, 404, "(Diagnose nicht moeglich)"); return; }
+            static char db[65536];
+            size_t dn = fread(db, 1, sizeof db, pp);
+            pclose(pp);
+            reply(fd, 200, "text/plain; charset=utf-8", db, dn);
+            return;
+        }
         FILE* f = path[0] ? fopen(path, "rb") : nullptr;
         if (!f && !strcmp(nm, "groovebox.log")) { snprintf(path, sizeof path, "%sgroovebox.log", g_base); f = fopen(path, "rb"); }   // ArkOS
         if (!f) { replyText(fd, 404, "(Log nicht vorhanden)"); return; }

@@ -2246,13 +2246,13 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_IP, SI_WEB, SI_DRIVE,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBTONE, SI_IP, SI_WEB, SI_DRIVE,
     SI_H_SYS, SI_DISP, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
 static float setScroll = 0;
 static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SYS; }
-static bool setIsAction(int i) { return i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
+static bool setIsAction(int i) { return i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
 static bool runLearn();
 static char versionStr[32] = "";
 
@@ -2297,6 +2297,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
         else snprintf(v, vn, usbAudioStatus() == 2 ? "AN - PC LIEST MIT" : (usbAudioActive() ? "AN - WARTET AUF PC" : "AN - SUCHE GERAET"));
         break;
+    case SI_USBTONE: snprintf(l, ln, "Testton an PC (5 s, 1 kHz)"); if (!usbAudioActive()) snprintf(v, vn, "erst Audio an PC"); break;
     case SI_IP: snprintf(l, ln, "Adresse"); snprintf(v, vn, "%s", usbMode && netIp[0] ? netIp : "-"); break;
     case SI_WEB: snprintf(l, ln, "Samples per Browser");
         if (!webPort()) snprintf(v, vn, "-");
@@ -2436,6 +2437,7 @@ static void setAction(int i) {
     case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, "ALLE STEPS VON PATTERN %02d LOESCHEN?", eng.curPat + 1); break;
     case SI_LEARN: runLearn(); break;
     case SI_DRIVE: startDrive(); break;
+    case SI_USBTONE: if (usbAudioActive()) { usbAudioTestTone(5000); toast("TESTTON 5 S AN DEN PC"); } else toast("ERST USB = PC (MIDI + AUDIO)"); break;
     case SI_QUIT: askConfirm(ACT_QUIT, 0, "GROOVEBOX BEENDEN? (PROJEKT WIRD GESPEICHERT)"); break;
     default: setChange(i, 1); break;   // Umschalter: A schaltet weiter
     }

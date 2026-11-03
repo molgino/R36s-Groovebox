@@ -5,6 +5,7 @@
 #include "usbaudio.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #ifdef WITH_MIDI
 #include <alsa/asoundlib.h>
@@ -17,6 +18,10 @@ static volatile bool g_run = false, g_active = false;
 static volatile int g_status = 0;              // 0 aus, 1 wartet auf PC, 2 PC liest
 static SDL_Thread* g_thread = nullptr;
 static char g_dev[32];
+static volatile int g_peak = 0;          // groesster Betrag der uebergebenen Samples (seit letzter Statistik)
+static volatile Uint32 g_toneUntil = 0;  // Testton bis zu diesem Zeitpunkt
+static unsigned g_tonePh = 0;
+void usbAudioTestTone(int ms) { g_toneUntil = SDL_GetTicks() + (Uint32)ms; }
 
 // Hat die Karte einen Wiedergabe-PCM (Geraet 0..)? Liefert die Geraetenummer oder -1
 static int playbackDevice(int card) {
@@ -82,9 +87,10 @@ static int usbThread(void*) {
     while (g_run) {
         if (SDL_GetTicks() - statAt >= 10000) {   // alle 10 s ins Log: kommt etwas beim PC an?
             snd_pcm_sframes_t av = snd_pcm_avail(pcm);
-            printf("USB-Audio: %lu Frames an PC, voll %lux, verworfen %lu, Fehler %lu%s%s, Zustand %s, frei %ld\n",
-                   wrote, full, dropped, errs, lastErr ? " letzter: " : "", lastErr ? snd_strerror(lastErr) : "",
+            printf("USB-Audio: %lu Frames an PC, Pegel %d%%, voll %lux, verworfen %lu, Fehler %lu%s%s, Zustand %s, frei %ld\n",
+                   wrote, g_peak * 100 / 32767, full, dropped, errs, lastErr ? " letzter: " : "", lastErr ? snd_strerror(lastErr) : "",
                    snd_pcm_state_name(snd_pcm_state(pcm)), (long)av);
+            g_peak = 0;
             fflush(stdout);
             wrote = full = dropped = errs = 0; lastErr = 0; statAt = SDL_GetTicks();
         }
@@ -133,18 +139,26 @@ void usbAudioPush(const float* st, int frames) {   // nur aus dem Audio-Callback
     if (!g_active) return;
     unsigned w = g_w;
     if ((w - g_r) + (unsigned)frames > RING - 1) return;   // voll: neue Daten verwerfen
+    bool tone = g_toneUntil && (int)(g_toneUntil - SDL_GetTicks()) > 0;
+    int pk = g_peak;
     for (int i = 0; i < frames; i++) {
         unsigned k = ((w + i) & RMASK) * 2;
         for (int c = 0; c < 2; c++) {
-            float x = st[i * 2 + c];
+            float x = tone ? 0.5f * sinf((float)g_tonePh * (6.2831853f * 1000.f / 44100.f)) : st[i * 2 + c];
             x = x < -1.f ? -1.f : (x > 1.f ? 1.f : x);
-            g_ring[k + c] = (int16_t)(x * 32767.f);
+            int16_t v = (int16_t)(x * 32767.f);
+            g_ring[k + c] = v;
+            int a = v < 0 ? -v : v;
+            if (a > pk) pk = a;
         }
+        if (tone) g_tonePh = (g_tonePh + 1) % 44100;
     }
+    g_peak = pk;
     __atomic_store_n(&g_w, w + (unsigned)frames, __ATOMIC_RELEASE);
 }
 
 #else
+void usbAudioTestTone(int) {}
 bool usbAudioStart() { return false; }
 void usbAudioStop() {}
 bool usbAudioActive() { return false; }
