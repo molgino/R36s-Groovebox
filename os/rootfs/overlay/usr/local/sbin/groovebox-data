@@ -35,5 +35,6 @@ fi
 # GB_DISPLAY=sdl   -> Bild ueber SDL/GPU (Panfrost), zum Testen
 # PAN_MESA_DEBUG=noafbc
 # GB_DRM_FLIP=1   -> Puffer-Wechsel (Page-Flip) statt einem Bildspeicher, zum Testen
+# GB_UAC_BINT=4   -> USB-Audio-Paketabstand (1 = 125 us ... 4 = 1 ms), GB_UAC_REQ=4 -> Anfragen im Treiber
 EOF
 sync

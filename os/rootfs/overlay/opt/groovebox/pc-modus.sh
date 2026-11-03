@@ -64,6 +64,11 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
             echo 3 > $U/p_chmask; echo 44100 > $U/p_srate; echo 2 > $U/p_ssize   # Groovebox -> PC
             echo 3 > $U/c_chmask; echo 44100 > $U/c_srate; echo 2 > $U/c_ssize   # PC -> Groovebox
             echo "Synth City" > $U/function_name 2>/dev/null
+            # dwc2 (RK3326) schafft isochrone Pakete jede 125 us oft nicht -> Standard: alle 1 ms (bInterval 4) und mehr Anfragen.
+            # Zum Testen in config/groovebox.env: GB_UAC_BINT=1..4, GB_UAC_REQ=2..8
+            echo ${GB_UAC_BINT:-4} > $U/p_hs_bint 2>/dev/null; echo ${GB_UAC_BINT:-4} > $U/c_hs_bint 2>/dev/null
+            echo ${GB_UAC_REQ:-4} > $U/req_number 2>/dev/null
+            echo "UAC2: p_hs_bint=$(cat $U/p_hs_bint 2>/dev/null) c_hs_bint=$(cat $U/c_hs_bint 2>/dev/null) req_number=$(cat $U/req_number 2>/dev/null)"
             ln -s $U configs/c.1/
         fi
     fi
