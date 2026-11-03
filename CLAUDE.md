@@ -17,6 +17,7 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 ## Groovebox-OS (`os/`)
 - Eigenes Image statt ArkOS: Linux `LINUX_VERSION` (gregkh/linux-Tag) + ROCKNIX-Patches/DTS (gepinnt `ROCKNIX_COMMIT`, `os/versions.env`), Panel aus ArkOS-DTB als Overlay `os/dts/panel-arkos.dtso` (generic-dsi), eigener Tree `rk3326-groovebox-r36s.dts` (OTG-Port an, usb-role-switch)
 - `os/kernel/build.sh` (arm64-Runner nativ), `os/uboot/build.sh` (x86: rkbin-Tools), `os/rootfs/build.sh` (mmdebstrap Debian trixie, Overlay in `os/rootfs/overlay`), `os/image/build.sh` (MBR: U-Boot @64, GBBOOT FAT, GBROOT ext4; GROOVEBOX FAT wird beim 1. Start angelegt)
+- Kein Initramfs: Root per `root=PARTUUID=47425653-02` (feste MBR-ID in image/build.sh), `LABEL=` geht nur im Userspace; ROCKNIX-Config hat `PANIC_TIMEOUT=1` (Panic = sofortiger Neustart) → Testphase mit `panic=60 console=tty0`
 - Workflow `.github/workflows/os.yml` → Release **os-nightly**; Kernel/fremder Code nicht im Container bauen, nur in CI
 - Gerät: `/opt/groovebox` (Symlinks nach `/data` = Partition GROOVEBOX), Dienst `groovebox.service`, Logs `/data/logs/{boot.txt,groovebox.log}`, `pc-modus.sh` (aus|an|an audio|laufwerk|laufwerk-aus, configfs-Gadget RNDIS+MIDI+UAC2 bzw. Mass-Storage), SET „USB-Laufwerk“ (`startDrive/stopDrive`, nur wenn `/etc/groovebox-os` existiert)
 
