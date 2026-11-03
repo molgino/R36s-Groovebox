@@ -18,31 +18,60 @@ static volatile int g_status = 0;              // 0 aus, 1 wartet auf PC, 2 PC l
 static SDL_Thread* g_thread = nullptr;
 static char g_dev[32];
 
-// Gadget-Soundkarte suchen: Name/Langname/Treiber mit "uac"/"gadget"; sonst (im PC-Modus gibt es keine
-// USB-Host-Geraete) die erste Karte, die nicht der interne Codec rk817 ist
+// Hat die Karte einen Wiedergabe-PCM (Geraet 0..)? Liefert die Geraetenummer oder -1
+static int playbackDevice(int card) {
+    char nm[16]; snprintf(nm, sizeof nm, "hw:%d", card);
+    snd_ctl_t* ctl;
+    if (snd_ctl_open(&ctl, nm, 0) < 0) return -1;
+    int dev = -1, found = -1;
+    snd_pcm_info_t* info; snd_pcm_info_alloca(&info);
+    while (snd_ctl_pcm_next_device(ctl, &dev) == 0 && dev >= 0) {
+        snd_pcm_info_set_device(info, (unsigned)dev);
+        snd_pcm_info_set_subdevice(info, 0);
+        snd_pcm_info_set_stream(info, SND_PCM_STREAM_PLAYBACK);
+        if (snd_ctl_pcm_info(ctl, info) >= 0) { found = dev; break; }
+    }
+    snd_ctl_close(ctl);
+    return found;
+}
+
+// UAC2-Gadget-Soundkarte suchen: nur Karten mit Wiedergabe-PCM, nie MIDI ("MIDI Gadget") oder den internen Codec.
+// Bevorzugt Namen mit "uac"/"gadget", sonst (im PC-Modus gibt es keine USB-Host-Geraete) die erste andere Karte mit Audio.
 static bool findGadget(char* out, int n) {
-    int card = -1, other = -1;
+    int card = -1, best = -1, bestDev = 0, other = -1, otherDev = 0;
+    static char lastList[512] = "";
+    char list[512] = "";
     while (snd_card_next(&card) == 0 && card >= 0) {
         char *nm = nullptr, *ln = nullptr;
         snd_card_get_name(card, &nm);
         snd_card_get_longname(card, &ln);
-        bool hit = (nm && (strcasestr(nm, "uac") || strcasestr(nm, "gadget"))) ||
-                   (ln && (strcasestr(ln, "uac") || strcasestr(ln, "gadget")));
+        int pd = playbackDevice(card);
+        size_t ll = strlen(list);
+        snprintf(list + ll, sizeof list - ll, "%d:'%s'%s ", card, nm ? nm : "?", pd >= 0 ? "(Audio)" : "");
+        bool midi = (nm && strcasestr(nm, "midi")) || (ln && strcasestr(ln, "midi"));
         bool internal = (nm && strcasestr(nm, "rk817")) || (ln && strcasestr(ln, "rk817"));
-        static int logged = 0;
-        if (logged < 8) { printf("USB-Audio: Karte %d '%s' / '%s'\n", card, nm ? nm : "?", ln ? ln : "?"); logged++; }
+        bool named = (nm && (strcasestr(nm, "uac") || strcasestr(nm, "gadget"))) ||
+                     (ln && (strcasestr(ln, "uac") || strcasestr(ln, "gadget")));
         free(nm); free(ln);
-        if (hit) { snprintf(out, n, "hw:%d,0", card); return true; }
-        if (!internal && other < 0) other = card;
+        if (pd < 0 || midi || internal) continue;
+        if (named && best < 0) { best = card; bestDev = pd; }
+        if (other < 0) { other = card; otherDev = pd; }
     }
-    if (other >= 0) { snprintf(out, n, "hw:%d,0", other); return true; }
-    return false;
+    if (strcmp(list, lastList)) { printf("USB-Audio: Soundkarten %s\n", list); snprintf(lastList, sizeof lastList, "%s", list); }
+    if (best < 0) { best = other; bestDev = otherDev; }
+    if (best < 0) return false;
+    snprintf(out, n, "hw:%d,%d", best, bestDev);
+    return true;
 }
 
 static int usbThread(void*) {
     snd_pcm_t* pcm = nullptr;
     int e = snd_pcm_open(&pcm, g_dev, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
-    if (e < 0) { printf("USB-Audio: %s nicht zu oeffnen (%s)\n", g_dev, snd_strerror(e)); g_active = false; return 0; }
+    if (e < 0) {
+        static char lastErr[64] = "";
+        if (strcmp(lastErr, g_dev)) { printf("USB-Audio: %s nicht zu oeffnen (%s)\n", g_dev, snd_strerror(e)); snprintf(lastErr, sizeof lastErr, "%s", g_dev); }
+        g_active = false; return 0;
+    }
     if (snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 44100, 1, 40000) < 0) {
         printf("USB-Audio: Format nicht moeglich\n");
         snd_pcm_close(pcm); g_active = false; return 0;
