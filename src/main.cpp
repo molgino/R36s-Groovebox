@@ -850,15 +850,53 @@ static void envGraph(int gx, int gy, int gw, int gh, int a, int d, int s, int r,
     }
 }
 
+// Betrag von Filter 1 (Typ FT_*) bei Frequenz f; fc aus FREQ, res 0..127, units = FREQ-Wert (fuer VOWL)
+static float filt1Mag(int type, float f, float fc, int res, float units) {
+    float r = res / 127.f;
+    auto svf = [](float w, float k, float& lo, float& bp, float& hp) {
+        float den = sqrtf((1 - w * w) * (1 - w * w) + (w * k) * (w * k));
+        lo = 1.f / den; bp = w * k / den; hp = w * w / den;
+    };
+    float w = f / fc, lo, bp, hp;
+    switch (type % FT_COUNT) {
+    case FT_LP24: case FT_HP24: {
+        float l1, b1, h1; svf(w, 2.f - 1.96f * 0.3f, l1, b1, h1); svf(w, 2.f - 1.96f * r * 0.98f, lo, bp, hp);
+        return type == FT_LP24 ? l1 * lo : h1 * hp;
+    }
+    case FT_LADR: {   // 1 / ((1 + jw)^4 + k)
+        float k = r * 4.15f, re = 1, im = 0;
+        for (int i = 0; i < 4; i++) { float nr = re - im * w, ni = im + re * w; re = nr; im = ni; }
+        re += k;
+        return (1.f + k * 0.5f) / sqrtf(re * re + im * im) * 0.6f;
+    }
+    case FT_NTCH: svf(w, 2.f - 1.96f * r * 0.97f, lo, bp, hp); return fabsf(1 - w * w) * lo;
+    case FT_PEAK: svf(w, 2.f - 1.96f * r * 0.97f, lo, bp, hp); return (1 + w * w) * lo * 0.7f;
+    case FT_CMBP: case FT_CMBN: {
+        float fb = (type == FT_CMBP ? 1.f : -1.f) * (0.2f + r * 0.77f);
+        float ph = 6.2831853f * f / fmaxf(fc, 25.f);
+        return (1.f - fabsf(fb) * 0.55f) / sqrtf(1.f - 2.f * fb * cosf(ph) + fb * fb);
+    }
+    case FT_VOWL: {
+        float pos = fminf(fmaxf(units / 127.f, 0.f), 1.f) * 4.f;
+        int i0 = (int)pos; if (i0 > 3) i0 = 3;
+        float fr = pos - i0, k = 2.f - 1.96f * (0.55f + r * 0.42f), a = 0;
+        static const float g[3] = {1, 0.6f, 0.4f};
+        for (int j = 0; j < 3; j++) { float ff = VOWEL_F[i0][j] + (VOWEL_F[i0 + 1][j] - VOWEL_F[i0][j]) * fr; svf(f / ff, k, lo, bp, hp); a += bp * g[j]; }
+        return a * 1.6f;
+    }
+    default:
+        svf(w, 2.f - 1.96f * r * 0.97f, lo, bp, hp);
+        return type == FT_BP ? bp : (type == FT_HP12 ? hp : lo);
+    }
+}
+
 // Filterkurve (SVF LP/BP/HP) mit Live-Cutoff
 static void filterGraph(int gx, int gy, int gw, int gh, int freq, int res, int type, int env, int sel, float liveUnits, Col c) {
     graphBox(gx, gy, gw, gh);
     int x0 = gx + 10, W = gw - 20, top = gy + 8, bot = gy + gh - 8, H = bot - top;
-    float k = 2.f - 1.96f * (res / 127.f) * 0.97f;
     auto mag = [&](float f, float units) {
         float fc = 16.f * exp2f(units * (10.3f / 127.f));
-        float w = f / fc, den = sqrtf((1 - w * w) * (1 - w * w) + (w * k) * (w * k));
-        float m = type == 0 ? 1.f / den : (type == 1 ? (w * k) / den : (w * w) / den);
+        float m = filt1Mag(type, f, fc, res, units);
         float db = 20.f * log10f(m + 1e-6f);
         return bot - (int)((clampi((int)db, -30, 18) + 30) / 48.f * H);
     };
@@ -881,8 +919,10 @@ static void filterGraph(int gx, int gy, int gw, int gh, int freq, int res, int t
         fill(xl, top, 2, H, C_PLAY, 90);
         glowDot(xl, ys[clampi(xl - x0, 0, W - 1)], c);
     }
-    static const char* tn[3] = {"LOWPASS", "BANDPASS", "HIGHPASS"};
-    text(gx + gw - 10 - textW(tn[type % 3]), gy + 6, tn[type % 3], sel == 2 ? C_PLAY : dimC(c, 0.8f));
+    static const char* tn[FT_COUNT] = {"LOWPASS 12DB", "BANDPASS", "HIGHPASS 12DB", "LOWPASS 24DB", "LADDER 24DB", "HIGHPASS 24DB",
+                                       "NOTCH", "PEAK", "KAMM +", "KAMM -", "VOKAL A-E-I-O-U"};
+    const char* tt = tn[type % FT_COUNT];
+    text(gx + gw - 10 - textW(tt), gy + 6, tt, sel == 2 ? C_PLAY : dimC(c, 0.8f));
 }
 
 // Base-Width-Filter: Filter 1 (grau) und Gesamtkurve mit Band
@@ -890,14 +930,10 @@ static void bwGraph(int gx, int gy, int gw, int gh, int freq, int res, int type,
     graphBox(gx, gy, gw, gh);
     int x0 = gx + 10, W = gw - 20, top = gy + 8, bot = gy + gh - 8, H = bot - top;
     if (W > 690) W = 690;
-    float k = 2.f - 1.96f * (res / 127.f) * 0.97f;
     float fc = 16.f * exp2f(freq * (10.3f / 127.f));
     float lo = 20.f * exp2f(base * (10.f / 127.f)), hi = fminf(lo * exp2f(wdth * (10.f / 127.f)), 20000.f);
     bool on = base > 0 || wdth < 127;
-    auto f1 = [&](float f) {
-        float w = f / fc, den = sqrtf((1 - w * w) * (1 - w * w) + (w * k) * (w * k));
-        return type == 0 ? 1.f / den : (type == 1 ? (w * k) / den : (w * w) / den);
-    };
+    auto f1 = [&](float f) { return filt1Mag(type, f, fc, res, (float)freq); };
     auto bw = [&](float f) {
         if (!on) return 1.f;
         float a = f / lo, b = f / hi;
@@ -1394,7 +1430,15 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     if (!strcmp(n, "SUB")) { symCurve(x, y + 4, w, h - 8, cd, [&](float t) { return 0.5f + 0.4f * sinf(t * 4.f * 6.2831853f); }, false); symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * fr * sinf(t * 2.f * 6.2831853f); }, false); return; }
     if (!strcmp(n, "FREQ")) { float fc = 0.08f + fr * 0.88f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < fc ? 0.8f : 0.8f * expf(-(t - fc) * 12.f); }); return; }
     if (!strcmp(n, "RESO")) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { float pk = expf(-(t - 0.55f) * (t - 0.55f) * 400.f) * fr * 0.45f; return (t < 0.55f ? 0.55f : 0.55f * expf(-(t - 0.55f) * 10.f)) + pk; }); return; }
-    if (d.kind == K_FTYPE) { int ty = val % 3; symCurve(x, y + 2, w, h - 4, c, [&](float t) { if (ty == 0) return t < 0.5f ? 0.8f : 0.8f * expf(-(t - 0.5f) * 10.f); if (ty == 2) return t > 0.5f ? 0.8f : 0.8f * expf(-(0.5f - t) * 10.f); return 0.8f * expf(-(t - 0.5f) * (t - 0.5f) * 40.f); }); return; }
+    if (d.kind == K_FTYPE) {   // Kurvenbild des Filtertyps (wie die grosse Grafik, feste Werte)
+        int ty = val % FT_COUNT;
+        symCurve(x, y + 2, w, h - 4, c, [&](float t) {
+            float m = filt1Mag(ty, 20.f * powf(1000.f, t), 630.f, ty >= FT_CMBP ? 90 : 70, 40.f);
+            float db = 20.f * log10f(m + 1e-6f);
+            return fminf(fmaxf((db + 30.f) / 44.f, 0.f), 0.95f);
+        });
+        return;
+    }
     if (!strcmp(n, "BASE") || !strcmp(n, "WDTH")) {   // Durchlassband
         int bs = pv(P_BASE), wd = pv(P_WDTH);
         float lo = bs / 127.f, hi = fminf(1.f, lo + wd / 127.f);
@@ -2337,7 +2381,7 @@ static bool savePreset(int t, int i) {
     char p[700]; presetPath(m, i, p, sizeof p);
     FILE* f = fopen(p, "wb");
     if (!f) return false;
-    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 0, 0};
+    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 1, 0};   // [6] = 1: Filtertypen FT_*
     bool ok = fwrite(hdr, 8, 1, f) == 1 && fwrite(curP().p[t], NPARAMS, 1, f) == 1;
     fclose(f);
     return ok;
@@ -2356,6 +2400,7 @@ static int loadPreset(int t, int m, int i) {   // 1 ok, 0 leer, -1 Fehler
     Pattern& P = curP();
     Engine::initTrack(P, t, hdr[4]);
     memcpy(P.p[t], prm, np);
+    if (hdr[6] == 0 && (hdr[4] == M_SYNTH || hdr[4] == M_WTBL) && P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;   // alte Presets
     unlockA();
     return 1;
 }
@@ -3497,6 +3542,7 @@ int main(int argc, char** argv) {
         if (shotPage == 23) { page = PG_TRG; slot = 6; track = 4; editSlot = 6; editAt = 1; }
         if (shotPage == 24) { page = PG_MST; slot = MS_SCALE; eng.proj.mst[MS_SCALE] = 1 + 1 * 12 + 9; eng.proj.mst[MS_ROOT] = 9; editSlot = MS_SCALE; editAt = 1; }
         if (shotPage == 25) { page = PG_AMP; menuOpen = true; menuSel = PG_FLT; pageClipStore = 2; pageClipTrack = 1; }
+        if (getenv("GB_SHOT_FT")) { curP().p[4][P_FTYP] = (uint8_t)atoi(getenv("GB_SHOT_FT")); curP().p[4][P_RESO] = 90; slot = 2; }   // Filtertyp fuer Screenshots
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
         lastPage = page;

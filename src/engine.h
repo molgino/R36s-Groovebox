@@ -28,7 +28,7 @@ struct Project {
     uint8_t songLen;
     uint8_t pad2[3];
 };
-enum { PROJECT_VERSION = 9, SONG_MAX = 64 };
+enum { PROJECT_VERSION = 10, SONG_MAX = 64 };
 
 struct Rng {
     uint32_t s = 0x9E3779B9u;
@@ -93,8 +93,11 @@ struct Voice {
     float grTimer = 0, grInterval = 1000, grLen = 2000, grPosF = 0, grSpray = 0, grPitch = 1, grPSpr = 0;
     ADSR aenv, fenv;
     SVF filt, aux;
-    SVF filt2;                 // zweite Stufe: 24-dB-Tiefpass fuer Synth/Wavetable
-    bool lp24 = false;
+    SVF filt2, filt3;          // weitere Stufen (24 dB, Formant)
+    // Filter 1: Typ (FT_*), Ladder-Zustaende, Kammfilter-Puffer, Formant-Pegel
+    float lad[4] = {0}, ladG = 0.5f, ladK = 0;
+    float cmb[2048]; int cmbW = 0; float cmbD = 100, cmbFb = 0, cmbLp = 0;
+    float fmtG[3] = {1, 0.6f, 0.4f};
     float drift1 = 0, drift2 = 0;   // analoge Tonhoehen-Drift (Cent)
     float nzHp = 0, hatHp = 0;      // Hochpass-Zustaende (Snare-Rauschen, Hi-Hat)
     // 3 LFOs pro Stimme (Ziel = beliebiger Spurparameter)
@@ -139,6 +142,7 @@ struct Voice {
     bool gated() const { return machine == M_SYNTH || machine == M_FM || machine == M_WTBL || machine == M_GRAN || (machine == M_SAMPLE && P(P_S5)); }
     void update(int n, float sr, float bpm);
     void render(float* L, float* R, float* dS, float* rS, int n, float sr);
+    inline float filter1(float x);
 };
 
 struct Comb { float* b = nullptr; int n = 0, i = 0; float store = 0; };

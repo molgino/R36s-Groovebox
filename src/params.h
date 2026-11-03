@@ -29,6 +29,11 @@ static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "S
 static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 (BASE-WIDTH)", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
                                                  "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN"};
 
+// Filter-1-Typen (Werte nur hinten anfuegen: 0..2 = alte LP/BP/HP)
+enum { FT_LP12, FT_BP, FT_HP12, FT_LP24, FT_LADR, FT_HP24, FT_NTCH, FT_PEAK, FT_CMBP, FT_CMBN, FT_VOWL, FT_COUNT };
+// Formanten (Hz) A E I O U fuer FT_VOWL
+static const float VOWEL_F[5][3] = {{730, 1090, 2440}, {530, 1840, 2480}, {270, 2290, 3010}, {570, 840, 2410}, {300, 870, 2240}};
+
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
@@ -85,7 +90,7 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     // SRC (maschinenabhaengig, siehe SRC_DEFS)
     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
     // FILT
-    {"FREQ", K_NUM, 127, 127}, {"RESO", K_NUM, 0, 127}, {"TYPE", K_FTYPE, 0, 2}, {"ENV", K_BIP, 64, 127},
+    {"FREQ", K_NUM, 127, 127}, {"RESO", K_NUM, 0, 127}, {"TYPE", K_FTYPE, 0, FT_COUNT - 1}, {"ENV", K_BIP, 64, 127},
     {"F.ATK", K_NUM, 0, 127}, {"F.DEC", K_NUM, 60, 127}, {"F.SUS", K_NUM, 0, 127}, {"F.REL", K_NUM, 60, 127},
     // AMP
     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 80, 127}, {"SUS", K_NUM, 127, 127}, {"REL", K_NUM, 50, 127},
@@ -274,7 +279,7 @@ inline float lenSteps(int v) { return v >= 127 ? -1.f : 0.125f * powf(2.f, v / 1
 inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     static const char* notes[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
     static const char* waves[4] = {"SAW", "SQR", "TRI", "SIN"};
-    static const char* ftypes[3] = {"LP", "BP", "HP"};
+    static const char* ftypes[FT_COUNT] = {"LP12", "BP", "HP12", "LP24", "LADR", "HP24", "NTCH", "PEAK", "CMB+", "CMB-", "VOWL"};
     static const char* ldst[6] = {"PIT", "FRQ", "VOL", "PAN", "RES", "CRS"};
     static const char* lwav[LW_COUNT] = {"SIN", "TRI", "SAW+", "SAW-", "SQR", "EXP+", "EXP-", "S&H", "RND"};
     static const char* dtim[15] = {"1/64", "1/32", "1/16T", "1/32.", "1/16", "1/8T", "1/16.", "1/8", "1/4T", "1/8.", "1/4", "1/2T", "1/4.", "1/2", "1/1"};
@@ -293,7 +298,7 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
         else snprintf(buf, n, "%.1f", s);
     } break;
     case K_WAVE: snprintf(buf, n, "%s", waves[v & 3]); break;
-    case K_FTYPE: snprintf(buf, n, "%s", ftypes[v % 3]); break;
+    case K_FTYPE: snprintf(buf, n, "%s", ftypes[v % FT_COUNT]); break;
     case K_LDST: snprintf(buf, n, "%s", ldst[v % 6]); break;
     case K_LWAV: snprintf(buf, n, "%s", lwav[v % LW_COUNT]); break;
     case K_LSYNC: snprintf(buf, n, "%s", lsync[v % 12]); break;

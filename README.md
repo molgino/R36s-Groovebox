@@ -24,7 +24,7 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 | GRAN  | **Granulator**: SMPL, POS, SPRY (Streuung), SIZE (10–500 ms), DENS (2–128 Körner/s), PTCH, P.SPR (Tonhöhen-Streuung), GAIN |
 
 **Klangcharakter:** KICK, SNARE, HAT, CLAP und RIM sind an die klassischen analogen Drumcomputer angelehnt (Kick: Sinus mit schnellem Pitch-Sweep und Sättigung über BODY, Klick über CLCK; Snare: zwei verstimmte Töne mit eigenem Pitch-Abfall plus gefiltertes Rauschen, TONE = Helligkeit; Hihat: sechs Rechteck-Oszillatoren durch Bandpass + Hochpass; Clap: sägezahnförmige Einzelschläge vor der Fahne).
-SYNTH und WTBL nutzen beim Tiefpass (Filter 1, Typ LP) ein **24-dB-Filter** mit sanfter Sättigung; die Oszillatoren driften leicht wie bei analogen Geräten. Die anderen Filtertypen bleiben 12 dB.
+SYNTH und WTBL starten mit dem **24-dB-Tiefpass** (LP24) mit sanfter Sättigung; die Oszillatoren driften leicht wie bei analogen Geräten. Weitere Filtertypen (Ladder, Kamm, Vokal …) siehe FLT.
 
 Die Engine wählst du pro Spur und Pattern: auf der TRG-Seite mit dem Regler ENGINE oder mit SELECT + X/Y.
 Beim Drehen erscheint der **Engine-Wähler** mit Symbolen für alle 13 Engines.
@@ -40,7 +40,17 @@ Jede Spur hat diese Seiten:
   * bei SYNTH die tatsächlich klingende, gemischte Wellenform
   * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten
   * bei SMPL die Sample-Wellenform mit Start, Ende und Abspielposition
-* **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve.
+* **FLT**: Filter 1 mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve. TYPE wählt den Filter (auch pro Step lockbar):
+
+  | TYPE | Filter |
+  |---|---|
+  | LP12 / BP / HP12 | klassisches Zustandsvariables Filter, 12 dB/Okt. |
+  | LP24 / HP24 | zwei Stufen, 24 dB/Okt., mit leichter Sättigung (Standard bei SYNTH und WTBL) |
+  | LADR | Ladder-Filter: vier Transistor-Stufen mit Rückkopplung, gesättigt, schwingt bei voller RESO selbst |
+  | NTCH / PEAK | Kerbfilter bzw. Anhebung um FREQ, RESO = Schärfe |
+  | CMB+ / CMB- | Kammfilter: FREQ = Grundton der Kammzähne, RESO = Rückkopplung (metallisch, Flanger-/Saitenklänge; mit KEYT spielt er die Tonhöhe mit) |
+  | VOWL | Formantfilter: FREQ fährt durch die Vokale A-E-I-O-U, RESO = Schärfe |
+
 * **FL2**: Base-Width-Filter hinter dem ersten Filter (wie bei Elektron): **BASE** ist die untere Kante (Hochpass), **WDTH** die Breite des durchgelassenen Bandes (Tiefpass darüber). BASE 0 / WDTH 127 = aus. Dazu **KEYT** (Keytracking: Cutoff von Filter 1 folgt der Tonhöhe) und **VELF** (Anschlagstärke → Cutoff). Die Grafik zeigt Filter 1 (grau) und die Gesamtkurve mit dem Band.
 * **Symbole statt Balken**: Jede Kachel zeigt ein Symbol, das sich mit dem Wert verändert – Tastatur bei NOTE, Torte bei PROB, Hüllkurvenbogen bei Attack/Decay, Lautsprecher bei Lautstärke, Echos bei Delay, Ringe bei Reverb, Würfel bei CHNG usw.
 * **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)

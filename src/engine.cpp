@@ -252,7 +252,7 @@ void Voice::update(int n, float sr, float bpm) {
     }
     fEnv = (P(P_FENV) - 64) * 2.f;
     reso = clampf(P(P_RESO) / 127.f, 0.f, 1.f);
-    ftype = P(P_FTYP);
+    ftype = P(P_FTYP) % FT_COUNT;
 
     // Tonhoehe inkl. Glide
     if ((machine == M_SYNTH || machine == M_WTBL) && P(P_S7) > 0 && n > 0) {
@@ -419,18 +419,84 @@ void Voice::update(int n, float sr, float bpm) {
     }
 }
 
+// Filter 1 pro Sample (Typ ftype, Koeffizienten aus render())
+inline float Voice::filter1(float x) {
+    float lo, bp, hp;
+    switch (ftype) {
+    case FT_LP24: {
+        filt.proc(x, lo, bp, hp);
+        float l2, b2, h2; filt2.proc(lo, l2, b2, h2);
+        return fastTanh(l2 * 1.3f) * 0.85f;   // Ausgangsstufe mit leichter Saettigung
+    }
+    case FT_HP24: {
+        filt.proc(x, lo, bp, hp);
+        float l2, b2, h2; filt2.proc(hp, l2, b2, h2);
+        return fastTanh(h2 * 1.2f) * 0.9f;
+    }
+    case FT_LADR: {   // Zero-Delay-Feedback-Loesung der 4-Pol-Kaskade, Saettigung am Eingang
+        float G = ladG, b = 1.f - G;
+        float S = G * G * G * b * lad[0] + G * G * b * lad[1] + G * b * lad[2] + b * lad[3];
+        float G4 = G * G * G * G;
+        float u = (x * (1.f + ladK * 0.5f) - ladK * S) / (1.f + ladK * G4);
+        u = fastTanh(u * 1.1f);
+        for (int j = 0; j < 4; j++) { float v = (u - lad[j]) * G; float y = v + lad[j]; lad[j] = y + v; u = y; }
+        return u * 1.5f;
+    }
+    case FT_NTCH: filt.proc(x, lo, bp, hp); return lo + hp;
+    case FT_PEAK: filt.proc(x, lo, bp, hp); return (lo - hp) * 0.7f;
+    case FT_CMBP: case FT_CMBN: {
+        float rp = (float)cmbW - cmbD; if (rp < 0.f) rp += 2048.f;
+        int i0 = (int)rp; float fr = rp - i0; int i1 = (i0 + 1) & 2047;
+        float d = cmb[i0] + (cmb[i1] - cmb[i0]) * fr;
+        cmbLp += (d - cmbLp) * 0.7f;               // leichte Daempfung im Rueckkopplungsweg
+        float y = x + cmbFb * cmbLp;
+        y = fastTanh(y * 0.8f) * 1.25f;
+        cmb[cmbW] = y; cmbW = (cmbW + 1) & 2047;
+        return y * (1.f - fabsf(cmbFb) * 0.55f);
+    }
+    case FT_VOWL: {
+        float a = 0.f;
+        filt.proc(x, lo, bp, hp);  a += bp * fmtG[0];
+        filt2.proc(x, lo, bp, hp); a += bp * fmtG[1];
+        filt3.proc(x, lo, bp, hp); a += bp * fmtG[2];
+        return a * 1.6f;
+    }
+    default:
+        filt.proc(x, lo, bp, hp);
+        return ftype == FT_BP ? bp : (ftype == FT_HP12 ? hp : lo);
+    }
+}
+
 void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     if (!active) return;
     static const float HAT_R[6] = {1.f, 1.4836f, 1.8016f, 2.5478f, 2.6321f, 3.8996f};
     const float inv = 1.f / sr;
     float units = fBase + fEnv * fenv.v;
-    bool bypassF = (ftype == 0 && units >= 126.f && reso < 0.01f);
-    lp24 = (machine == M_SYNTH || machine == M_WTBL) && ftype == 0;
+    bool bypassF = (ftype == FT_LP12 && units >= 126.f && reso < 0.01f);
     if (!bypassF) {
         float fcHz = 16.f * exp2f(units * (10.3f / 127.f));
-        // Synth/Wavetable-Tiefpass: zwei Stufen = 24 dB/Okt. (Resonanz in der zweiten), sonst 12 dB
-        if (lp24) { filt.set(fcHz, 0.3f, sr); filt2.set(fcHz, reso * 0.98f, sr); }
-        else filt.set(fcHz, reso * 0.97f, sr);
+        switch (ftype) {
+        case FT_LP24: case FT_HP24:   // zwei SVF-Stufen = 24 dB/Okt. (Resonanz in der zweiten)
+            filt.set(fcHz, 0.3f, sr); filt2.set(fcHz, reso * 0.98f, sr); break;
+        case FT_LADR: {               // Transistor-Kaskade: 4 Tiefpass-Stufen mit Rueckkopplung
+            float g = tanf(3.14159265f * clampf(fcHz, 10.f, sr * 0.45f) / sr);
+            ladG = g / (1.f + g); ladK = reso * 4.15f;
+        } break;
+        case FT_CMBP: case FT_CMBN: { // Kammfilter: Verzoegerung = 1 / FREQ
+            float d = sr / clampf(fcHz, 25.f, 12000.f);
+            cmbD = clampf(d, 2.f, 2040.f);
+            cmbFb = (ftype == FT_CMBP ? 1.f : -1.f) * (0.2f + reso * 0.77f);
+        } break;
+        case FT_VOWL: {               // FREQ wandert durch A-E-I-O-U, RESO = Schaerfe der Formanten
+            float pos = clampf(units / 127.f, 0.f, 1.f) * 4.f;
+            int i0 = (int)pos; if (i0 > 3) i0 = 3;
+            float fr = pos - i0;
+            float q = 0.55f + reso * 0.42f;
+            SVF* fs[3] = {&filt, &filt2, &filt3};
+            for (int j = 0; j < 3; j++) fs[j]->set(VOWEL_F[i0][j] + (VOWEL_F[i0 + 1][j] - VOWEL_F[i0][j]) * fr, q, sr);
+        } break;
+        default: filt.set(fcHz, reso * 0.97f, sr); break;
+        }
     }
     // analoge Drift: langsamer Zufallsweg je Oszillator (wenige Cent)
     if (machine == M_SYNTH) {
@@ -634,15 +700,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         }
 
         fenv.tick();
-        if (!bypassF) {
-            float lo, bp, hp;
-            filt.proc(s, lo, bp, hp);
-            if (lp24) {
-                float lo2, bp2, hp2;
-                filt2.proc(lo, lo2, bp2, hp2);
-                s = fastTanh(lo2 * 1.3f) * 0.85f;   // Ausgangsstufe mit leichter Saettigung (Resonanz "zieht")
-            } else s = ftype == 0 ? lo : (ftype == 1 ? bp : hp);
-        }
+        if (!bypassF) s = filter1(s);
         if (bwOn) {   // Base-Width: Hochpass, dann Tiefpass
             float lo, bp, hp;
             bwHp.proc(s, lo, bp, hp); s = hp;
@@ -902,6 +960,9 @@ static void resetTrack(Pattern& p, int t, int m) {
     if (m == M_SYNTH) {
         p.p[t][P_FREQ] = 70; p.p[t][P_RESO] = 40; p.p[t][P_FENV] = 96; p.p[t][P_FDEC] = 50;
         p.p[t][P_ADEC] = 60; p.p[t][P_ASUS] = 90; p.p[t][P_AREL] = 40;
+        p.p[t][P_FTYP] = FT_LP24;
+    } else if (m == M_WTBL) {
+        p.p[t][P_FTYP] = FT_LP24;
     } else if (m == M_FM) {
         p.p[t][P_ADEC] = 70; p.p[t][P_ASUS] = 40; p.p[t][P_AREL] = 60;
     }
@@ -1467,8 +1528,9 @@ bool Engine::load(const char* path) {
     // v5..v7: 72 bzw. 80 Parameter, 128 Steps, speed-Feld
     long nNp = ver == 5 ? 72 : (ver <= 7 ? 80 : 88);
     long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nSize = 20 + NPATTERNS * nPat + 16;
-    if (ok && ver == PROJECT_VERSION && size == (long)sizeof(Project)) {
+    if (ok && (ver == PROJECT_VERSION || ver == 9) && size == (long)sizeof(Project)) {   // v9 = gleiches Layout
         memcpy(&proj, buf, sizeof(Project));
+        proj.version = PROJECT_VERSION;
     } else if (ok && ver >= 5 && ver <= 8 && size == nSize) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
@@ -1547,6 +1609,15 @@ bool Engine::load(const char* path) {
         printf("Projekt von Version %u auf %d umgestellt\n", ver, PROJECT_VERSION);
     } else {
         ok = false;
+    }
+    if (ok && ver < 10) {   // bis v9: SYNTH/WTBL spielten den Tiefpass mit 24 dB -> Typ LP24
+        for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {
+            Pattern& P = proj.pat[pi];
+            int m = P.machine[t];
+            if (m != M_SYNTH && m != M_WTBL) continue;
+            if (P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;
+            for (int st = 0; st < NSTEPS; st++) if (P.s[t][st].lock[P_FTYP] == FT_LP12) P.s[t][st].lock[P_FTYP] = FT_LP24;
+        }
     }
     if (ok) {   // Grundton getrennt merken (aeltere Projekte hatten ihn nur in SCALE)
         if (proj.mst[MS_SCALE] > 120) proj.mst[MS_SCALE] = 0;
