@@ -1,0 +1,6 @@
+#!/bin/bash
+# Startet die Groovebox und schreibt das Log auf die Datenpartition (am PC lesbar)
+mkdir -p /data/logs
+[ -f /data/logs/groovebox.log ] && mv -f /data/logs/groovebox.log /data/logs/groovebox.old.log
+cd /opt/groovebox
+exec stdbuf -oL -eL ./groovebox >> /data/logs/groovebox.log 2>&1

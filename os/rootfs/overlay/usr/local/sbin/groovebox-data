@@ -1,0 +1,25 @@
+#!/bin/bash
+# Datenpartition (FAT32, Name GROOVEBOX) beim ersten Start im freien Platz der Karte anlegen,
+# danach bei jedem Start nach /data einhaengen. Am PC ist sie als normales Laufwerk lesbar.
+set -u
+LOGDIR=/data/logs
+DEV=$(blkid -L GROOVEBOX 2>/dev/null || true)
+if [ -z "$DEV" ]; then
+    ROOT=$(findmnt -no SOURCE /)
+    DISK=/dev/$(lsblk -no PKNAME "$ROOT")
+    echo "Lege Datenpartition auf $DISK an"
+    echo ",,c" | sfdisk --append --no-reread --force "$DISK"
+    partx -a "$DISK" 2>/dev/null || partx -u "$DISK" 2>/dev/null || true
+    udevadm settle
+    DEV=$(lsblk -lnpo NAME "$DISK" | tail -1)
+    mkfs.vfat -F 32 -n GROOVEBOX "$DEV"
+    udevadm settle
+fi
+mkdir -p /data
+mountpoint -q /data || { fsck.vfat -a "$DEV" >/dev/null 2>&1; mount -t vfat -o rw,noatime,flush,umask=000,utf8 "$DEV" /data; }
+mkdir -p /data/samples /data/projects /data/presets /data/config $LOGDIR
+if [ ! -f /data/config/.defaults ]; then
+    cp -rn /opt/groovebox/defaults/samples/. /data/samples/ 2>/dev/null
+    touch /data/config/.defaults
+fi
+sync

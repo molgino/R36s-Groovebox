@@ -8,3 +8,5 @@ input.cfg
 samples/
 settings.cfg
 dist/
+os/work/
+os/out/

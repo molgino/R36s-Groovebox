@@ -1,0 +1,19 @@
+#!/bin/bash
+# Diagnose fuer die Fehlersuche: landet auf der Datenpartition (logs/boot.txt)
+mkdir -p /data/logs
+{
+  echo "=== $(date) $(cat /etc/groovebox-os)"; uname -a
+  echo "=== cmdline"; cat /proc/cmdline
+  echo "=== lsblk"; lsblk -o NAME,SIZE,LABEL,MOUNTPOINT
+  echo "=== drm"; ls -l /dev/dri 2>&1; for c in /sys/class/drm/card*-*; do echo "$c $(cat $c/status 2>/dev/null) $(head -1 $c/modes 2>/dev/null)"; done
+  echo "=== input"; cat /proc/bus/input/devices
+  echo "=== sound"; cat /proc/asound/cards; aplay -l 2>&1
+  for c in $(seq 0 3); do [ -d /proc/asound/card$c ] && { echo "--- amixer card $c"; amixer -c $c scontents 2>&1 | head -80; }; done
+  echo "=== usb"; ls /sys/class/udc /sys/class/usb_role 2>&1; cat /sys/class/usb_role/*/role 2>&1
+  echo "=== power"; for p in /sys/class/power_supply/*; do echo "$p $(cat $p/type 2>/dev/null) $(cat $p/capacity 2>/dev/null)"; done
+  echo "=== lsmod"; lsmod
+  echo "=== dmesg (Fehler/Warnungen)"; dmesg --level=err,warn 2>/dev/null | tail -80
+  echo "=== dmesg"; dmesg | tail -300
+} > /data/logs/boot.txt 2>&1
+sync
+exit 0

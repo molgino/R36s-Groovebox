@@ -1,0 +1,15 @@
+[Unit]
+Description=R36S Groovebox
+After=groovebox-data.service systemd-udev-settle.service sound.target
+Wants=groovebox-data.service
+
+[Service]
+ExecStartPre=-/usr/local/sbin/groovebox-diag
+ExecStartPre=-/usr/local/sbin/groovebox-audio-init
+ExecStart=/usr/local/sbin/groovebox-run
+Restart=always
+RestartSec=2
+Environment=HOME=/root SDL_VIDEODRIVER=kmsdrm SDL_AUDIODRIVER=alsa
+
+[Install]
+WantedBy=multi-user.target

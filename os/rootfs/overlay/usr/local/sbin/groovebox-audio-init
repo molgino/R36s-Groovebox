@@ -1,0 +1,8 @@
+#!/bin/bash
+# RK817-Codec: Lautsprecher + Kopfhoerer einschalten (Namen wie bei ROCKNIX)
+for c in $(seq 0 3); do
+    amixer -c $c scontrols 2>/dev/null | grep -q "Playback Mux" || continue
+    for v in SPK_HP HP_SPK SPK; do amixer -q -c $c sset 'Playback Mux' $v 2>/dev/null && break; done
+    amixer -q -c $c sset Master 85% unmute 2>/dev/null
+done
+exit 0

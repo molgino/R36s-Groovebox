@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+// R36S Groovebox: ROCKNIX-R36S-Tree + OTG-Port fuer USB-Geraetemodus (Audio/MIDI zum PC)
+// Das Display kommt per Overlay (panel-arkos.dtso) aus der ArkOS-DTB dazu.
+#include "rk3326-gameconsole-r36s.dts"
+
+/ {
+	model = "R36S Groovebox";
+};
+
+&u2phy_otg {
+	status = "okay";
+};
