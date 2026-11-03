@@ -26,12 +26,14 @@ mmdebstrap --variant=minbase --include="$PKGS" --components=main \
 
 # Kernel-Module
 mkdir -p "$ROOT/usr/lib/modules"
-cp -a "$KMOD"/. "$ROOT/usr/lib/modules/"
+cp -r --preserve=mode,timestamps "$KMOD"/. "$ROOT/usr/lib/modules/"
+chown -R root:root "$ROOT/usr/lib/modules"
 KVER=$(ls "$KMOD" | head -1)
 depmod -b "$ROOT" "$KVER" 2>/dev/null || chroot "$ROOT" depmod -a "$KVER"
 
 # eigene Dateien
-cp -a "$HERE/overlay/." "$ROOT/"
+cp -r --preserve=mode,timestamps "$HERE/overlay/." "$ROOT/"
+chown -R root:root "$ROOT/opt/groovebox" "$ROOT/usr/local/sbin" "$ROOT/etc/systemd"
 install -m 755 "$BIN" "$ROOT/opt/groovebox/groovebox"
 mkdir -p "$ROOT/opt/groovebox/defaults"
 cp -r "$REPO/arkos/groovebox/samples" "$ROOT/opt/groovebox/defaults/samples"

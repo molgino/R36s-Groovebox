@@ -66,12 +66,14 @@ done
 # --- Bauen
 make -j$JOBS Image modules dtbs 2>&1 | grep -E "error|warning: .*undefined|^  (LD|OBJCOPY) +arch" || true
 [ -f arch/arm64/boot/Image ] || { echo "!! Kernel-Build fehlgeschlagen"; make -j1 Image 2>&1 | grep -B5 -m3 error; exit 1; }
-make -C $K M=$WORK/rocknix-joypad -j$JOBS modules >/dev/null
+make -C $K M=$WORK/rocknix-joypad DEVICE=RK3326 -j$JOBS modules >/dev/null
+ls $WORK/rocknix-joypad/*.ko
 
 # --- Device-Tree mit dem Display aus der ArkOS-DTB
 DTB=arch/arm64/boot/dts/rockchip/rk3326-groovebox-r36s.dtb
 [ -f $DTB ] || make rockchip/rk3326-groovebox-r36s.dtb
-cp arch/arm64/boot/dts/rockchip/rk3326-gameconsole-r36s.dtb "$OUT/" 2>/dev/null || true
+make rockchip/rk3326-gameconsole-r36s.dtb >/dev/null   # ROCKNIX-Standard-Display als Ausweich-DTB
+cp arch/arm64/boot/dts/rockchip/rk3326-gameconsole-r36s.dtb "$OUT/"
 if [ -f "$OS/dts/panel-arkos.dtso" ]; then
     dtc -q -I dts -O dtb -o "$WORK/panel-arkos.dtbo" "$OS/dts/panel-arkos.dtso"
     fdtoverlay -i $DTB -o "$OUT/rk3326-groovebox-r36s.dtb" "$WORK/panel-arkos.dtbo"
@@ -82,6 +84,7 @@ fi
 cp arch/arm64/boot/Image "$OUT/Image"
 rm -rf "$OUT/modules"
 make INSTALL_MOD_PATH="$OUT/modules" INSTALL_MOD_STRIP=1 modules_install >/dev/null
-make -C $K M=$WORK/rocknix-joypad INSTALL_MOD_PATH="$OUT/modules" INSTALL_MOD_STRIP=1 modules_install >/dev/null
+make -C $K M=$WORK/rocknix-joypad DEVICE=RK3326 INSTALL_MOD_PATH="$OUT/modules" INSTALL_MOD_STRIP=1 modules_install >/dev/null
 rm -f "$OUT"/modules/lib/modules/*/build "$OUT"/modules/lib/modules/*/source
+ls "$OUT"/modules/lib/modules/*/updates/ | grep -q singleadc || { echo "!! Tastentreiber fehlt"; exit 1; }
 echo ">> Kernel fertig: $(ls -la $OUT/Image | awk '{print $5}') Bytes, Version $(make -s kernelrelease)"
