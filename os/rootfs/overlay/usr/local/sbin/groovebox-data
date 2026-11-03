@@ -29,4 +29,10 @@ if [ ! -f /data/config/.defaults ]; then
     cp -rn /opt/groovebox/defaults/samples/. /data/samples/ 2>/dev/null
     touch /data/config/.defaults
 fi
+[ -f /data/config/groovebox.env ] || cat > /data/config/groovebox.env <<'EOF'
+# Einstellungen fuer den Groovebox-Start (Zeilen ohne # gelten)
+# GB_DISPLAY=drm   -> Bild direkt per CPU (Standard, ohne GPU)
+# GB_DISPLAY=sdl   -> Bild ueber SDL/GPU (Panfrost), zum Testen
+# PAN_MESA_DEBUG=noafbc
+EOF
 sync

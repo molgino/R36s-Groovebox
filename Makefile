@@ -7,12 +7,18 @@ SDL_CFLAGS ?= $(shell sdl2-config --cflags)
 SDL_LIBS   ?= $(shell sdl2-config --libs)
 CXXFLAGS += -DWITH_MIDI -O2 -Wall -Wextra -Wno-unused-parameter -fno-exceptions -fno-rtti -fno-threadsafe-statics $(SDL_CFLAGS)
 LDFLAGS  +=
-SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp src/dhcpd.cpp src/web.cpp src/webpage.cpp
+LIBS     ?=
+# make DRM=1 -> direkte DRM-Ausgabe ohne GPU (Groovebox-OS), braucht libdrm-dev
+ifeq ($(DRM),1)
+CXXFLAGS += -DWITH_DRM $(shell pkg-config --cflags libdrm)
+LIBS     += -ldrm
+endif
+SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp src/dhcpd.cpp src/web.cpp src/webpage.cpp src/drmout.cpp
 OBJ = $(SRC:.cpp=.o)
 OUT ?= groovebox
 
 $(OUT): $(OBJ)
-	$(CC_LINK) $(LDFLAGS) -o $@ $(OBJ) $(SDL_LIBS) -lasound -lm
+	$(CC_LINK) $(LDFLAGS) -o $@ $(OBJ) $(SDL_LIBS) $(LIBS) -lasound -lm
 
 src/%.o: src/%.cpp src/*.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@

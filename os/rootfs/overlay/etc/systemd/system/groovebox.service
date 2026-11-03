@@ -9,7 +9,9 @@ ExecStartPre=-/usr/local/sbin/groovebox-audio-init
 ExecStart=/usr/local/sbin/groovebox-run
 Restart=always
 RestartSec=2
-Environment=HOME=/root SDL_VIDEODRIVER=kmsdrm SDL_AUDIODRIVER=alsa
+Environment=HOME=/root SDL_AUDIODRIVER=alsa GB_DISPLAY=drm
+# eigene Einstellungen (z. B. GB_DISPLAY=sdl fuer GPU-Ausgabe) auf der Partition GROOVEBOX: config/groovebox.env
+EnvironmentFile=-/data/config/groovebox.env
 
 [Install]
 WantedBy=multi-user.target

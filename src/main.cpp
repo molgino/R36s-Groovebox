@@ -13,6 +13,7 @@
 #include "samples.h"
 #include "web.h"
 #include "midi.h"
+#include "drmout.h"
 
 static const int SW = 640, SH = 480;
 
@@ -23,6 +24,8 @@ static const Col C_BG = {14, 14, 17}, C_PANEL = {28, 28, 34}, C_SEL = {44, 40, 3
                  C_GREEN = {90, 220, 120}, C_KNOB = {60, 60, 70};
 
 static SDL_Renderer* ren = nullptr;
+static SDL_Surface* drmSurf = nullptr;   // Groovebox-OS: Software-Zeichenflaeche fuer die DRM-Ausgabe
+static void present() { SDL_RenderPresent(ren); if (drmSurf) drmOutPresent(drmSurf); }
 static SDL_Texture* fontTex = nullptr;
 static Uint8 textAlpha = 255;
 static SDL_AudioDeviceID audioDev = 0;
@@ -2162,7 +2165,7 @@ static void startDrive() {
     if (!isGrooveboxOS()) { toast("NUR IM GROOVEBOX-OS"); return; }
     saveProject();
     toast("USB-LAUFWERK WIRD VERBUNDEN ...");
-    drawAll(false); SDL_RenderPresent(ren);
+    drawAll(false); present();
     char m[200];
     if (usbScript("laufwerk nosleep", m, sizeof m)) { driveOn = true; usbMode = 1; }
     toast("%s", m);
@@ -2171,7 +2174,7 @@ static void startDrive() {
 static void stopDrive() {
     char m[200];
     toast("LAUFWERK WIRD GETRENNT ...");
-    drawAll(false); SDL_RenderPresent(ren);
+    drawAll(false); present();
     usbScript("laufwerk-aus nosleep", m, sizeof m);
     driveOn = false; usbMode = 2;
     reloadSamples();
@@ -2550,7 +2553,7 @@ static bool runLearn() {
             snprintf(b, sizeof b, "%d / %d", item + 1, BT_COUNT + 4);
             textC(SW / 2, 260, b, C_DIM);
             if (stick) { snprintf(b, sizeof b, "Kein Stick? Ueberspringen in %ds", left); textC(SW / 2, 300, b, C_DIM); }
-            SDL_RenderPresent(ren);
+            present();
             SDL_Delay(10);
         }
         // warten bis alles losgelassen
@@ -2652,7 +2655,7 @@ static void applyUsbMode() {
     static const char* args[3] = {"aus", "an", "an audio"};
     snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s nosleep", basePath, args[usbMode]);
     toast(usbMode ? "PC-MODUS WIRD AKTIVIERT ..." : "PC-MODUS AUS ...");
-    drawAll(false); SDL_RenderPresent(ren);
+    drawAll(false); present();
     int rc = system(cmd);
     int now = detectUsbMode();
     printf("USB-Modus %d: rc=%d, erkannt=%d\n", usbMode, rc, now);
@@ -2835,7 +2838,15 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
+    // Groovebox-OS: Bild direkt per DRM ausgeben (GB_DISPLAY=drm), SDL dann ohne eigene Anzeige
+    const char* gbd = getenv("GB_DISPLAY");
+    bool useDrm = gbd && !strcmp(gbd, "drm") && !windowed && drmOutOpen();
+    if (useDrm) setenv("SDL_VIDEODRIVER", "offscreen", 1);
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0 && useDrm) {
+        printf("SDL offscreen: %s, versuche dummy\n", SDL_GetError());
+        setenv("SDL_VIDEODRIVER", "dummy", 1);
+    }
+    if (!SDL_WasInit(SDL_INIT_VIDEO) && SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
         printf("SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
@@ -2846,12 +2857,20 @@ int main(int argc, char** argv) {
     in.open();
     SDL_ShowCursor(SDL_DISABLE);
 
-    SDL_Window* win = SDL_CreateWindow("R36S Groovebox", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SW, SH,
-                                       windowed ? SDL_WINDOW_RESIZABLE : SDL_WINDOW_FULLSCREEN_DESKTOP);
-    if (!win) { printf("Fenster: %s\n", SDL_GetError()); return 1; }
-    ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
-    if (!ren) { printf("Renderer: %s\n", SDL_GetError()); return 1; }
+    printf("SDL-Videotreiber: %s\n", SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "-");
+    if (useDrm) {
+        drmSurf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_ARGB8888);
+        ren = drmSurf ? SDL_CreateSoftwareRenderer(drmSurf) : nullptr;
+        if (!ren) { printf("Software-Renderer: %s\n", SDL_GetError()); return 1; }
+    } else {
+        SDL_Window* win = SDL_CreateWindow("R36S Groovebox", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SW, SH,
+                                           windowed ? SDL_WINDOW_RESIZABLE : SDL_WINDOW_FULLSCREEN_DESKTOP);
+        if (!win) { printf("Fenster: %s\n", SDL_GetError()); return 1; }
+        ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
+        if (!ren) { printf("Renderer: %s\n", SDL_GetError()); return 1; }
+    }
+    { SDL_RendererInfo ri; if (SDL_GetRendererInfo(ren, &ri) == 0) printf("Renderer: %s\n", ri.name); }
     SDL_RenderSetLogicalSize(ren, SW, SH);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     makeFont();
@@ -2929,7 +2948,7 @@ int main(int argc, char** argv) {
         }
         bool help = in.down[BT_SELECT] && !funcUsed && in.heldMs(BT_SELECT, now) > 700;
         drawAll(help);
-        SDL_RenderPresent(ren);
+        present();
         Uint32 spent = SDL_GetTicks() - now;
         if (spent < 16) SDL_Delay(16 - spent);
     }
@@ -2938,6 +2957,7 @@ int main(int argc, char** argv) {
     if (saveProject()) printf("Projekt gespeichert: %s\n", projPath);
     if (audioDev) SDL_CloseAudioDevice(audioDev);
     midiStop();
+    drmOutClose();
     SDL_Quit();
     return 0;
 }
