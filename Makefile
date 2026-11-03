@@ -1,4 +1,4 @@
-# R36S Groovebox
+# Synth City
 #   make            -> nativer Build (Linux-Desktop oder direkt auf dem R36S)
 #   make r36s       -> Cross-Build fuer ArkOS (aarch64), siehe tools/cross-build.sh
 CXX      ?= g++

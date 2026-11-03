@@ -45,7 +45,7 @@ LABEL groovebox
   APPEND root=PARTUUID=$DISKID-02 rootfstype=ext4 rootwait rw console=ttyS2,1500000 console=tty0 loglevel=7 panic=60 consoleblank=0
 EOF
 cat > "$O/bootfiles/LIESMICH.txt" <<'EOF'
-R36S Groovebox OS
+SYNTH CITY OS
 Diagnose-Logs liegen nach dem ersten Start auf der Partition GROOVEBOX im Ordner logs/.
 Anderes Display testen: in extlinux/extlinux.conf die FDT-Zeile auf
 /rk3326-gameconsole-r36s.dtb (ROCKNIX-Standard-Display) aendern.

@@ -64,7 +64,7 @@ jobs:
         run: |
           gh release delete nightly --yes --cleanup-tag || true
           gh release create nightly dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz --prerelease \
-            --title "Nightly ($(git rev-parse --short HEAD))" \
+            --title "SYNTH CITY Nightly ($(git rev-parse --short HEAD))" \
             --notes "Automatischer Build von main ($(git rev-parse --short HEAD)). ArkOS: r36s-groovebox-arkos.zip. Groovebox-OS: groovebox-os-update.tgz (App-Update ohne neues Image)." --target "$GITHUB_SHA"
 
       - name: Versions-Release

@@ -1,6 +1,6 @@
 #!/bin/bash
 # PC-Modus fuer den R36S: schaltet den OTG-Port vom Host- in den Geraetemodus.
-# Der R36S erscheint dann am PC (Ableton, MIDI-OX, ...) als USB-MIDI-Geraet "R36S Groovebox",
+# Der R36S erscheint dann am PC (Ableton, MIDI-OX, ...) als USB-MIDI-Geraet "Synth City",
 # mit "audio" zusaetzlich als USB-Audio-Interface (2 Kanaele, 48 kHz).
 #   pc-modus.sh an [audio] [nosleep]   |   pc-modus.sh aus [nosleep]
 [ "$(id -u)" != 0 ] && exec sudo bash "$0" "$@"
@@ -92,13 +92,13 @@ aus)
   mkdir -p strings/0x409
   echo "R36S-0001" > strings/0x409/serialnumber
   echo "R36S" > strings/0x409/manufacturer
-  echo "R36S Groovebox" > strings/0x409/product
+  echo "Synth City" > strings/0x409/product
   mkdir -p configs/c.1/strings/0x409
   echo "Groovebox" > configs/c.1/strings/0x409/configuration
   echo 100 > configs/c.1/MaxPower
   MIDIOK=""; AUDOK=""
   if mkdir -p functions/midi.usb0 2>/dev/null; then
-    echo "R36S Groovebox" > functions/midi.usb0/id 2>/dev/null
+    echo "Synth City" > functions/midi.usb0/id 2>/dev/null
     ln -s functions/midi.usb0 configs/c.1/ && MIDIOK="USB-MIDI"
   elif mkdir -p functions/acm.usb0 2>/dev/null; then
     ln -s functions/acm.usb0 configs/c.1/ && MIDIOK="SERIELL"

@@ -1,5 +1,5 @@
 <#
-  R36S Groovebox - Aufspielen per USB-Kabel (PC-Modus) oder WLAN, ohne SD-Karte.
+  Synth City - Aufspielen per USB-Kabel (PC-Modus) oder WLAN, ohne SD-Karte.
 
   Voraussetzungen:
     * R36S: in ArkOS "Options > Enable Remote Services" an, in der Groovebox SYS-Seite USB = PC
@@ -17,7 +17,7 @@
 param(
     [string]$Ip = "192.168.77.1",
     [string]$User = "ark",
-    [string]$Repo = "molgino/R36s-Groovebox",
+    [string]$Repo = "molgino/synth-city",
     [string]$Zip = "",
     [switch]$SetupKey,
     [switch]$Log,
@@ -78,7 +78,7 @@ $tmp = Join-Path $env:TEMP "r36s-groovebox-deploy"
 if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
 New-Item -ItemType Directory $tmp | Out-Null
 if (-not $Zip) {
-    if ($Repo -like "OWNER/*") { Write-Host "Bitte -Repo <github-name>/R36s-Groovebox angeben oder im Skript eintragen." -ForegroundColor Red; exit 1 }
+    if ($Repo -like "OWNER/*") { Write-Host "Bitte -Repo <github-name>/synth-city angeben oder im Skript eintragen." -ForegroundColor Red; exit 1 }
     $Zip = Join-Path $tmp "pkg.zip"
     $url = "https://github.com/$Repo/releases/download/nightly/r36s-groovebox-arkos.zip"
     Write-Host "Lade $url"

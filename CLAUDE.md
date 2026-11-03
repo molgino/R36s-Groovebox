@@ -1,6 +1,6 @@
-# R36S Groovebox – Projektkontext
+# SYNTH CITY (R36S-Groovebox) – Projektkontext
 
-Elektron-artige Groovebox (C++/SDL2, ALSA) für den Handheld **R36S** (RK3326, ArkOS 2.0, Kernel 4.4.189, glibc 2.30).
+Name **SYNTH CITY** (Repo `molgino/synth-city`, vorher R36s-Groovebox; interne Pfade/Binary/Dienst heißen weiter `groovebox`). Neo-Noir-/Synthwave-Optik (eigene Gestaltung, keine geschützten Film-Namen/Logos): Palette `C_*` + Neon-`TCOL`, Kopfzeilen-Linie Magenta→Cyan, Scanlines in `drawAll`, Splashscreen `drawSplash/runSplash` (Shot-Seite 40, `GB_SPLASH_T`, abschaltbar `GB_NOSPLASH`). Elektron-artige Groovebox (C++/SDL2, ALSA) für den Handheld **R36S** (RK3326, ArkOS 2.0, Kernel 4.4.189, glibc 2.30).
 Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 
 ## Aufbau
@@ -29,7 +29,7 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 - GitHub Actions baut bei jedem Push auf `main` das Release **nightly**
 
 ## Gerät (R36S) – per USB-Kabel
-- Auf dem R36S Groovebox → Seite SYS → **USB = PC** (OTG-Port freigeschaltet via „Groovebox - OTG-Port freischalten“, geladene DTB: `rk3326-r35s-linux.dtb`)
+- Auf dem Synth City → Seite SYS → **USB = PC** (OTG-Port freigeschaltet via „Groovebox - OTG-Port freischalten“, geladene DTB: `rk3326-r35s-linux.dtb`)
 - R36S: `192.168.77.1`, PC bekommt `192.168.77.10`. SSH: `ark` / `ark`
 - Aufspielen: `tools/deploy.ps1` (Windows) bzw. `tools/deploy.sh`; Log: `deploy.ps1 -Log`; Pfad auf dem Gerät `/roms/ports/groovebox/`
 - Kernel hat nur Netzwerk-Gadgets (ecm/rndis/ncm) – MIDI zum PC über RTP-MIDI (rtpMIDI unter Windows)

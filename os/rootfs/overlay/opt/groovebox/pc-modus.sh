@@ -32,7 +32,7 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
     echo 0xEF > bDeviceClass; echo 0x02 > bDeviceSubClass; echo 0x01 > bDeviceProtocol   # Composite mit IAD
     mkdir -p strings/0x409
     echo "Groovebox" > strings/0x409/manufacturer
-    echo "R36S Groovebox" > strings/0x409/product
+    echo "Synth City" > strings/0x409/product
     cat /etc/machine-id 2>/dev/null | cut -c1-12 > strings/0x409/serialnumber
     mkdir -p configs/c.1/strings/0x409
     echo "Groovebox" > configs/c.1/strings/0x409/configuration
@@ -55,7 +55,7 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
         ln -s functions/mass_storage.usb0 configs/c.1/
     else
         mkdir -p functions/midi.usb0
-        echo "R36S Groovebox" > functions/midi.usb0/id
+        echo "Synth City" > functions/midi.usb0/id
         echo 1 > functions/midi.usb0/in_ports; echo 1 > functions/midi.usb0/out_ports
         ln -s functions/midi.usb0 configs/c.1/
         if [ "$1" = 1 ]; then
@@ -63,7 +63,7 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
             U=functions/uac2.usb0
             echo 3 > $U/p_chmask; echo 44100 > $U/p_srate; echo 2 > $U/p_ssize   # Groovebox -> PC
             echo 3 > $U/c_chmask; echo 44100 > $U/c_srate; echo 2 > $U/c_ssize   # PC -> Groovebox
-            echo "R36S Groovebox" > $U/function_name 2>/dev/null
+            echo "Synth City" > $U/function_name 2>/dev/null
             ln -s $U configs/c.1/
         fi
     fi

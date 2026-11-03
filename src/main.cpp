@@ -1,4 +1,4 @@
-// R36S Groovebox - Elektron-artige Groovebox fuer den R36S (ArkOS) und Linux-Desktop
+// SYNTH CITY - Elektron-artige Groovebox fuer den R36S (ArkOS) und Linux-Desktop
 #include <SDL.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -18,10 +18,11 @@
 static const int SW = 640, SH = 480;
 
 struct Col { Uint8 r, g, b; };
-static const Col C_BG = {14, 14, 17}, C_PANEL = {28, 28, 34}, C_SEL = {44, 40, 38}, C_DIM = {80, 80, 92},
-                 C_TEXT = {220, 220, 226}, C_ACC = {255, 122, 26}, C_TRIG = {232, 57, 47}, C_LOCK = {242, 194, 48},
-                 C_OFF = {38, 38, 46}, C_OFF2 = {52, 52, 62}, C_PLAY = {250, 250, 250}, C_DARK = {20, 20, 24},
-                 C_GREEN = {90, 220, 120}, C_KNOB = {60, 60, 70};
+// SYNTH CITY: Neo-Noir-Palette (Nachtblau, Neon-Magenta/Cyan, Amber)
+static const Col C_BG = {8, 6, 18}, C_PANEL = {20, 16, 38}, C_SEL = {46, 24, 62}, C_DIM = {104, 94, 140},
+                 C_TEXT = {214, 238, 255}, C_ACC = {255, 46, 136}, C_TRIG = {255, 64, 96}, C_LOCK = {255, 184, 0},
+                 C_OFF = {26, 22, 46}, C_OFF2 = {42, 36, 70}, C_PLAY = {236, 250, 255}, C_DARK = {12, 10, 24},
+                 C_GREEN = {0, 255, 170}, C_KNOB = {50, 44, 80}, C_CYAN = {0, 224, 255};
 
 static SDL_Renderer* ren = nullptr;
 static SDL_Surface* drmSurf = nullptr;   // Groovebox-OS: Software-Zeichenflaeche fuer die DRM-Ausgabe
@@ -272,9 +273,9 @@ static void playIcon(int x, int y, bool playing) {
 
 // ---------------------------------------------------------------- Optik-Helfer
 
-static const Col TCOL[NTRACKS] = {
-    {255, 94, 58}, {255, 168, 46}, {242, 222, 76}, {118, 214, 108},
-    {56, 200, 196}, {84, 150, 255}, {168, 112, 255}, {255, 98, 184}};
+static const Col TCOL[NTRACKS] = {   // Neon
+    {255, 46, 136}, {255, 110, 64}, {255, 196, 40}, {0, 255, 170},
+    {0, 224, 255}, {90, 140, 255}, {176, 92, 255}, {255, 100, 220}};
 
 static Col mix(Col a, Col b, float t) {
     t = t < 0 ? 0 : (t > 1 ? 1 : t);
@@ -438,9 +439,13 @@ static void drawHeader() {
     char b[64];
     Col tc = TCOL[track];
     fill(0, 0, SW, 40, C_PANEL);
-    // pulsierende Linie im Takt
-    fill(0, 40, SW, 1, mix(dimC(tc, 0.5f), tc, beatPulse));
-    if (beatPulse > 0.01f) fill(0, 41, SW, 1, tc, (Uint8)(120 * beatPulse));
+    // Neon-Linie Magenta -> Cyan, pulsiert im Takt
+    for (int x = 0; x < SW; x += 8) {
+        Col c = mix(C_ACC, C_CYAN, (float)x / SW);
+        fill(x, 40, 8, 1, mix(dimC(c, 0.55f), c, 0.4f + 0.6f * beatPulse));
+        fill(x, 41, 8, 1, c, (Uint8)(30 + 110 * beatPulse));
+        fill(x, 42, 8, 1, c, (Uint8)(10 + 40 * beatPulse));
+    }
     snprintf(b, sizeof b, "P%02d", eng.curPat + 1);
     text(8, 4, b, C_TEXT, 2);
     if (eng.nextPat >= 0) {
@@ -1847,6 +1852,130 @@ static void drawAll(bool help) {
     if (menuOpen) drawMenu();
     if (confirmOpen) drawConfirm();
     if (driveOn) drawDrive();
+    for (int y = 0; y < SH; y += 3) fill(0, y, SW, 1, C_DARK, 26);   // leichte Scanlines (Röhren-Look)
+}
+
+// ---------------------------------------------------------------- Splashscreen SYNTH CITY
+
+static uint32_t splashRnd(uint32_t x) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; return x; }
+
+// t = Sekunden seit Start: Sonne, Skyline, Gitter, Regen, Neon-Schriftzug, der aufflackert
+static void drawSplash(float t) {
+    const int HOR = 300;
+    // Himmel: Nachtblau -> Magenta-Dunst am Horizont
+    for (int y = 0; y < HOR; y += 2) {
+        float f = (float)y / HOR;
+        fill(0, y, SW, 2, mix(Col{6, 2, 22}, Col{70, 10, 74}, f * f));
+    }
+    // Synthwave-Sonne mit Streifen, die nach unten wandern
+    int cx = SW / 2, cy = HOR - 40, r = 96;
+    for (int y = cy - r; y < HOR; y++) {
+        float dy = (float)(y - cy);
+        if (dy * dy > r * r) continue;
+        int hw = (int)sqrtf(r * r - dy * dy);
+        float f = (float)(y - (cy - r)) / (2 * r);
+        if (y > cy - 20) {   // Streifenluecken
+            float band = fmodf((y - (cy - 20)) + t * 14.f, 18.f);
+            float gap = 1.f + (y - (cy - 20)) * 0.07f;
+            if (band < gap) continue;
+        }
+        fill(cx - hw, y, 2 * hw, 1, mix(Col{255, 214, 70}, Col{255, 40, 150}, f * 1.4f));
+    }
+    // Skyline vor der Sonne
+    uint32_t sd = 1234567;
+    for (int x = 0; x < SW;) {
+        sd = splashRnd(sd);
+        int w = 18 + sd % 34, h = 30 + (sd >> 8) % 130;
+        if (x + w > 214 && x < 426) h = 14 + h / 5;   // in der Mitte niedriger, die Sonne bleibt sichtbar
+        Col bc = {14 + (int)(sd >> 20) % 8, 6, 30};
+        fill(x, HOR - h, w, h, bc);
+        if ((sd >> 3) % 4 == 0) fill(x + w / 2, HOR - h - 14, 2, 14, bc);   // Antenne
+        if ((sd >> 3) % 4 == 0 && fmodf(t * 1.3f + x, 2.f) < 1.f) fill(x + w / 2 - 1, HOR - h - 16, 4, 3, C_ACC);
+        for (int wy = HOR - h + 6; wy < HOR - 6; wy += 7)   // Fenster
+            for (int wx = x + 3; wx < x + w - 4; wx += 6) {
+                uint32_t q = splashRnd((uint32_t)(wx * 73 + wy * 151) ^ sd);
+                if (q % 5 == 0) {
+                    bool flick = (q >> 9) % 23 == 0 && fmodf(t * 3.f + (q % 7), 1.f) < 0.5f;
+                    if (!flick) fill(wx, wy, 2, 2, (q >> 4) % 3 ? Col{0, 200, 230} : Col{255, 176, 40}, 200);
+                }
+            }
+        x += w + 2;
+    }
+    // Boden mit Perspektiv-Gitter, das auf uns zufaehrt
+    fill(0, HOR, SW, SH - HOR, Col{8, 2, 20});
+    fill(0, HOR, SW, 2, Col{255, 60, 170});
+    float sc = fmodf(t * 0.9f, 1.f);
+    for (int i = 0; i < 14; i++) {
+        float z = (i + 1 - sc);
+        int y = HOR + (int)(220.f / z) - 14;
+        if (y <= HOR || y >= SH) continue;
+        fill(0, y, SW, 1, C_ACC, (Uint8)(40 + 160 * (float)(y - HOR) / (SH - HOR)));
+    }
+    for (int k = -12; k <= 12; k++) {
+        int xb = SW / 2 + k * 70;
+        setCol(C_ACC, 140);
+        drawLine(SW / 2 + k * 6, HOR, xb, SH);
+    }
+    // Regen
+    for (int i = 0; i < 140; i++) {
+        uint32_t q = splashRnd(i * 2654435761u + 7);
+        float sp = 380.f + (q % 200);
+        int x = (int)((q >> 8) % (SW + 120)) - 60 + (int)(fmodf(t * sp * 0.25f, 1.f));
+        int y = (int)fmodf((q >> 3) % SH + t * sp, (float)SH + 40.f) - 20;
+        int len = 8 + q % 14;
+        setCol((q >> 5) % 4 ? C_CYAN : C_PLAY, (Uint8)(50 + (q >> 12) % 90));
+        drawLine(x, y, x - len / 4, y + len);
+    }
+    // Neon-Schriftzug: Buchstaben zuenden nacheinander mit Flackern
+    const char* logo = "SYNTH CITY";
+    int n = (int)strlen(logo), scl = 6, lw = n * FONT_W * scl, lx = (SW - lw) / 2, ly = 40;
+    for (int i = 0; i < n; i++) {
+        float on = t * 6.f - i * 0.9f;   // Zuendzeitpunkt je Buchstabe
+        if (on < 0) continue;
+        uint32_t q = splashRnd((uint32_t)(i * 977 + (int)(t * 18)));
+        bool flick = on < 2.5f && q % 3 == 0;
+        if (flick) continue;
+        char ch[2] = {logo[i], 0};
+        int x = lx + i * FONT_W * scl;
+        for (int g = 3; g >= 1; g--) {   // Glow
+            Uint8 a = (Uint8)(28 / g);
+            text(x - g * 2, ly, ch, C_ACC, scl); text(x + g * 2, ly, ch, C_CYAN, scl);
+            text(x, ly - g * 2, ch, C_ACC, scl); text(x, ly + g * 2, ch, C_CYAN, scl);
+            (void)a;
+        }
+        text(x - 3, ly, ch, C_ACC, scl);       // Farbversatz
+        text(x + 3, ly, ch, C_CYAN, scl);
+        text(x, ly, ch, Col{255, 236, 250}, scl);
+    }
+    if (t > 1.6f) {
+        float a = fminf((t - 1.6f) * 2.f, 1.f);
+        textAlpha = (Uint8)(255 * a);
+        textC(SW / 2, ly + 104, "R 3 6 S   G R O O V E B O X", C_CYAN);
+        textAlpha = 255;
+    }
+    if (t > 2.2f && fmodf(t, 1.f) < 0.6f) textC(SW / 2, SH - 34, "PRESS ANY BUTTON", C_LOCK);
+    for (int y = 0; y < SH; y += 3) fill(0, y, SW, 1, Col{0, 0, 0}, 60);   // Scanlines
+}
+
+static bool splashSkip() {
+    SDL_Event e;
+    bool hit = false;
+    while (SDL_PollEvent(&e))
+        if (e.type == SDL_KEYDOWN || e.type == SDL_JOYBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONDOWN) hit = true;
+    return hit;
+}
+
+static void runSplash() {
+    Uint32 t0 = SDL_GetTicks();
+    for (;;) {
+        float t = (SDL_GetTicks() - t0) / 1000.f;
+        if (t > 4.5f) break;
+        clearScreen(C_BG);
+        drawSplash(t);
+        present();
+        if (splashSkip() && t > 0.4f) break;
+        SDL_Delay(16);
+    }
 }
 
 // ---------------------------------------------------------------- Bedienung
@@ -2931,7 +3060,8 @@ int main(int argc, char** argv) {
             double ms = (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency() / n;
             printf("Seite %d: %.2f ms pro Bild\n", page, ms);
         }
-        if (shotPage == 20) { page = 0; drawAll(true); } else drawAll(false);
+        if (shotPage == 40) { clearScreen(C_BG); drawSplash(getenv("GB_SPLASH_T") ? (float)atof(getenv("GB_SPLASH_T")) : 3.f); }
+        else if (shotPage == 20) { page = 0; drawAll(true); } else drawAll(false);
         SDL_RenderPresent(ren);
         SDL_SaveBMP(surf, shot);
         return 0;
@@ -2964,7 +3094,7 @@ int main(int argc, char** argv) {
         if (drmSurf && !getenv("GB_SDLDRAW")) { fbPix = (uint32_t*)drmSurf->pixels; fbPitch = drmSurf->pitch / 4; }   // schnelle eigene Zeichenfunktionen
         if (!ren) { printf("Software-Renderer: %s\n", SDL_GetError()); return 1; }
     } else {
-        SDL_Window* win = SDL_CreateWindow("R36S Groovebox", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SW, SH,
+        SDL_Window* win = SDL_CreateWindow("Synth City", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SW, SH,
                                            windowed ? SDL_WINDOW_RESIZABLE : SDL_WINDOW_FULLSCREEN_DESKTOP);
         if (!win) { printf("Fenster: %s\n", SDL_GetError()); return 1; }
         ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
@@ -2976,6 +3106,7 @@ int main(int argc, char** argv) {
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     makeFont();
 
+    if (!learn && !getenv("GB_NOSPLASH")) runSplash();
     if (learn || (!in.haveMap && in.joy && !in.gc)) runLearn();
 
     loadSettings();

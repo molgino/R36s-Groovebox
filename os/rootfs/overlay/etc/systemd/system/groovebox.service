@@ -1,5 +1,5 @@
 [Unit]
-Description=R36S Groovebox
+Description=Synth City
 After=groovebox-data.service systemd-udev-settle.service sound.target
 Wants=groovebox-data.service
 

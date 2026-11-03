@@ -1,6 +1,7 @@
-# R36S Groovebox
+# SYNTH CITY – Groovebox für den R36S
 
 Elektron-artige Groovebox für den R36S unter ArkOS 2.0 (läuft auch auf dem Linux-Desktop).
+Neo-Noir-Optik in Neon-Magenta und Cyan; beim Start erscheint ein Splashscreen mit Synthwave-Skyline (beliebige Taste überspringt).
 8 Spuren, 16 Patterns mit bis zu 128 Steps pro Spur, Parameter-Locks, Sample-Spuren, USB-Audio, USB-MIDI, Ping-Pong-Delay, Reverb und ein DJ-Filter.
 Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt EmulationStation.
 
@@ -293,7 +294,7 @@ Am Desktop gilt diese Tastaturbelegung: Pfeiltasten, Z=A, X=B, S=X, A=Y, Q/W=L1/
 ## Am PC: Ableton, MIDI-OX & Co. (PC-Modus)
 
 Normalerweise ist der OTG-Port ein **Host**: Geräte werden *an* den R36S gesteckt. Ein PC ist ebenfalls ein Host, deshalb sieht er den R36S zunächst nicht.
-Im **PC-Modus** schaltet der R36S den Port in den Geräte-Modus (USB-Gadget) und meldet sich am PC als **„R36S Groovebox“** an:
+Im **PC-Modus** schaltet der R36S den Port in den Geräte-Modus (USB-Gadget) und meldet sich am PC als **„Synth City“** an:
 
 * **PC**: ein USB-MIDI-Gerät mit 1 Ein- und 1 Ausgang, ohne Treiber, unter Windows, macOS und Linux.
 * **PC+A**: zusätzlich ein USB-Audio-Interface mit 2 Kanälen bei 48 kHz. Auf der SYS-Seite unter OUT dann das Gadget-Gerät wählen (z. B. „UAC2Gadget“), damit der Ton der Groovebox in Ableton als Eingang ankommt.
@@ -306,7 +307,7 @@ Einschalten:
 Danach den R36S mit dem PC verbinden. Am zuverlässigsten ist ein **USB-A-auf-USB-C-Kabel**. Ein C-auf-C-Kabel schaltet die Stromversorgung manchmal nicht frei.
 Während der PC-Modus aktiv ist, funktionieren Geräte am R36S (S-1, Keyboard, DAC) nicht. Nach einem Neustart ist der R36S wieder Host.
 
-**In Ableton:** *Einstellungen → Link, Tempo & MIDI*. Beim Eingang „R36S Groovebox“ **Spur** aktivieren, damit die Noten der Groovebox in Ableton ankommen, z. B. mit N.OUT an.
+**In Ableton:** *Einstellungen → Link, Tempo & MIDI*. Beim Eingang „Synth City“ **Spur** aktivieren, damit die Noten der Groovebox in Ableton ankommen, z. B. mit N.OUT an.
 Zum Synchronisieren gibt es zwei Wege:
 
 * Groovebox führt: CLK auf SEND, in Ableton beim Eingang **Sync** an und oben links EXT aktivieren.
@@ -339,7 +340,7 @@ Audio zum PC ist mit diesem Kernel nicht möglich.
 3. Den R36S per USB verbinden. Windows richtet „Remote NDIS“ automatisch ein und bekommt vom R36S die Adresse 192.168.77.10.
 4. In rtpMIDI unter *My Sessions* mit **+** eine Session anlegen und aktivieren.
 5. Unter *Directory* mit **+** einen Eintrag anlegen: Name „R36S“, Host = die angezeigte IP, Port **5004**. Den Eintrag wählen und **Connect** drücken.
-6. Unter *Participants* erscheint „R36S Groovebox“. Auf der SYS-Seite steht bei MIDI „PC (NETZ-MIDI)“.
+6. Unter *Participants* erscheint „Synth City“. Auf der SYS-Seite steht bei MIDI „PC (NETZ-MIDI)“.
 7. In Ableton heißt der Port wie die Session. Spur, Sync und Fernsteuerung wie gewohnt aktivieren.
 
 **macOS:** Audio-MIDI-Setup → MIDI-Studio → Netzwerk. Dort eine Session anlegen und unter „Verzeichnis“ den R36S mit IP und Port 5004 hinzufügen.
@@ -379,7 +380,7 @@ Dadurch funktioniert der R36S am PC als **echtes USB-Audiointerface und USB-MIDI
 
 | Am PC (SET → USB) | Was der PC sieht |
 |---|---|
-| **PC (MIDI + Audio)** | Audiogerät „R36S Groovebox“ (Ein-/Ausgang, 44,1 kHz) + MIDI-Gerät „R36S Groovebox“ + Netzwerk (Browser-Upload, SSH) |
+| **PC (MIDI + Audio)** | Audiogerät „Synth City“ (Ein-/Ausgang, 44,1 kHz) + MIDI-Gerät „Synth City“ + Netzwerk (Browser-Upload, SSH) |
 | **PC (MIDI)** | MIDI-Gerät + Netzwerk |
 | SET → **USB-Laufwerk** | Die Partition GROOVEBOX als normales USB-Laufwerk: Samples reinkopieren, am PC auswerfen, am R36S A drücken |
 

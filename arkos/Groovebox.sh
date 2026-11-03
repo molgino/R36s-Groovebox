@@ -1,5 +1,5 @@
 #!/bin/bash
-# R36S Groovebox - Starter fuer ArkOS (Ports-Menue)
+# Synth City - Starter fuer ArkOS (Ports-Menue)
 GBDIR="/roms/ports/groovebox"
 [ -d "/roms2/ports/groovebox" ] && GBDIR="/roms2/ports/groovebox"
 cd "$GBDIR" || exit 1

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# R36S Groovebox - Aufspielen per USB-Kabel (PC-Modus) oder WLAN (macOS/Linux).
+# Synth City - Aufspielen per USB-Kabel (PC-Modus) oder WLAN (macOS/Linux).
 #   ./deploy.sh [zip]          neueste Version (nightly) bzw. angegebenes ZIP aufspielen
 #   ./deploy.sh --setup-key    SSH-Schluessel hinterlegen
 #   ./deploy.sh --log          Log live anzeigen
-# Umgebungsvariablen: R36S_IP (192.168.77.1), R36S_USER (ark), GB_REPO (molgino/R36s-Groovebox)
+# Umgebungsvariablen: R36S_IP (192.168.77.1), R36S_USER (ark), GB_REPO (molgino/synth-city)
 set -euo pipefail
-IP=${R36S_IP:-192.168.77.1}; USER_=${R36S_USER:-ark}; REPO=${GB_REPO:-molgino/R36s-Groovebox}
+IP=${R36S_IP:-192.168.77.1}; USER_=${R36S_USER:-ark}; REPO=${GB_REPO:-molgino/synth-city}
 OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=5)
 ping -c1 -W1 "$IP" >/dev/null 2>&1 || { ping -c1 -W1 169.254.77.1 >/dev/null 2>&1 && IP=169.254.77.1; }
 T="$USER_@$IP"
@@ -28,7 +28,7 @@ GB=$(ssh "${OPTS[@]}" "$T" '[ -d /roms2/ports/groovebox ] && echo /roms2/ports/g
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 ZIP=${1:-}
 if [ -z "$ZIP" ]; then
-  [[ "$REPO" == OWNER/* ]] && { echo "GB_REPO=<github-name>/R36s-Groovebox setzen"; exit 1; }
+  [[ "$REPO" == OWNER/* ]] && { echo "GB_REPO=<github-name>/synth-city setzen"; exit 1; }
   ZIP="$TMP/pkg.zip"; curl -fL -o "$ZIP" "https://github.com/$REPO/releases/download/nightly/r36s-groovebox-arkos.zip"
 fi
 unzip -q "$ZIP" -d "$TMP/pkg"

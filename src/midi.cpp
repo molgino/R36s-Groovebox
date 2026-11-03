@@ -305,7 +305,7 @@ static void rtpReply(int fd, const sockaddr_in& to, const char* cmd, uint32_t to
     uint8_t b[64];
     b[0] = 0xFF; b[1] = 0xFF; b[2] = cmd[0]; b[3] = cmd[1];
     put32(b + 4, 2); put32(b + 8, token); put32(b + 12, RTP_SSRC);
-    const char* nm = "R36S Groovebox";
+    const char* nm = "Synth City";
     int l = (int)strlen(nm) + 1;
     memcpy(b + 16, nm, l);
     sendto(fd, b, 16 + l, 0, (const sockaddr*)&to, sizeof to);

@@ -1,5 +1,5 @@
 [Unit]
-Description=R36S Groovebox (ersetzt EmulationStation)
+Description=Synth City (ersetzt EmulationStation)
 After=multi-user.target sound.target
 Conflicts=@ESUNIT@
 

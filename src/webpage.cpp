@@ -2,12 +2,12 @@
 extern const char WEB_PAGE[];
 const char WEB_PAGE[] = R"HTML(<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Groovebox Samples</title>
+<title>SYNTH CITY</title>
 <style>
-:root{--bg:#0e0e11;--panel:#1c1c22;--panel2:#26262e;--text:#e8e6e3;--dim:#8a8a96;--acc:#ff8a2a;--ok:#4fd1a5;--bad:#ff5a5a}
+:root{--bg:#080612;--panel:#141026;--panel2:#20183a;--text:#d6eeff;--dim:#8a80b0;--acc:#ff2e88;--cy:#00e0ff;--ok:#00ffaa;--bad:#ff4060}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 ui-monospace,Menlo,Consolas,monospace}
 main{max-width:880px;margin:0 auto;padding:20px 16px 60px}
-h1{font-size:22px;margin:0 0 4px;letter-spacing:.04em}h1 b{color:var(--acc)}
+h1{font-size:30px;margin:0 0 4px;letter-spacing:.18em;color:#fff;text-shadow:-2px 0 var(--acc),2px 0 var(--cy),0 0 18px var(--acc)}h1 b{color:#fff}body{background:linear-gradient(180deg,#080612 0%,#140a2a 60%,#2a0a3a 100%) fixed}
 h2{font-size:14px;color:var(--acc);letter-spacing:.12em;margin:28px 0 10px;text-transform:uppercase}
 .sub{color:var(--dim);margin:0 0 18px}
 #drop{border:2px dashed #3a3a46;border-radius:14px;padding:34px 16px;text-align:center;background:var(--panel);cursor:pointer;transition:.15s}
@@ -27,7 +27,7 @@ button:hover{border-color:var(--acc)}button.del:hover{border-color:var(--bad);co
 .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--dim)}
 #bar{height:4px;background:var(--panel2);border-radius:2px;overflow:hidden;margin-top:10px}#bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
 </style></head><body><main>
-<h1>R36S <b>GROOVEBOX</b></h1>
+<h1>SYNTH <b>CITY</b></h1>
 <p class="sub" id="info">verbinde …</p>
 
 <div id="drop"><strong>Samples hier hineinziehen</strong><span class="dim">oder klicken · WAV, MP3, FLAC, AIFF, OGG … werden automatisch umgewandelt</span>
