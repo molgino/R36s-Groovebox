@@ -16,8 +16,15 @@ static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2
 static const char* const GROUP_NAMES[3] = {"SPUR", "MIX & FX", "PROJEKT"};
 enum { NO_LOCK = 255 };
 
-enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_COUNT };
-static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL"};
+// Reihenfolge = gespeicherter Wert (neue Engines nur hinten anfuegen!)
+enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_TOM, M_RIM, M_SHKR, M_WTBL, M_CHOP, M_GRAN, M_COUNT };
+static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL", "TOM", "RIM", "SHKR", "WTBL", "CHOP", "GRAN"};
+static const char* const MACHINE_LONG[M_COUNT] = {"Bassdrum", "Snare", "Hi-Hat", "Clap", "Analog-Synth", "FM-Synth (4 OP)", "Sample-Player",
+                                                  "Tom", "Rimshot", "Shaker", "Wavetable-Synth", "Sample-Chopper", "Granulator"};
+// Anzeige-Reihenfolge im Engine-Waehler: Drums, Synths, Samples
+static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_TOM, M_RIM, M_SHKR, M_SYNTH, M_FM, M_WTBL, M_SAMPLE, M_CHOP, M_GRAN};
+inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
+inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
 static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "SRC", "SR2", "FLT", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SET"};
 static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "KLANG", "KLANG 2", "FILTER", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
                                                  "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "MASTER", "EINSTELLUNGEN"};
@@ -26,7 +33,7 @@ enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
-    K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK, K_DIR, K_TLEN, K_TSPD, K_RANGE,
+    K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK, K_DIR, K_TLEN, K_TSPD, K_RANGE, K_MTIM, K_WTAB, K_SLICE,
     K_SCALE, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
 };
 
@@ -34,7 +41,7 @@ struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
 
 // Parameterindizes (Seite*8 + Regler)
 enum {
-    P_NOTE = 0, P_VEL, P_LEN, P_PROB, P_RTRG, P_RFAD, P_T6, P_COND, P_T7 = P_COND,
+    P_NOTE = 0, P_VEL, P_LEN, P_PROB, P_RTRG, P_MTIM, P_T6, P_COND, P_T7 = P_COND, P_RFAD = P_MTIM,
     P_S0 = 8, P_S1, P_S2, P_S3, P_S4, P_S5, P_S6, P_S7,
     P_FREQ = 16, P_RESO, P_FTYP, P_FENV, P_FATK, P_FDEC, P_FSUS, P_FREL,
     P_AATK = 24, P_ADEC, P_ASUS, P_AREL, P_VOL, P_PAN, P_DLY, P_REV,
@@ -71,7 +78,7 @@ static const ParamDef PDEF_NONE = {"", K_NONE, 0, 0};
 static const ParamDef COMMON_DEFS[NPARAMS] = {
     // TRIG
     {"NOTE", K_NOTE, 60, 127}, {"VEL", K_NUM, 100, 127}, {"LEN", K_LEN, 48, 127}, {"PROB", K_PCT, 100, 100},
-    {"RTRG", K_RTRG, 0, 6}, {"RFAD", K_BIP, 64, 127}, {"ENGINE", K_MACH, 0, M_COUNT - 1}, {"COND", K_COND, 0, CND_COUNT - 1},
+    {"RTRG", K_RTRG, 0, 6}, {"MTIM", K_MTIM, 23, 46}, {"ENGINE", K_MACH, 0, M_COUNT - 1}, {"COND", K_COND, 0, CND_COUNT - 1},
     // SRC (maschinenabhaengig, siehe SRC_DEFS)
     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
     // FILT
@@ -153,6 +160,24 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
     // SAMPLE (END < STRT = rueckwaerts)
     {{"SMPL", K_SMPL, 0, 127}, {"TUNE", K_SEMI, 24, 48}, {"FINE", K_BIP, 64, 127}, {"STRT", K_NUM, 0, 127},
      {"END", K_NUM, 127, 127}, {"LOOP", K_OFFON, 0, 1}, {"GAIN", K_NUM, 64, 127}, PDEF_NONE},
+    // TOM
+    {{"TUNE", K_NUM, 50, 127}, {"DCAY", K_NUM, 70, 127}, {"SWEP", K_NUM, 40, 127}, {"NOIS", K_NUM, 30, 127},
+     {"BODY", K_NUM, 20, 127}, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    // RIM
+    {{"TUNE", K_NUM, 64, 127}, {"DCAY", K_NUM, 30, 127}, {"TONE", K_NUM, 70, 127}, {"CLCK", K_NUM, 80, 127},
+     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    // SHAKER
+    {{"TONE", K_NUM, 90, 127}, {"DCAY", K_NUM, 40, 127}, {"ATK", K_NUM, 30, 127}, {"GRIT", K_NUM, 40, 127},
+     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    // WAVETABLE
+    {{"TABL", K_WTAB, 0, 3}, {"POS", K_NUM, 0, 127}, {"WARP", K_BIP, 64, 127}, {"DETN", K_NUM, 0, 127},
+     {"SUB", K_NUM, 0, 127}, {"NOIS", K_NUM, 0, 127}, {"P.ENV", K_BIP, 64, 127}, {"GLID", K_NUM, 0, 127}},
+    // CHOP (Sample in gleiche Scheiben, SLIC 0 = AUTO: Step-Nummer waehlt die Scheibe)
+    {{"SMPL", K_SMPL, 0, 127}, {"SLCS", K_NUM, 15, 63}, {"SLIC", K_SLICE, 0, 64}, {"TUNE", K_SEMI, 24, 48},
+     {"FINE", K_BIP, 64, 127}, {"LEN", K_PCT, 100, 100}, {"REV", K_OFFON, 0, 1}, {"GAIN", K_NUM, 64, 127}},
+    // GRAN
+    {{"SMPL", K_SMPL, 0, 127}, {"POS", K_NUM, 30, 127}, {"SPRY", K_NUM, 10, 127}, {"SIZE", K_NUM, 50, 127},
+     {"DENS", K_NUM, 60, 127}, {"PTCH", K_SEMI, 24, 48}, {"P.SPR", K_NUM, 0, 127}, {"GAIN", K_NUM, 64, 127}},
 };
 
 static const ParamDef MST_DEFS[8] = {
@@ -168,6 +193,12 @@ static const ParamDef SRC2_DEFS[M_COUNT][8] = {
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {{"LVL2", K_NUM, 50, 127}, {"LVL3", K_NUM, 0, 127}, {"LVL4", K_NUM, 0, 127}, {"DEC1", K_DECAY, 127, 127},
      {"DEC2", K_DECAY, 50, 127}, {"DEC3", K_DECAY, 50, 127}, {"DEC4", K_DECAY, 50, 127}, {"VELO", K_NUM, 64, 127}},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
 };
 inline bool machineHasSrc2(int m) { return m == M_FM; }
@@ -253,6 +284,9 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_TLEN: snprintf(buf, n, "%d", v); break;
     case K_TSPD: snprintf(buf, n, "%s", SPEED_NAMES[v % 7]); break;
     case K_RANGE: if (v) snprintf(buf, n, "+%d", v); else snprintf(buf, n, "AUS"); break;
+    case K_MTIM: if (v == 23) snprintf(buf, n, "0"); else snprintf(buf, n, "%+d/24", v - 23); break;
+    case K_WTAB: { static const char* wt[4] = {"BASIC", "PWM", "VOKAL", "OBERT"}; snprintf(buf, n, "%s", wt[v & 3]); } break;
+    case K_SLICE: if (v) snprintf(buf, n, "%d", v); else snprintf(buf, n, "AUTO"); break;
     case K_FBK: snprintf(buf, n, "%d%%", v * 120 / 127); break;
     case K_COND:
         if (v <= 0) snprintf(buf, n, "---");

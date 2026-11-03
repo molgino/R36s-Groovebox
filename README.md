@@ -15,13 +15,22 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 | SYNTH | WAV1, WAV2 (SAW/SQR/TRI/SIN), DETN, MIX, SUB, NOIS, PW, GLID |
 | FM    | **4 Operatoren, 8 Algorithmen.** SRC: ALGO, FBK (Feedback OP4), RAT1–RAT4, FINE, NOIS. SRC2: LVL2–LVL4 (Mod-Index bzw. Pegel), DEC1–DEC4 (INF = halten), VELO (Anschlagdynamik) |
 | SMPL  | SMPL (Sample-Auswahl), TUNE (±24 Halbtöne), FINE, STRT, END (END < STRT = rückwärts), LOOP, GAIN |
+| TOM   | TUNE, DCAY, SWEP (Pitch-Abfall), NOIS (Anschlag), BODY |
+| RIM   | TUNE, DCAY, TONE, CLCK |
+| SHKR  | TONE, DCAY, ATK (Ausholen), GRIT (Körnigkeit) |
+| WTBL  | **Wavetable**: TABL (BASIC Sinus→Dreieck→Säge→Rechteck, PWM, VOKAL A→U, OBERTÖNE), POS (Position in der Tabelle, auch als LFO-Ziel), WARP (Phasenverbiegung), DETN (Unisono), SUB, NOIS, P.ENV (Filterhüllkurve → Position), GLID |
+| CHOP  | **Sample-Chopper**: SMPL, SLCS (2–64 Scheiben), SLIC (AUTO = Scheibe nach Step-Nummer, oder feste Scheibe, pro Step lockbar), TUNE, FINE, LEN (Anteil der Scheibe), REV, GAIN |
+| GRAN  | **Granulator**: SMPL, POS, SPRY (Streuung), SIZE (10–500 ms), DENS (2–128 Körner/s), PTCH, P.SPR (Tonhöhen-Streuung), GAIN |
+
+Die Engine wählst du pro Spur und Pattern: auf der TRG-Seite mit dem Regler ENGINE oder mit SELECT + X/Y.
+Beim Drehen erscheint der **Engine-Wähler** mit Symbolen für alle 13 Engines.
 
 Jede Spur ist monophon (wie bei Digitakt und Co.). Ihre **Engine** wählst du auf der TRG-Seite mit dem Regler **ENGINE**: KICK, SNARE, HAT, CLAP, SYNTH, FM oder SMPL. Beim Drehen erscheint eine Auswahlleiste.
 Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regler auf die Grundwerte der neuen Engine gesetzt.
 
 Jede Spur hat diese Seiten:
 
-* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE, **COND** (Trig-Bedingung, siehe unten)
+* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), **MTIM** (Mikrotiming), ENGINE, **COND** (Trig-Bedingung, siehe unten)
 * **SEQ**: Laufrichtung, Länge, Tempo-Faktor, Euklid und Generator (siehe unten)
 * **SRC** (und **SRC2** bei FM): Regler der Engine (siehe Tabelle). Grafisch dargestellt werden:
   * bei SYNTH die tatsächlich klingende, gemischte Wellenform
@@ -85,6 +94,12 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * Die Grafik zeigt den Euklid-Kreis mit wanderndem Playhead, die Richtung und das Schieberegister mit den erzeugten Tonhöhen.
 * Alle SEQ-Regler außer LEN und SPD sind auch **LFO-Ziele**. Ein langsamer LFO auf PULS oder DENS lässt einen Beat „atmen“.
 
+## Mikrotiming (MTIM)
+
+MTIM verschiebt einen Trig um bis zu ±23/24 eines Steps, vorgezogen oder verspätet. Pro Step lockst du es mit A halten und MTIM drehen.
+Vorgezogene Trigs werden einen Step im Voraus geplant. Die Spur läuft also nicht insgesamt später.
+Im Raster sitzen verschobene Trigs sichtbar versetzt, und beim Drehen zeigt ein Zeitlineal die Position.
+
 ## Trig-Bedingungen (COND, Digitone-II-Stil)
 
 COND auf der TRG-Seite gilt für die Spur. Meist lockst du COND aber pro Step: A halten und COND drehen. PROB gilt zusätzlich.
@@ -114,6 +129,17 @@ Jede Spur hat drei LFOs. Jeder kann **jeden Parameter der Spur** modulieren, auc
 | FADE | links einblenden, rechts ausblenden (startet bei jedem Trig) |
 
 Die Grafik zeigt die Kurve, die laufende Phase und das Ziel.
+
+## Optik
+
+* Jede Engine hat ein **gezeichnetes Symbol** (Bassdrum, Snare, Becken, Hand, Tom, Stick, Shaker-Ei, Wellen …).
+  Es erscheint im Raster, im Header und im Mixer und springt beim Trig.
+* Statt Drehreglern gibt es **Kacheln** mit großem Wert und Füllbalken. Bipolare Werte füllen von der Mitte aus, bei Locks markiert ein Strich den Grundwert.
+* **Grafiken der SRC-Seite:**
+  * Drums: großes Symbol mit Ausklingkurve und Pitch-Sweep
+  * Wavetable: gestapelte Frames mit der aktuellen Position
+  * Chop: Scheiben mit der laufenden Scheibe
+  * Granulator: Positionsfenster und aktive Körner
 
 ## Tonskala (global)
 

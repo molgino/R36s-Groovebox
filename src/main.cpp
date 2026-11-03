@@ -360,6 +360,7 @@ static void battery(int x, int y) {
     text(x + 27, y - 3, b, c);
 }
 
+static void drawIcon(int m, int x, int y, int s, Col c);
 static void drawHeader() {
     char b[64];
     Col tc = TCOL[track];
@@ -396,8 +397,15 @@ static void drawHeader() {
         rrect(138, 21, 40, 16, 4, mix(dimC(C_LOCK, 0.5f), C_LOCK, pl));
         text(142, 21, "FILL", C_BG);
     }
-    snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
-    text(196, 4, b, eng.mute[track] ? C_DIM : mix(tc, C_PLAY, flash[track] * 0.35f), 2);
+    {
+        int m = curP().machine[track] % M_COUNT;
+        Col hc = eng.mute[track] ? C_DIM : mix(tc, C_PLAY, flash[track] * 0.35f);
+        int is = 30 + (int)(flash[track] * 4);
+        drawIcon(m, 206 - is / 2, 20 - is / 2, is, hc);
+        text(226, 4, MACHINE_NAMES[m], hc, 2);
+        snprintf(b, sizeof b, "T%d", track + 1);
+        text(310, 2, b, C_DIM);
+    }
     {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
         int g = PG_GROUP[page], x = 334;
         for (int p = 0; p < NUI_PAGES; p++) {
@@ -850,6 +858,277 @@ static void seqGraph(int gx, int gy, int gw, int gh, int sel, Col c) {
     text(rx, gy + gh - 14, "REGISTER", C_DIM);
 }
 
+// ---------------------------------------------------------------- Symbole (gezeichnet, skalierbar)
+
+static void disc(int cx, int cy, int r, Col c, Uint8 a = 255) {   // gefuellter Kreis
+    for (int dy = -r; dy <= r; dy++) { int w = (int)sqrtf((float)(r * r - dy * dy) + 0.5f); fill(cx - w, cy + dy, 2 * w + 1, 1, c, a); }
+}
+static void ellipse(int cx, int cy, int rx, int ry, Col c, Uint8 a = 255) {
+    for (int dy = -ry; dy <= ry; dy++) { float f = 1.f - (float)(dy * dy) / (ry * ry + 0.01f); int w = (int)(rx * sqrtf(f > 0 ? f : 0)); fill(cx - w, cy + dy, 2 * w + 1, 1, c, a); }
+}
+static void ring(int cx, int cy, int r, int th, Col c) {
+    for (int dy = -r; dy <= r; dy++) {
+        int wo = (int)sqrtf((float)(r * r - dy * dy) + 0.5f);
+        int ri = r - th, wi = abs(dy) <= ri ? (int)sqrtf((float)(ri * ri - dy * dy) + 0.5f) : -1;
+        if (wi < 0) fill(cx - wo, cy + dy, 2 * wo + 1, 1, c);
+        else { fill(cx - wo, cy + dy, wo - wi, 1, c); fill(cx + wi + 1, cy + dy, wo - wi, 1, c); }
+    }
+}
+static void line(int x1, int y1, int x2, int y2, Col c, int th = 1) {
+    setCol(c);
+    for (int k = 0; k < th; k++) { SDL_RenderDrawLine(ren, x1 + k, y1, x2 + k, y2); SDL_RenderDrawLine(ren, x1, y1 + k, x2, y2 + k); }
+}
+
+// Symbol einer Engine im Quadrat (x, y, Groesse s)
+static void drawIcon(int m, int x, int y, int s, Col c) {
+    int cx = x + s / 2, cy = y + s / 2, th = s / 12 > 0 ? s / 12 : 1;
+    Col d = dimC(c, 0.45f);
+    switch (m) {
+    case M_KICK:   // Bassdrum von vorne: Fell, Logo, Fuesse
+        ring(cx, cy - s / 16, s * 7 / 16, th + 1, c);
+        disc(cx, cy - s / 16, s / 5, d);
+        fill(cx - s * 5 / 16, y + s - th * 2, th * 2, th * 2, c); fill(cx + s * 5 / 16 - th * 2, y + s - th * 2, th * 2, th * 2, c);
+        break;
+    case M_SNARE: case M_TOM: {   // Trommel seitlich
+        int top = m == M_TOM ? y + s / 6 : y + s / 4, bot = y + s - s / 6, rx = s * 7 / 16, ry = s / 9 + 1;
+        fill(cx - rx, top, 2 * rx + 1, bot - top, d);
+        ellipse(cx, bot, rx, ry, d);
+        ellipse(cx, top, rx, ry, c);
+        if (m == M_SNARE) for (int i = 0; i < 4; i++) line(cx - rx + 3 + i * rx / 2, bot - 2, cx - rx + 3 + i * rx / 2 + rx / 4, top + ry + 2, c);
+        else for (int i = 0; i < 3; i++) fill(cx - rx + 2 + i * rx * 2 / 3 + rx / 3 - 1, top + (bot - top) / 2 - 2, 3, 5, c);
+    } break;
+    case M_HAT:   // zwei Becken auf Staender
+        ellipse(cx, y + s / 4, s * 7 / 16, s / 12 + 1, c);
+        ellipse(cx, y + s / 4 + s / 7, s * 7 / 16, s / 12 + 1, d);
+        fill(cx - th / 2, y + s / 4, th, s * 3 / 4 - 2, c);
+        line(cx, y + s - 3, cx - s / 4, y + s - 1, c); line(cx, y + s - 3, cx + s / 4, y + s - 1, c);
+        break;
+    case M_CLAP: {   // Hand mit Bewegungslinien
+        int pw = s / 2, px = cx - pw / 2 - s / 10, py = cy - s / 12;
+        rrect(px, py, pw, s / 2, s / 10, c);
+        for (int i = 0; i < 4; i++) rrect(px + 1 + i * pw / 4, py - s / 4, pw / 4 - 1, s / 4 + 2, 2, c);
+        rrect(px - s / 8, py + s / 10, s / 7, s / 4, 2, c);
+        for (int i = 0; i < 3; i++) line(px + pw + 3 + i * 3, py - s / 8 + i * s / 8, px + pw + s / 6 + i * 3, py - s / 6 + i * s / 8, d);
+    } break;
+    case M_RIM: {   // Trommelrand mit Stick
+        ellipse(cx, cy + s / 8, s * 7 / 16, s / 6, d);
+        ellipse(cx, cy + s / 8, s * 7 / 16 - th - 1, s / 6 - th - 1, C_BG);
+        line(x + s / 8, y + s / 6, x + s - s / 6, y + s * 5 / 8, c, th + 1);
+        disc(x + s / 8, y + s / 6, th + 1, c);
+    } break;
+    case M_SHKR:   // Ei mit Schuettel-Linien
+        ellipse(cx, cy, s / 5, s * 3 / 8, c);
+        for (int i = -1; i <= 1; i += 2) for (int k = 0; k < 2; k++)
+            line(cx + i * (s / 4 + 2 + k * 4), cy - s / 6, cx + i * (s / 4 + 2 + k * 4), cy + s / 6, d);
+        break;
+    case M_SYNTH: {   // Saegezahn
+        rrect(x + 1, y + 1, s - 2, s - 2, s / 6, C_SEL);
+        int x0 = x + s / 8, y0 = y + s * 3 / 4, w = (s * 3 / 4) / 2, h = s / 2;
+        for (int i = 0; i < 2; i++) { line(x0 + i * w, y0, x0 + (i + 1) * w, y0 - h, c, th); line(x0 + (i + 1) * w, y0 - h, x0 + (i + 1) * w, y0, c, th); }
+    } break;
+    case M_FM: {   // zwei Operatoren mit Verbindung
+        int b = s * 3 / 8;
+        rrect(x + 1, y + s / 8, b, b, 3, d); rrect(x + s - b - 1, y + s - b - s / 8, b, b, 3, c);
+        line(x + 1 + b, y + s / 8 + b / 2, x + s - b - 1, y + s - b / 2 - s / 8, c, th);
+        ring(x + 1 + b / 2, y + s / 8 - 1, b / 3 + 1, 1, d);
+    } break;
+    case M_WTBL:   // gestapelte Wellen (3D)
+        for (int k = 2; k >= 0; k--) {
+            int ox = x + k * s / 8, oy = y + s / 2 - k * s / 8 + s / 10;
+            Col cc = k == 0 ? c : dimC(c, 0.35f + 0.2f * (2 - k));
+            int px = ox, py = oy;
+            for (int i = 1; i <= s * 5 / 8; i++) {
+                int nx = ox + i, ny = oy - (int)(sinf(i / (float)(s * 5 / 8) * 6.2831853f) * s / 6);
+                line(px, py, nx, ny, cc); px = nx; py = ny;
+            }
+        }
+        break;
+    case M_SAMPLE: case M_CHOP:   // Wellenform-Balken (CHOP: mit Schnitten)
+        for (int i = 0; i < 9; i++) {
+            float a = fabsf(sinf(i * 1.7f + 0.4f)) * (1.f - i / 12.f);
+            int h = (int)(a * s * 0.42f) + 1, bx = x + s / 10 + i * s / 11;
+            fill(bx, cy - h, s / 18 + 1, 2 * h, c);
+        }
+        if (m == M_CHOP) for (int k = 1; k <= 2; k++) for (int yy = y; yy < y + s; yy += 4) fill(x + k * s / 3, yy, 1, 2, C_LOCK);
+        break;
+    case M_GRAN: {   // Koerner-Wolke
+        static const float gx[9] = {0.2f, 0.45f, 0.75f, 0.3f, 0.62f, 0.85f, 0.15f, 0.5f, 0.7f};
+        static const float gy[9] = {0.25f, 0.18f, 0.3f, 0.5f, 0.55f, 0.6f, 0.75f, 0.82f, 0.78f};
+        for (int i = 0; i < 9; i++) disc(x + (int)(gx[i] * s), y + (int)(gy[i] * s), (i % 3) + s / 20, i % 2 ? c : d);
+    } break;
+    }
+}
+
+// ---------------------------------------------------------------- Kacheln statt Drehregler
+
+static void tile(int x, int y, int k, const ParamDef& d, int val, int baseVal, bool locked, const char* label, bool sel, Col tc, Uint32 now) {
+    char b[32];
+    bool justEdited = sel && editAt && now - editAt < 300;
+    rrect(x + 4, y + 2, 152, 88, 10, sel ? C_SEL : C_PANEL);
+    if (sel) {   // Rahmen in Spurfarbe, pulsierend
+        float br = 0.55f + 0.25f * sinf(animTime * 3.f);
+        Col fc = dimC(locked ? C_LOCK : tc, br);
+        rrect(x + 4, y + 2, 152, 2, 1, fc); rrect(x + 4, y + 88, 152, 2, 1, fc);
+        rrect(x + 4, y + 2, 2, 88, 1, fc); rrect(x + 154, y + 2, 2, 88, 1, fc);
+    }
+    if (d.kind == K_NONE) return;
+    char nm[24];
+    snprintf(nm, sizeof nm, "%.18s", label[0] ? label : d.name);
+    text(x + 14, y + 8, nm, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
+    knobText(d, val, b, sizeof b, k);
+    Col vc = locked ? C_LOCK : (sel ? mix(tc, C_PLAY, justEdited ? 0.5f : 0.f) : C_TEXT);
+    int sc = textW(b, 2) <= 136 ? 2 : 1;
+    text(x + 80 - textW(b, sc) / 2, y + (sc == 2 ? 30 : 38), b, vc, sc);
+    // Fuellbalken (bipolar: von der Mitte aus)
+    float target = knobFrac(d, val);
+    knobAnim[k] += (target - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
+    int bx = x + 14, bw = 132, by = y + 72;
+    rrect(bx, by, bw, 6, 3, C_OFF2);
+    Col bc = locked ? C_LOCK : (sel ? tc : dimC(tc, 0.6f));
+    bool bip = d.kind == K_BIP || d.kind == K_MTIM;
+    if (bip) {
+        int mid = bx + bw / 2, px = bx + (int)(bw * knobAnim[k]);
+        if (px >= mid) rrect(mid, by, px - mid + 1, 6, 3, bc); else rrect(px, by, mid - px + 1, 6, 3, bc);
+        fill(mid, by - 2, 1, 10, C_DIM);
+    } else { int w = (int)(bw * knobAnim[k]); if (w > 0) rrect(bx, by, w, 6, 3, bc); }
+    if (locked) { int px = bx + (int)(bw * knobFrac(d, baseVal)); fill(px - 1, by - 3, 3, 12, C_TEXT); }
+}
+
+// ---------------------------------------------------------------- Grafiken der Engines
+
+// Peaks eines Samples (einmal pro Sample/Breite berechnet)
+static const float* samplePeaks(int idx, int W) {
+    static int cIdx = -1, cW = 0; static float pk[700];
+    const Sample* sm = sampleGet(idx);
+    if (!sm) return nullptr;
+    if (cIdx != idx || cW != W) {
+        cIdx = idx; cW = W;
+        for (int i = 0; i < W; i++) {
+            int a = (int)((long)sm->len * i / W), b = (int)((long)sm->len * (i + 1) / W);
+            float m = 0; int stp = (b - a) / 64 + 1;
+            for (int j = a; j < b; j += stp) { float v = fabsf(sm->data[j]); if (v > m) m = v; }
+            pk[i] = m;
+        }
+    }
+    return pk;
+}
+
+// Drums: grosses Symbol (springt beim Trig), Ausklingkurve, Tonhoehen-Sweep
+static void drumGraph(int gx, int gy, int gw, int gh, int m, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int s = 46 + (int)(flash[track] * 8);
+    rrect(gx + 8, gy + 4, 54, 54, 12, mix(C_PANEL, c, flash[track] * 0.25f));
+    drawIcon(m, gx + 35 - s / 2, gy + 31 - s / 2, s, mix(c, C_PLAY, flash[track] * 0.5f));
+    // Ausklingkurve aus DCAY (Index 1 bei allen Drums, Shaker: Attack+Decay)
+    int x0 = gx + 80, W = gw - 200, top = gy + 10, bot = gy + gh - 10;
+    float dc = pv(P_S1) / 127.f;
+    static int ys[600];
+    if (W > 590) W = 590;
+    for (int i = 0; i < W; i++) {
+        float t = (float)i / W, v;
+        if (m == M_SHKR) { float a = 0.02f + pv(P_S2) / 127.f * 0.25f; v = t < a ? t / a : expf(-(t - a) * (9.f - dc * 8.f)); }
+        else v = expf(-t * (12.f - dc * 11.f));
+        ys[i] = bot - (int)(v * (bot - top));
+    }
+    curve(x0, ys, W, bot, c, 40);
+    if (m == M_KICK || m == M_TOM) {   // Tonhoehen-Sweep gestrichelt
+        float sw = pv(P_S2) / 127.f;
+        for (int i = 0; i < W; i += 4) { float t = (float)i / W; int yy = bot - (int)((0.3f + 0.7f * sw * expf(-t * 18.f)) * (bot - top) * 0.6f); fill(x0 + i, yy, 2, 2, C_LOCK); }
+        text(x0 + W - 70, top - 4, "PITCH", C_LOCK);
+    }
+    // Pegel der Spur
+    int lh = clampi((int)(sqrtf(meterV[track]) * (gh - 12)), 0, gh - 12);
+    rrect(gx + gw - 26, gy + 6, 10, gh - 12, 4, C_OFF);
+    if (lh) rrect(gx + gw - 26, gy + gh - 6 - lh, 10, lh, 4, c);
+    text(gx + gw - 110, gy + gh - 18, MACHINE_LONG[m], C_DIM);
+}
+
+const float* wavetableFrame(int t, int f);
+
+// Wavetable: Frames perspektivisch gestapelt, aktuelle Position hervorgehoben
+static void wtGraph(int gx, int gy, int gw, int gh, int tab, int pos, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int W = 300, x0 = gx + 20, base = gy + gh - 4;
+    int cur = pos * 31 / 127;
+    for (int f = 31; f >= 0; f -= 3) {
+        const float* fr = wavetableFrame(tab, f);
+        int ox = x0 + f * 7, oy = base - f * 20 / 31 - 10;
+        Col cc = dimC(c, 0.18f + 0.25f * (1.f - f / 31.f));
+        int px = ox, py = oy - (int)(fr[0] * 9);
+        for (int i = 1; i < W; i += 3) { int nx = ox + i, ny = oy - (int)(fr[i * 256 / W] * 9); line(px, py, nx, ny, cc); px = nx; py = ny; }
+    }
+    const float* fr = wavetableFrame(tab, cur);
+    int ox = x0 + cur * 7, oy = base - cur * 20 / 31 - 10, px = ox, py = oy - (int)(fr[0] * 12);
+    for (int i = 1; i < W; i++) { int nx = ox + i, ny = oy - (int)(fr[i * 256 / W] * 12); line(px, py, nx, ny, c, 2); px = nx; py = ny; }
+    static const char* tn[4] = {"BASIC: SIN > TRI > SAW > SQR", "PWM: 50 % > 5 %", "VOKAL: A > E > I > O > U", "OBERTOENE: 1 > 32"};
+    text(gx + gw - 10 - textW(tn[tab & 3]), gy + 4, tn[tab & 3], dimC(c, 0.8f));
+    char b[24]; snprintf(b, sizeof b, "FRAME %d/32", cur + 1);
+    text(gx + gw - 10 - textW(b), gy + 22, b, c);
+}
+
+// Chop: Wellenform mit Scheiben, aktuelle Scheibe hell, Abspielposition
+static void chopGraph(int gx, int gy, int gw, int gh, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int idx = pv(P_S0);
+    const Sample* sm = sampleGet(idx);
+    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, "KEINE SAMPLES IM ORDNER samples/", C_DIM); return; }
+    int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 16) / 2;
+    if (W > 690) W = 690;
+    const float* pk = samplePeaks(idx, W);
+    int n = pv(P_S1) + 1, sl = pv(P_S2) ? (pv(P_S2) - 1) % n : (eng.playing ? eng.playedStep[track] : cursor) % n;
+    for (int i = 0; i < W; i++) {
+        int h = (int)(sqrtf(pk[i]) * A);
+        bool cur = i * n / W == sl;
+        fill(x0 + i, mid - h, 1, 2 * h + 1, cur ? c : dimC(c, 0.35f));
+    }
+    for (int k = 1; k < n; k++) { int xx = x0 + k * W / n; for (int yy = gy + 4; yy < gy + gh - 4; yy += 4) fill(xx, yy, 1, 2, C_LOCK); }
+    const Voice& v = eng.v[track];
+    if (v.active && v.machine == M_CHOP && v.smp == sm) fill(x0 + (int)(v.spos / sm->len * (W - 1)), gy + 4, 2, gh - 8, C_PLAY);
+    char b[48]; snprintf(b, sizeof b, "SCHEIBE %d/%d%s", sl + 1, n, pv(P_S2) ? "" : " (AUTO)");
+    text(gx + gw - 10 - textW(b), gy + 4, b, C_TEXT);
+}
+
+// Granulator: Wellenform, Positionsfenster, aktive Koerner als Punkte
+static void granGraph(int gx, int gy, int gw, int gh, Col c) {
+    graphBox(gx, gy, gw, gh);
+    int idx = pv(P_S0);
+    const Sample* sm = sampleGet(idx);
+    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, "KEINE SAMPLES IM ORDNER samples/", C_DIM); return; }
+    int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 16) / 2;
+    if (W > 690) W = 690;
+    const float* pk = samplePeaks(idx, W);
+    float pos = pv(P_S1) / 127.f, spr = pv(P_S2) / 127.f * 0.5f;
+    int wl = x0 + (int)((pos - spr) * W), wr = x0 + (int)((pos + spr) * W);
+    fill(wl < x0 ? x0 : wl, gy + 4, (wr > x0 + W ? x0 + W : wr) - (wl < x0 ? x0 : wl) + 1, gh - 8, c, 40);
+    for (int i = 0; i < W; i++) { int h = (int)(sqrtf(pk[i]) * A); fill(x0 + i, mid - h, 1, 2 * h + 1, dimC(c, 0.45f)); }
+    fill(x0 + (int)(pos * W), gy + 4, 2, gh - 8, C_PLAY);
+    const Voice& v = eng.v[track];
+    if (v.active && v.machine == M_GRAN && v.smp == sm)
+        for (int g = 0; g < 12; g++) if (v.gr[g].on) {
+            int xx = x0 + (int)(v.gr[g].pos / sm->len * W);
+            float w = sinf(v.gr[g].age / v.gr[g].len * 3.14159f);
+            disc(xx, mid - (int)((g % 5 - 2) * A * 0.35f), 2 + (int)(w * 4), mix(c, C_PLAY, w * 0.6f));
+        }
+    char b[48];
+    snprintf(b, sizeof b, "KORN %.0f ms  %.0f/s", 10.f * exp2f(pv(P_S3) * (5.6f / 127.f)), 2.f * exp2f(pv(P_S4) * (6.f / 127.f)));
+    text(gx + gw - 10 - textW(b), gy + 4, b, C_TEXT);
+}
+
+// Engine-Waehler als Bildraster (beim Drehen von ENGINE)
+static void drawEnginePicker(int cur, Col c) {
+    rrect(40, 50, 560, 220, 14, c);
+    rrect(42, 52, 556, 216, 13, C_BG, 250);
+    for (int i = 0; i < M_COUNT; i++) {
+        int m = MACHINE_ORDER[i], col = i % 7, row = i / 7;
+        int x = 52 + col * 78, y = 62 + row * 86;
+        bool sel = m == cur;
+        rrect(x, y, 72, 80, 10, sel ? c : C_PANEL);
+        drawIcon(m, x + 18, y + 8, 36, sel ? C_BG : TCOL[track]);
+        textC(x + 36, y + 56, MACHINE_NAMES[m], sel ? C_BG : C_TEXT);
+    }
+    textC(320, 246, MACHINE_LONG[cur], C_TEXT);
+}
+
 // Wert-Chip unter einer Grafik
 static void paramChip(int k, int x, int y, Col tc) {
     char b[32], label[24];
@@ -881,6 +1160,10 @@ static int graphKind(int row) {
         if (m == M_SYNTH) return 4;
         if (m == M_SAMPLE) return 5;
         if (m == M_FM) return 6;                          // FM: Algorithmus-Diagramm
+        if (machineIsDrum(m)) return 8;
+        if (m == M_WTBL) return 9;
+        if (m == M_CHOP) return 10;
+        if (m == M_GRAN) return 11;
     }
     if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_FM) return 6;
     if (page == PG_SEQ && row == 0) return 7;
@@ -903,7 +1186,7 @@ static void drawMixer(int ox) {
         rrect(x + 2, y + 1, 76, 188, 8, sel ? C_SEL : C_PANEL);
         snprintf(b, sizeof b, "T%d", t + 1);
         text(x + 8, y + 4, b, sel ? TCOL[t] : C_TEXT);
-        text(x + 8, y + 20, MACHINE_NAMES[P.machine[t]], C_DIM);
+        drawIcon(P.machine[t] % M_COUNT, x + 8, y + 19, 22, mix(TCOL[t], C_PLAY, flash[t] * 0.5f));
         // Mute / Solo
         rrect(x + 50, y + 5, 22, 14, 3, eng.mute[t] ? C_TRIG : C_OFF2); text(x + 57, y + 4, "M", eng.mute[t] ? C_BG : C_DIM);
         rrect(x + 50, y + 21, 22, 14, 3, eng.solo[t] ? C_LOCK : C_OFF2); text(x + 57, y + 20, "S", eng.solo[t] ? C_BG : C_DIM);
@@ -1008,6 +1291,10 @@ static void drawKnobs() {
                 fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, selOp, &v, tc);
             } break;
             case 7: seqGraph(gx, gy, gw, gh, selRel, tc); break;
+            case 8: drumGraph(gx, gy, gw, gh, curP().machine[track], tc); break;
+            case 9: wtGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1), tc); break;
+            case 10: chopGraph(gx, gy, gw, gh, tc); break;
+            case 11: granGraph(gx, gy, gw, gh, tc); break;
             case 5:
                 sampleGraph(gx, gy, gw, gh, pv(P_S0), pv(P_S3), pv(P_S4), pv(P_S5) != 0, selRel, tc);
                 break;
@@ -1020,38 +1307,18 @@ static void drawKnobs() {
             bool sel = k == slot;
             ParamDef d; int val, baseVal; bool locked;
             bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
-            if (sel) { rrect(x + 3, y + 1, 154, 92, 10, C_SEL); rrect(x + 3, y + 12, 3, 70, 1, ok ? tc : C_DIM); }
             int cx = x + 80, cy = y + 38;
-            if (!ok) {
-                arc(cx, cy, 27, 135, 405, C_OFF, 2);
-                textC(cx, cy - 8, "-", C_DIM);
-                continue;
-            }
-            if (d.kind == K_ACT) {   // Schaltflaeche
+            if (ok && d.kind == K_ACT) {   // Schaltflaeche
+                if (sel) rrect(x + 4, y + 2, 152, 88, 10, C_SEL);
                 float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
-                rrect(cx - 50, cy - 18, 100, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
+                rrect(cx - 54, cy - 18, 108, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
                 textC(cx, cy - 8, d.name, sel ? C_BG : C_TEXT);
                 textC(cx, y + 70, sel ? "A = START" : "", C_DIM);
                 continue;
             }
-            float target = knobFrac(d, val);
-            knobAnim[k] += (target - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
-            bool justEdited = sel && editAt && now - editAt < 300;
-            Col kc = locked ? C_LOCK : (sel ? (!trackPage(page) ? C_ACC : tc) : C_TEXT);
-            if (d.kind == K_GR) kc = C_TRIG;
-            if (justEdited) kc = mix(kc, C_PLAY, 0.5f * (1.f - (now - editAt) / 300.f));
-            if (sel) {   // atmender Ring um den gewaehlten Regler
-                float br = 0.35f + 0.25f * sinf(animTime * 3.f);
-                arc(cx, cy, 33, 135, 405, dimC(kc, br), 1);
-            }
-            knob(cx, cy, 27, knobAnim[k], d.kind == K_BIP, kc);
-            if (locked) {
-                float a = (135 + 270 * knobFrac(d, baseVal)) * 0.0174533f;
-                fill(cx + (int)(31 * cosf(a)) - 1, cy + (int)(31 * sinf(a)) - 1, 3, 3, C_DIM);
-            }
-            knobText(d, val, b, sizeof b, k);
-            textC(cx, cy - 8, b, locked ? C_LOCK : C_TEXT);
-            textC(cx, y + 70, label[0] ? label : d.name, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
+            Col kc = trackPage(page) ? tc : C_ACC;
+            if (ok && d.kind == K_GR) kc = C_TRIG;
+            tile(x, y, k, ok ? d : PDEF_NONE, val, baseVal, locked, label, sel, kc, now);
         }
     }
 overlays:
@@ -1088,9 +1355,17 @@ overlays:
             }
             text(478 - textW(b, 1) - 2, oy + 9, b, c);
             if (locked) text(bx, oy + 1, "LOCK", C_LOCK);
-            if (d.kind == K_MACH || d.kind == K_INS) {
-                const char* const* names = d.kind == K_MACH ? MACHINE_NAMES : INS_NAMES;
-                int cnt = d.kind == K_MACH ? M_COUNT : INS_COUNT;
+            if (d.kind == K_MACH) drawEnginePicker(val, c);
+            if (d.kind == K_MTIM) {   // Zeitlineal: Mitte = Raster
+                rrect(bx - 8, oy + 6, bw + 16, 22, 6, C_BG);
+                fill(bx, oy + 17, bw, 1, C_DIM);
+                for (int k2 = 0; k2 <= 4; k2++) fill(bx + k2 * bw / 4, oy + (k2 == 2 ? 9 : 13), 1, k2 == 2 ? 16 : 8, k2 == 2 ? C_TEXT : C_DIM);
+                int mx = bx + bw / 2 + (val - 23) * (bw / 2) / 23;
+                rrect(mx - 3, oy + 11, 7, 12, 3, c);
+            }
+            if (d.kind == K_INS) {
+                const char* const* names = INS_NAMES;
+                int cnt = INS_COUNT;
                 rrect(150, oy, 340, 34, 8, C_BG, 250);
                 rrect(150, oy, 4, 34, 2, c);
                 for (int m = 0; m < cnt; m++) {
@@ -1124,10 +1399,13 @@ static void drawGrid() {
         Col tc = eng.mute[t] ? dimC(TCOL[t], 0.35f) : TCOL[t];
         int chipH = 14 + (int)(flash[t] * 4);
         rrect(4, y + 7 - chipH / 2, 4, chipH, 1, mix(tc, C_PLAY, flash[t] * 0.7f));
-        snprintf(b, sizeof b, "%d %s", t + 1, MACHINE_NAMES[P.machine[t]]);
-        text(12, y - 2, b, eng.mute[t] ? C_DIM : (t == track ? TCOL[t] : C_TEXT));
-        if (eng.mute[t]) { fill(12, y + 5, textW(b), 1, C_DIM); text(68, y - 2, "M", C_TRIG); }
-        else if (P.p[t][P_PULS] > 0 || P.p[t][P_DENS] > 0) { rrect(70, y, 10, 13, 3, C_LOCK); text(71, y - 2, P.p[t][P_PULS] > 0 ? "E" : "G", C_BG); }
+        Col lc = eng.mute[t] ? C_DIM : (t == track ? TCOL[t] : C_TEXT);
+        snprintf(b, sizeof b, "%d", t + 1);
+        text(12, y - 2, b, lc);
+        drawIcon(P.machine[t] % M_COUNT, 21, y - 1, 15, eng.mute[t] ? C_DIM : mix(TCOL[t], C_PLAY, flash[t] * 0.6f));
+        text(39, y - 2, MACHINE_NAMES[P.machine[t] % M_COUNT], lc);
+        if (eng.mute[t]) fill(39, y + 5, 40, 1, C_TRIG);
+        if (P.p[t][P_PULS] > 0 || P.p[t][P_DENS] > 0) rrect(32, y - 1, 5, 5, 2, C_LOCK);   // Euklid/Generator aktiv
         int mw = clampi((int)(sqrtf(meterV[t]) * 62), 0, 62);
         fill(12, y + 13, 62, 2, C_OFF);
         if (mw) fill(12, y + 13, mw, 2, tc);
@@ -1144,7 +1422,10 @@ static void drawGrid() {
             Col c = shown ? (pul > 0 ? mix(tc, C_PLAY, 0.15f) : tc) : offCol(s);
             int grow = 0;
             if (ph) { c = st.on ? mix(tc, C_PLAY, 0.25f + flash[t] * 0.6f) : mix(c, C_PLAY, 0.18f); if (st.on) grow = (int)(flash[t] * 3); }
-            rrect(x - grow, y + 1 - grow / 2, 31 + 2 * grow, 12 + grow, 3, c);
+            int mt = st.lock[P_MTIM] != NO_LOCK ? st.lock[P_MTIM] : P.p[t][P_MTIM];
+            int mo = shown ? (mt - 23) * 10 / 23 : 0;   // Mikrotiming sichtbar verschoben
+            rrect(x - grow + mo, y + 1 - grow / 2, 31 + 2 * grow, 12 + grow, 3, c);
+            if (mo) fill(x + 15, y + 6, 1, 3, C_BG);
             if (st.on && stepHasLock(st)) fill(x + 25, y + 3, 3, 3, C_BG);
         }
     }
@@ -1328,7 +1609,9 @@ static void editValue(int delta) {
     }
     if (d.kind == K_MACH) {   // Engine der Spur (nicht lockbar)
         if (aHeld) return;
-        int m = clampi(P.machine[track] + (delta > 0 ? 1 : -1), 0, M_COUNT - 1);
+        int oi = 0;
+        for (int i = 0; i < M_COUNT; i++) if (MACHINE_ORDER[i] == P.machine[track]) oi = i;
+        int m = MACHINE_ORDER[clampi(oi + (delta > 0 ? 1 : -1), 0, M_COUNT - 1)];
         if (m != P.machine[track]) { lockA(); Engine::setMachine(P, track, m); unlockA(); lockA(); eng.preview(track, nullptr); unlockA(); }
         return;
     }
@@ -2117,6 +2400,19 @@ int main(int argc, char** argv) {
         if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
         if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.mute[3] = true; for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
         if (page == PG_PRJ) { slot = 2; }
+        if (shotPage >= 30 && shotPage <= 33) {   // Engine-Grafiken: 30 KICK, 31 WTBL, 32 CHOP, 33 GRAN
+            static const int em[4] = {M_KICK, M_WTBL, M_CHOP, M_GRAN};
+            page = PG_SRC; track = shotPage == 30 ? 0 : 5; slot = 1;
+            if (shotPage != 30) { Engine::setMachine(curP(), 5, em[shotPage - 30]); if (shotPage >= 32) curP().p[5][P_S0] = 11; curP().p[5][P_S1] = shotPage == 31 ? 70 : (shotPage == 32 ? 7 : 40); }
+            for (int t2 = 0; t2 < 8; t2++) eng.mute[t2] = false;
+            lockA(); eng.start(); unlockA();
+            for (int k2 = 0; k2 < 5; k2++) { eng.render(tmp, 22050 / 2 + 300); animate(); }
+        }
+        if (shotPage == 34) { page = PG_TRG; track = 4; slot = 6; editSlot = 6; editAt = 1; Engine::setMachine(curP(), 4, M_WTBL); }
+        if (shotPage == 35) {
+            page = PG_TRG; track = 1; slot = 5; Pattern& Pp = curP(); Pp.s[1][4].lock[P_MTIM] = 23 - 9; Pp.s[1][12].lock[P_MTIM] = 23 + 12;
+            holdPat = eng.curPat; holdTrack = 1; holdStep = 12; aHeld = true; cursor = 12; editSlot = 5; editAt = 1;
+        }
         if (page == PG_SEQ) {
             track = 4; slot = 3; Pattern& Pp = curP();
             Pp.p[4][P_PULS] = 5; Pp.p[4][P_EROT] = 2; Pp.p[4][P_DENS] = 60; Pp.p[4][P_CHNG] = 10; Pp.p[4][P_RANGE] = 12; Pp.p[4][P_DIR] = 2;

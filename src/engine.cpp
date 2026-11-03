@@ -5,6 +5,62 @@
 #include <stddef.h>
 
 static float SINT[2049];
+// Wavetables: 4 Tabellen x 32 Frames x 256 Samples (beim Start berechnet)
+enum { WT_TABS = 4, WT_FR = 32, WT_N = 256 };
+static float WT[WT_TABS][WT_FR][WT_N + 1];
+static void buildWavetables() {
+    const float PI2 = 6.2831853f;
+    for (int f = 0; f < WT_FR; f++) {
+        float x = f / (float)(WT_FR - 1);
+        for (int i = 0; i <= WT_N; i++) {
+            float p = (i % WT_N) / (float)WT_N;
+            // 0 BASIC: Sinus -> Dreieck -> Saege -> Rechteck (bandbegrenzt, 24 Obertoene)
+            float sn = 0, tr = 0, sw = 0, sq = 0;
+            for (int h = 1; h <= 24; h++) {
+                float s1 = sinf(PI2 * h * p);
+                if (h == 1) sn = s1;
+                sw += s1 / h * 0.6f;
+                if (h & 1) { sq += s1 / h * 0.9f; tr += ((h / 2) & 1 ? -1.f : 1.f) * s1 / (h * h) * 0.8f; }
+            }
+            float seg = x * 3.f; int si = (int)seg; float fr = seg - si;
+            float sh[4] = {sn, tr, sw, sq};
+            WT[0][f][i] = si >= 3 ? sq : sh[si] + (sh[si + 1] - sh[si]) * fr;
+            // 1 PWM: Pulsbreite 50 % -> 5 %
+            float pw = 0.5f - x * 0.45f, pv = 0;
+            for (int h = 1; h <= 24; h++) pv += sinf(3.14159265f * h * pw) / h * cosf(PI2 * h * (p - pw * 0.5f));
+            WT[1][f][i] = pv * 0.9f;
+            // 2 VOKAL: Formanten A -> E -> I -> O -> U (110 Hz Grundton gedacht)
+            static const float F1[5] = {730, 530, 270, 570, 300}, F2[5] = {1090, 1840, 2290, 840, 870};
+            float vs = x * 4.f; int vi = (int)vs; if (vi > 3) vi = 3; float vf = vs - vi;
+            float f1 = F1[vi] + (F1[vi + 1] - F1[vi]) * vf, f2 = F2[vi] + (F2[vi + 1] - F2[vi]) * vf;
+            float vo = 0;
+            for (int h = 1; h <= 30; h++) {
+                float fh = 110.f * h;
+                float a = expf(-((fh - f1) / 90.f) * ((fh - f1) / 90.f)) + 0.6f * expf(-((fh - f2) / 120.f) * ((fh - f2) / 120.f)) + 0.15f / h;
+                vo += a * sinf(PI2 * h * p);
+            }
+            WT[2][f][i] = vo * 0.5f;
+            // 3 OBERTOENE: Frame k = Summe der ersten k+1 Harmonischen
+            float ov = 0;
+            for (int h = 1; h <= f + 1; h++) ov += sinf(PI2 * h * p) / sqrtf((float)h);
+            WT[3][f][i] = ov;
+        }
+    }
+    for (int t = 0; t < WT_TABS; t++)   // jede Frame auf +-1 normieren
+        for (int f = 0; f < WT_FR; f++) {
+            float m = 1e-6f;
+            for (int i = 0; i <= WT_N; i++) if (fabsf(WT[t][f][i]) > m) m = fabsf(WT[t][f][i]);
+            for (int i = 0; i <= WT_N; i++) WT[t][f][i] /= m;
+        }
+}
+static inline float wtRead(int t, float pos, float ph) {
+    float fp = pos * (WT_FR - 1); int f0 = (int)fp; if (f0 >= WT_FR - 1) f0 = WT_FR - 2; float ff = fp - f0;
+    float x = ph * WT_N; int i0 = (int)x; float fx = x - i0; i0 &= WT_N - 1;
+    const float* a = WT[t][f0]; const float* b = WT[t][f0 + 1];
+    float va = a[i0] + (a[i0 + 1] - a[i0]) * fx, vb = b[i0] + (b[i0 + 1] - b[i0]) * fx;
+    return va + (vb - va) * ff;
+}
+const float* wavetableFrame(int t, int f) { return WT[t & 3][f < 0 ? 0 : (f >= WT_FR ? WT_FR - 1 : f)]; }
 static inline float sin01(float ph) {
     ph -= floorf(ph);
     float x = ph * 2048.f;
@@ -67,9 +123,25 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     vel = clampf(P(P_VEL) / 127.f * velScale, 0.f, 1.f);
     note = (float)quantizeNote(P(P_NOTE), scaleVal);
     gate = gateSamples;
-    if (!wasActive || m != M_SYNTH || P(P_S7) == 0) curNote = note;
+    if (!wasActive || (m != M_SYNTH && m != M_WTBL) || P(P_S7) == 0) curNote = note;
     active = true;
     lfoTrigger();
+    if (m == M_CHOP || m == M_GRAN) {
+        smp = sampleGet(P(P_S0));
+        if (!smp || smp->len < 64) { active = false; return; }
+        if (m == M_CHOP) {
+            int n = P(P_S1) + 1, sl = P(P_S2) ? (P(P_S2) - 1) % n : chopStep % n;
+            int segLen = smp->len / n;
+            int a = sl * segLen, L = (int)(segLen * (P(P_S5) / 100.f));
+            if (L < 32) L = 32;
+            sRev = P(P_S6) != 0;
+            sStart = sRev ? a + L - 1 : a; sEnd = sRev ? a : a + L - 1;
+            spos = sStart; sDone = false; sLoop = false;
+        } else {
+            for (auto& g : gr) g.on = false;
+            grTimer = 0;
+        }
+    }
     if (m == M_SAMPLE) {
         smp = sampleGet(P(P_S0));
         if (!smp) { active = false; return; }
@@ -91,7 +163,11 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
         for (int k = 0; k < 4; k++) { fmEnv[k] = 1.f; if (!wasActive) fmPh[k] = 0; }
         if (!wasActive) fmFbPrev = 0;
         break;
-    case M_SAMPLE: aenv.v = 0; break;
+    case M_SAMPLE: case M_CHOP: aenv.v = 0; break;
+    case M_TOM: ph1 = 0; penv = 1; denv = 1; nenv = 1; aenv.v = 0; break;
+    case M_RIM: ph1 = ph2 = 0; denv = 1; cenv = 1; aenv.v = 0; break;
+    case M_SHKR: shkStage = 1; shkLvl = 0; denv = 1; break;
+    case M_WTBL: if (!wasActive) { ph1 = 0; ph2 = 0.37f; } break;
     default: break;
     }
     trigs = trigs + 1;
@@ -169,7 +245,7 @@ void Voice::update(int n, float sr, float bpm) {
     ftype = P(P_FTYP);
 
     // Tonhoehe inkl. Glide
-    if (machine == M_SYNTH && P(P_S7) > 0 && n > 0) {
+    if ((machine == M_SYNTH || machine == M_WTBL) && P(P_S7) > 0 && n > 0) {
         float gt = 0.001f * exp2f(P(P_S7) * (11.f / 127.f));
         float co = 1.f - expf(-(float)n / (gt * sr));
         curNote += (note - curNote) * co;
@@ -222,6 +298,51 @@ void Voice::update(int n, float sr, float bpm) {
         float norm = 1.f / sqrtf((float)(nc ? nc : 1));
         for (int k = 0; k < 4; k++) fmCar[k] *= norm;
     } break;
+    case M_TOM:
+        pitchHz = 60.f * exp2f(P(P_S0) * (2.5f / 127.f)) * ratio;
+        ddco = decayCo(0.05f * exp2f(P(P_S1) * (5.f / 127.f)), sr);
+        pco = decayCo(0.06f, sr);
+        nco = decayCo(0.02f, sr);
+        break;
+    case M_RIM:
+        pitchHz = 300.f * exp2f(P(P_S0) * (1.6f / 127.f)) * ratio;
+        ddco = decayCo(0.008f * exp2f(P(P_S1) * (3.f / 127.f)), sr);
+        cco = decayCo(0.003f, sr);
+        aux.set(800.f * exp2f(P(P_S2) * (2.5f / 127.f)), 0.6f, sr);
+        break;
+    case M_SHKR:
+        aux.set(2000.f * exp2f(P(P_S0) * (2.6f / 127.f)) * ratio, 0.35f, sr);
+        ddco = decayCo(0.02f * exp2f(P(P_S1) * (4.5f / 127.f)), sr);
+        sAtkInc = 1.f / ((0.001f + P(P_S2) / 127.f * 0.08f) * sr);
+        shkGrit = P(P_S3) / 127.f;
+        break;
+    case M_WTBL:
+        pitchHz = 440.f * exp2f((nn - 69.f) / 12.f);
+        wtTab = P(P_S0) & 3;
+        wtPos = P(P_S1) / 127.f;
+        wtWarp = (P(P_S2) - 64) / 64.f;
+        wtDet = exp2f(P(P_S3) / 127.f * 0.4f / 12.f);
+        wtPenv = (P(P_S6) - 64) / 64.f;
+        break;
+    case M_CHOP:
+        if (smp) {
+            float semis = (nn - 60.f) + (P(P_S3) - 24) + (P(P_S4) - 64) / 64.f;
+            sinc = smp->rate / sr * exp2f(semis / 12.f) * (sRev ? -1.f : 1.f);
+            float g = P(P_S7) / 64.f; sGain = g * g;
+        }
+        break;
+    case M_GRAN:
+        if (smp) {
+            grPosF = P(P_S1) / 127.f;
+            grSpray = P(P_S2) / 127.f;
+            grLen = (0.01f * exp2f(P(P_S3) * (5.6f / 127.f))) * sr;          // 10 ms .. 0.5 s
+            float dHz = 2.f * exp2f(P(P_S4) * (6.f / 127.f));                 // 2 .. 128 Koerner/s
+            grInterval = sr / dHz;
+            grPitch = smp->rate / sr * exp2f(((nn - 60.f) + (P(P_S5) - 24)) / 12.f);
+            grPSpr = P(P_S6) / 127.f;
+            float g = P(P_S7) / 64.f; sGain = g * g;
+        }
+        break;
     case M_SAMPLE:
         if (smp) {
             float semis = (nn - 60.f) + (P(P_S1) - 24) + (P(P_S2) - 64) / 64.f;
@@ -382,6 +503,86 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             }
             s = out * 0.7f + fmNoise * rng.next() * 0.3f;
         } break;
+        case M_TOM: {
+            float f = pitchHz * (1.f + 0.8f * sweep * 0.25f * penv);
+            penv *= pco;
+            ph1 += f * inv; if (ph1 >= 1.f) ph1 -= 1.f;
+            s = sin01(ph1) * denv;
+            s += rng.next() * nenv * P(P_S3) / 127.f * 0.5f;
+            if (P(P_S4)) s = fastTanh(s * (1.f + P(P_S4) / 127.f * 4.f));
+            denv *= ddco; nenv *= nco;
+        } break;
+        case M_RIM: {
+            ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
+            ph2 += dt * 2.53f; if (ph2 >= 1.f) ph2 -= 1.f;
+            float src = (ph1 < 0.5f ? 1.f : -1.f) + 0.7f * (ph2 < 0.5f ? 1.f : -1.f);
+            float lo, bp, hp;
+            aux.proc(src, lo, bp, hp);
+            s = bp * denv * 1.3f + rng.next() * cenv * P(P_S3) / 127.f;
+            denv *= ddco; cenv *= cco;
+        } break;
+        case M_SHKR: {
+            if (shkStage == 1) { shkLvl += sAtkInc; if (shkLvl >= 1.f) { shkLvl = 1.f; shkStage = 2; } }
+            else { shkLvl *= ddco; denv = shkLvl; }
+            if (shkGrit > 0 && rng.uni() < 0.002f + shkGrit * 0.02f) shkGain = 0.25f + rng.uni() * 0.75f * (1.f - shkGrit * 0.5f) + shkGrit * 0.3f;
+            float lo, bp, hp;
+            aux.proc(rng.next(), lo, bp, hp);
+            s = (hp * 0.6f + bp) * shkLvl * (shkGrit > 0 ? shkGain : 1.f) * 6.f;
+        } break;
+        case M_WTBL: {
+            float pos = clampf(wtPos + wtPenv * fenv.v, 0.f, 1.f);
+            float p1 = ph1, p2 = ph2;
+            if (wtWarp > 0.01f) { p1 = powf(p1, 1.f + wtWarp * 3.f); p2 = powf(p2, 1.f + wtWarp * 3.f); }
+            else if (wtWarp < -0.01f) { p1 = 1.f - powf(1.f - p1, 1.f - wtWarp * 3.f); p2 = 1.f - powf(1.f - p2, 1.f - wtWarp * 3.f); }
+            s = wtRead(wtTab, pos, p1);
+            if (wtDet > 1.0001f) s = (s + wtRead(wtTab, pos, p2)) * 0.6f;
+            ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
+            ph2 += dt * wtDet; if (ph2 >= 1.f) ph2 -= 1.f;
+            phs += dt * 0.5f; if (phs >= 1.f) phs -= 1.f;
+            s += P(P_S4) / 127.f * 0.6f * sin01(phs);
+            s += P(P_S5) / 127.f * 0.4f * rng.next();
+            s *= 0.55f;
+        } break;
+        case M_CHOP: {
+            if (sDone || !smp) break;
+            int ip = (int)spos;
+            if (ip < 0) ip = 0;
+            if (ip >= smp->len - 1) ip = smp->len - 2;
+            float fr = (float)(spos - ip);
+            float a = smp->data[ip], b = smp->data[ip + 1];
+            float rem = (float)(sRev ? spos - sEnd : sEnd - spos);
+            float fade = rem < 64.f ? rem / 64.f : 1.f;           // kein Knacken am Scheibenende
+            s = (a + (b - a) * fr) * sGain * (fade < 0 ? 0 : fade);
+            spos += sinc;
+            if (sRev ? spos <= sEnd : spos >= sEnd) sDone = true;
+        } break;
+        case M_GRAN: {
+            if (!smp) break;
+            grTimer -= 1.f;
+            if (grTimer <= 0.f) {   // neues Korn
+                grTimer += grInterval * (0.75f + 0.5f * rng.uni());
+                for (auto& g : gr) if (!g.on) {
+                    float pos = grPosF + grSpray * rng.next() * 0.5f;
+                    pos -= floorf(pos);
+                    g.on = true; g.age = 0; g.len = grLen;
+                    g.pos = pos * (smp->len - 2);
+                    g.inc = grPitch * exp2f(grPSpr * rng.next() * 12.f / 12.f);
+                    break;
+                }
+            }
+            float acc = 0; int na = 0;
+            for (auto& g : gr) {
+                if (!g.on) continue;
+                int ip = (int)g.pos;
+                if (ip < 0 || ip >= smp->len - 1) { g.on = false; continue; }
+                float fr = (float)(g.pos - ip);
+                float v2 = smp->data[ip] + (smp->data[ip + 1] - smp->data[ip]) * fr;
+                acc += v2 * sin01(g.age / g.len * 0.5f);   // Halbsinus-Fenster
+                g.pos += g.inc; g.age += 1.f; na++;
+                if (g.age >= g.len) g.on = false;
+            }
+            s = acc * sGain / sqrtf((float)(na > 1 ? na : 1)) * 1.2f;
+        } break;
         case M_SAMPLE: {
             if (sDone || !smp) break;
             int ip = (int)spos;
@@ -485,7 +686,9 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     case M_KICK: case M_HAT: if (denv < 1e-4f) active = false; break;
     case M_SNARE: if (denv < 1e-4f && nenv < 1e-4f) active = false; break;
     case M_CLAP: if (clapTail && denv < 1e-4f && burst < 1e-4f) active = false; break;
-    case M_SAMPLE: if (sDone || aenv.st == 0) active = false; break;
+    case M_SAMPLE: case M_CHOP: if (sDone || aenv.st == 0) active = false; break;
+    case M_TOM: case M_RIM: if (denv < 1e-4f) active = false; break;
+    case M_SHKR: if (shkStage == 2 && shkLvl < 1e-4f) active = false; break;
     default: if (aenv.st == 0) active = false; break;
     }
     if (aenv.st == 3 && aenv.s <= 0.f) active = false;
@@ -534,6 +737,7 @@ void Reverb::process(float in, float size, float damp, float& oL, float& oR) {
 // ---------------------------------------------------------------- Engine
 
 void Engine::init(int sampleRate) {
+    buildWavetables();
     for (int i = 0; i <= 2048; i++) SINT[i] = sinf(i / 2048.f * 6.2831853f);
     initFx(sampleRate);
     for (int t = 0; t < NTRACKS; t++) {
@@ -691,7 +895,7 @@ void Engine::initPattern(Pattern& p) {
 void Engine::defaultProject() {
     memset(&proj, 0, sizeof(proj));
     memcpy(proj.magic, "GBX1", 4);
-    proj.version = 6;
+    proj.version = 7;
     proj.bpm = 120;
     for (int i = 0; i < 8; i++) proj.mst[i] = MST_DEFS[i].def;
     for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
@@ -723,11 +927,12 @@ void Engine::start() {
 
 void Engine::stop() {
     playing = false;
-    for (int t = 0; t < NTRACKS; t++) { if (v[t].gated()) v[t].noteOff(); rt[t].left = 0; }
+    for (int t = 0; t < NTRACKS; t++) { if (v[t].gated()) v[t].noteOff(); rt[t].left = 0; pend[t][0].on = pend[t][1].on = false; preDone[t] = -1; }
     sendStop = true;
 }
 
 void Engine::preview(int t, const Step* s) {
+    v[t].chopStep = uiCursor;
     trigger(t, (s && s->on) ? s->lock : nullptr, 1.f, false, false);
 }
 
@@ -758,7 +963,7 @@ void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, boo
             q.interval = (int)(tss / div);
             q.timer = q.interval;
             q.vel = velScale;
-            q.fade = (val(P_RFAD) - 64) / 64.f / div;
+            q.fade = 0.f;
             for (int i = 0; i < NPARAMS; i++) q.lk[i] = lk ? lk[i] : NO_LOCK;
         } else {
             rt[t].left = 0;
@@ -798,6 +1003,7 @@ int Engine::seqP(int t, int i) {
 }
 
 void Engine::resetSeq(int t) {
+    pend[t][0].on = pend[t][1].on = false; preDone[t] = -1;
     trackPos[t] = 0; trackTick[t] = 0; loopCount[t] = 0; lastCond[t] = false; dirSt[t] = 1; stepCnt[t] = 0;
     int dens = proj.pat[curPat].p[t][P_DENS];
     tmReg[t] = 0;
@@ -810,6 +1016,35 @@ static bool euclidHit(int s, int k, int n, int rot) {
     int pos = ((s - rot) % n + n) % n;
     return (pos * k) % n < k;
 }
+
+// Bedingung/Wahrscheinlichkeit pruefen und Locks (inkl. generierter Note) fuer einen Step bereitstellen
+bool Engine::trigFor(int t, int s, bool on, uint32_t reg, uint8_t* outLk) {
+    Pattern& P = proj.pat[curPat];
+    Step& st = P.s[t][s];
+    if (!on) return false;
+    int cond = st.lock[P_COND] != NO_LOCK ? st.lock[P_COND] : P.p[t][P_COND];
+    bool ok = condOk(t, cond);
+    int prob = st.lock[P_PROB] != NO_LOCK ? st.lock[P_PROB] : P.p[t][P_PROB];
+    if (!(ok && audible(t) && (prob >= 100 || rng.uni() * 100.f < prob))) return false;
+    memcpy(outLk, st.lock, NPARAMS);
+    int range = seqP(t, P_RANGE);
+    if (range > 0) {   // generierte Melodie aus dem Register, in die Skala eingerastet
+        int len = P.len[t] < 1 ? 1 : P.len[t], L = len < 32 ? len : 32;
+        uint32_t win = (reg | (reg << L)) >> 1 & 0xFF;
+        int baseN = st.lock[P_NOTE] != NO_LOCK ? st.lock[P_NOTE] : P.p[t][P_NOTE];
+        int nn = baseN + (int)(win * range / 255);
+        outLk[P_NOTE] = (uint8_t)quantizeNote(nn > 127 ? 127 : nn, proj.mst[MS_SCALE]);
+    }
+    return true;
+}
+
+void Engine::schedule(int t, double at, int s, const uint8_t* lk) {
+    Pend* p = !pend[t][0].on ? &pend[t][0] : &pend[t][1];
+    p->on = true; p->at = at; p->step = s;
+    memcpy(p->lk, lk, NPARAMS);
+}
+
+static bool euclidHit(int s, int k, int n, int rot);
 
 void Engine::stepTrack(int t) {
     Pattern& P = proj.pat[curPat];
@@ -825,33 +1060,35 @@ void Engine::stepTrack(int t) {
     if (skip) skipStep[t] = -1;
 
     // Generator: Turing-Register weiterschieben (CHNG = Mutation, DENS = Dichte neuer Bits)
-    int puls = seqP(t, P_PULS), rot = seqP(t, P_EROT), dens = seqP(t, P_DENS), chng = seqP(t, P_CHNG), range = seqP(t, P_RANGE);
+    int puls = seqP(t, P_PULS), rot = seqP(t, P_EROT), dens = seqP(t, P_DENS), chng = seqP(t, P_CHNG);
     int L = len < 32 ? len : 32;
     uint32_t mask = L >= 32 ? 0xFFFFFFFFu : ((1u << L) - 1u);
     uint32_t r0 = tmReg[t] & mask;                       // Schleife = Spurlaenge (max. 32)
     uint32_t bit = r0 & 1u, top = bit;
     if (chng > 0 && rng.uni() * 100.f < chng) top = rng.uni() * 100.f < dens ? 1u : 0u;
     tmReg[t] = ((r0 >> 1) | (top << (L - 1))) & mask;
-    bool on = st.on;
-    if (puls > 0 || dens > 0) on = (puls > 0 && euclidHit(s, puls, len, rot)) || (dens > 0 && bit);
+    auto isOn = [&](int pos, uint32_t b) {
+        if (puls > 0 || dens > 0) return (puls > 0 && euclidHit(pos, puls, len, rot)) || (dens > 0 && b);
+        return P.s[t][pos].on != 0;
+    };
+    auto micro = [&](int pos) {
+        const Step& q = P.s[t][pos];
+        int m = q.lock[P_MTIM] != NO_LOCK ? q.lock[P_MTIM] : P.p[t][P_MTIM];
+        return (m - 23) / 24.0;
+    };
 
-    if (on && !skip) {
-        int cond = st.lock[P_COND] != NO_LOCK ? st.lock[P_COND] : P.p[t][P_COND];
-        bool ok = condOk(t, cond);
-        int prob = st.lock[P_PROB] != NO_LOCK ? st.lock[P_PROB] : P.p[t][P_PROB];
-        if (ok && audible(t) && (prob >= 100 || rng.uni() * 100.f < prob)) {
-            const uint8_t* lk = st.lock;
-            if (range > 0) {   // generierte Melodie aus dem Register, in die Skala eingerastet
-                memcpy(genLk[t], st.lock, NPARAMS);
-                int baseN = st.lock[P_NOTE] != NO_LOCK ? st.lock[P_NOTE] : P.p[t][P_NOTE];
-                uint32_t win = (r0 | (r0 << L)) >> 1 & 0xFF;   // 8-Bit-Fenster (zyklisch)
-                int nn = baseN + (int)(win * range / 255);
-                genLk[t][P_NOTE] = (uint8_t)quantizeNote(nn > 127 ? 127 : nn, proj.mst[MS_SCALE]);
-                lk = genLk[t];
-            }
-            trigger(t, lk, 1.f, true);
+    // aktueller Step (wurde er schon vorgezogen ausgeloest, nichts tun)
+    if (preDone[t] == s) preDone[t] = -1;
+    else if (!skip) {
+        uint8_t lk[NPARAMS];
+        if (trigFor(t, s, isOn(s, bit), r0, lk)) {
+            double off = micro(s);
+            v[t].chopStep = s;
+            if (off > 0.0) schedule(t, clock + off * stepLenT[t], s, lk);
+            else trigger(t, lk, 1.f, true);
         }
     }
+    (void)st;
     // naechste Position je nach Richtung
     int next = s;
     switch (dir) {
@@ -872,6 +1109,14 @@ void Engine::stepTrack(int t) {
     trackPos[t] = next;
     stepCnt[t]++;
     if (stepCnt[t] % len == 0) loopCount[t] = loopCount[t] + 1;
+    // negatives Mikrotiming: naechsten Step schon jetzt pruefen und vorgezogen einplanen
+    double offN = micro(next);
+    if (offN < 0.0 && skipStep[t] != next) {
+        uint8_t lk[NPARAMS];
+        preDone[t] = next;
+        if (trigFor(t, next, isOn(next, tmReg[t] & 1u), tmReg[t], lk))
+            schedule(t, clock + stepLenT[t] * (1.0 + offN), next, lk);
+    }
 }
 
 // ein Tick (12 pro 16tel): Spuren mit eigener Geschwindigkeit, Pattern-Ende = laengste Spur
@@ -920,6 +1165,11 @@ void Engine::render(float* out, int frames) {
             }
             curOff = i;
         }
+        for (int t = 0; t < NTRACKS; t++)
+            for (int k = 0; k < 2; k++) {
+                Pend& pd = pend[t][k];
+                if (pd.on && pd.at < clock + m) { pd.on = false; v[t].chopStep = pd.step; trigger(t, pd.lk, 1.f, true); }
+            }
         for (int t = 0; t < NTRACKS; t++) {
             if (midiNote[t] >= 0 && midiGate[t] > 0) {
                 midiGate[t] -= m;
@@ -1058,6 +1308,7 @@ static void remapLegacy(const uint8_t* o, int oldNp, uint8_t* out, bool lock, in
     for (int i = 0; i < NPARAMS; i++) out[i] = lock ? NO_LOCK : paramDef(machine, i).def;
     for (int i = 0; i < 32; i++) out[i] = o[i];
     out[P_COND] = lock ? NO_LOCK : 0;                       // v3: Skala lag hier, v5: Trig-Bedingung
+    out[P_MTIM] = lock ? NO_LOCK : 23;                      // bis v6 Retrig-Fade, ab v7 Mikrotiming
     auto has = [&](int i) { return !lock || o[i] != NO_LOCK; };
     static const uint8_t dm[6] = {P_NOTE + 1, P_FREQ + 1, P_VOL + 1, P_PAN + 1, P_RESO + 1, P_CRSH + 1};
     static const uint8_t wm[5] = {LW_SIN, LW_TRI, LW_SAWUP, LW_SQR, LW_SH};
@@ -1090,13 +1341,21 @@ bool Engine::load(const char* path) {
     long expect = 20 + NPATTERNS * oldPat + (ver >= 2 ? 16 : 0);
     // v5: 72 Parameter, 128 Steps, speed-Feld
     const long V5NP = 72, V5PAT = 24 + 8 * V5NP + NTRACKS * 128 * (1 + V5NP), V5SIZE = 20 + NPATTERNS * V5PAT + 16;
-    if (ok && ver == 6 && size == (long)sizeof(Project)) {
+    if (ok && (ver == 7 || ver == 6) && size == (long)sizeof(Project)) {
         memcpy(&proj, buf, sizeof(Project));
+        if (ver == 6) {   // Retrig-Fade (Index 5) -> Mikrotiming
+            for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {
+                proj.pat[pi].p[t][P_MTIM] = 23;
+                for (int st = 0; st < NSTEPS; st++) proj.pat[pi].s[t][st].lock[P_MTIM] = NO_LOCK;
+            }
+            proj.version = 7;
+            printf("Projekt von Version 6 auf 7 umgestellt\n");
+        }
     } else if (ok && ver == 5 && size == V5SIZE) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
         memcpy(np, buf, 20);
-        np->version = 6;
+        np->version = 7;
         for (int pi = 0; pi < NPATTERNS; pi++) {
             const uint8_t* q = buf + 20 + pi * V5PAT;
             Pattern& P = np->pat[pi];
@@ -1104,11 +1363,13 @@ bool Engine::load(const char* path) {
             for (int t = 0; t < NTRACKS; t++) {
                 for (int i = 0; i < NPARAMS; i++) P.p[t][i] = paramDef(P.machine[t] % M_COUNT, i).def;
                 memcpy(P.p[t], q + 24 + t * V5NP, V5NP);
+                P.p[t][P_MTIM] = 23;
                 for (int st = 0; st < NSTEPS; st++) {
                     const uint8_t* sp = q + 24 + 8 * V5NP + (t * 128 + st) * (1 + V5NP);
                     P.s[t][st].on = sp[0];
                     memset(P.s[t][st].lock, NO_LOCK, NPARAMS);
                     memcpy(P.s[t][st].lock, sp + 1, V5NP);
+                    P.s[t][st].lock[P_MTIM] = NO_LOCK;
                 }
             }
         }
@@ -1116,12 +1377,12 @@ bool Engine::load(const char* path) {
         memcpy(np->fx, buf + 20 + NPATTERNS * V5PAT + 8, 8);
         memcpy(&proj, np, sizeof(Project));
         free(np);
-        printf("Projekt von Version 5 auf 6 umgestellt\n");
+        printf("Projekt von Version 5 auf 7 umgestellt\n");
     } else if (ok && ver >= 1 && ver <= 4 && size == expect) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
         memcpy(np->magic, "GBX1", 4);
-        np->version = 6;
+        np->version = 7;
         memcpy(&np->bpm, buf + 8, 2);
         memcpy(np->mst, buf + 10, 8);
         int scaleFromV3 = 0;
@@ -1165,7 +1426,7 @@ bool Engine::load(const char* path) {
         if (ver <= 3) np->mst[MS_SCALE] = (uint8_t)scaleFromV3;
         memcpy(&proj, np, sizeof(Project));
         free(np);
-        printf("Projekt von Version %u auf 6 umgestellt\n", ver);
+        printf("Projekt von Version %u auf 7 umgestellt\n", ver);
     } else {
         ok = false;
     }

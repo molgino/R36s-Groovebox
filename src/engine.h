@@ -80,6 +80,12 @@ struct Voice {
     float fmFbAmt = 0, fmFbPrev = 0;
     int fmAlgo = 0;
     int scaleVal = 0;   // globale Tonskala (vom Engine gesetzt)
+    // neue Engines
+    float wtPos = 0, wtWarp = 0, wtDet = 1, wtPenv = 0, sAtkInc = 0, shkLvl = 0, shkGrit = 0, shkGain = 1;
+    int shkStage = 0, wtTab = 0;
+    int chopStep = 0, chopFade = 64;
+    struct Grain { bool on; double pos; float inc, age, len; } gr[12];
+    float grTimer = 0, grInterval = 1000, grLen = 2000, grPosF = 0, grSpray = 0, grPitch = 1, grPSpr = 0;
     ADSR aenv, fenv;
     SVF filt, aux;
     // 3 LFOs pro Stimme (Ziel = beliebiger Spurparameter)
@@ -119,7 +125,7 @@ struct Voice {
     void lfoTrigger();
     void noteOn(int machine, const uint8_t* base, const uint8_t* locks, float velScale, int gateSamples, float sr);
     void noteOff() { aenv.off(); fenv.off(); }
-    bool gated() const { return machine == M_SYNTH || machine == M_FM || (machine == M_SAMPLE && P(P_S5)); }
+    bool gated() const { return machine == M_SYNTH || machine == M_FM || machine == M_WTBL || machine == M_GRAN || (machine == M_SAMPLE && P(P_S5)); }
     void update(int n, float sr, float bpm);
     void render(float* L, float* R, float* dS, float* rS, int n, float sr);
 };
@@ -203,6 +209,11 @@ private:
     uint8_t genLk[NTRACKS][NPARAMS];
     int seqP(int t, int i);                           // SEQ-Parameter inkl. LFO-Modulation
     void resetSeq(int t);
+    // Mikrotiming: verzoegerte bzw. vorgezogene Trigs
+    struct Pend { bool on; double at; int step; uint8_t lk[NPARAMS]; } pend[NTRACKS][2];
+    int preDone[NTRACKS];                             // Step, der schon vorgezogen ausgeloest wurde
+    bool trigFor(int t, int s, bool on, uint32_t reg, uint8_t* outLk);
+    void schedule(int t, double at, int s, const uint8_t* lk);
     double stepStartT[NTRACKS] = {0}, stepLenT[NTRACKS] = {1};
     int tickCount = 0; double tickHist[25]; int tickHistN = 0;
     float dSm = 0, dhpL = 0, dhpR = 0;   // Delay: geglaettete Zeit, Hochpass in der Schleife
