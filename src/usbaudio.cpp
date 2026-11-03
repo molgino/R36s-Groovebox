@@ -22,6 +22,8 @@ static SDL_Thread* g_thread = nullptr;
 static char g_dev[32];
 static volatile int g_peak = 0;          // groesster Betrag der uebergebenen Samples (seit letzter Statistik)
 static volatile Uint32 g_toneUntil = 0;  // Testton bis zu diesem Zeitpunkt
+static volatile float g_gain = 1.f;      // USB-Lautstaerke (unabhaengig von der internen)
+void usbAudioSetGain(float g) { g_gain = g; }
 static unsigned g_tonePh = 0;
 void usbAudioTestTone(int ms) { g_toneUntil = SDL_GetTicks() + (Uint32)ms; }
 
@@ -171,7 +173,7 @@ void usbAudioPush(const float* st, int frames) {   // nur aus dem Audio-Callback
     for (int i = 0; i < frames; i++) {
         unsigned k = ((w + i) & RMASK) * 2;
         for (int c = 0; c < 2; c++) {
-            float x = tone ? 0.5f * sinf((float)g_tonePh * (6.2831853f * 1000.f / 44100.f)) : st[i * 2 + c];
+            float x = tone ? 0.5f * sinf((float)g_tonePh * (6.2831853f * 1000.f / 44100.f)) : st[i * 2 + c] * g_gain;
             x = x < -1.f ? -1.f : (x > 1.f ? 1.f : x);
             int16_t v = (int16_t)(x * 32767.f);
             g_ring[k + c] = v;
@@ -305,6 +307,7 @@ int pcRecTake(int16_t** data) {   // fertige Aufnahme abholen (Hauptthread), dan
 void pcRecDone() { g_recState = 0; g_recLen = 0; }
 
 #else
+void usbAudioSetGain(float) {}
 bool pcInStart() { return false; }
 void pcInStop() {}
 bool pcInActive() { return false; }

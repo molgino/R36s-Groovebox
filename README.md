@@ -411,6 +411,7 @@ Dadurch funktioniert der R36S am PC als **echtes USB-Audiointerface und USB-MIDI
 | SET → **USB-Laufwerk** | Die Partition GROOVEBOX als normales USB-Laufwerk: Samples reinkopieren, am PC auswerfen, am R36S A drücken |
 
 * Der Klang geht im Modus **PC (MIDI + Audio)** automatisch **zusätzlich** zum PC (SET → „Audio an PC (USB)“, Standard AN). Lautsprecher/Kopfhörer laufen weiter und geben den Takt vor – liest der PC nicht mit, läuft der Sequencer trotzdem weiter. In SET steht, ob der PC gerade mitliest.
+* **Lautstärken getrennt:** Die Lautstärketasten regeln nur Lautsprecher/Kopfhörer des R36S, die USB-Lautstärke steht in SET („USB-Lautstärke“). Mit „Intern bei USB-Audio: STUMM“ (Standard) sind Lautsprecher und Kopfhörer stumm, solange USB-Audio zum PC läuft.
 * Ein Taktausgleich regelt die USB-Spur unhörbar nach (Uhren von R36S und PC laufen minimal unterschiedlich) – keine Knackser bei langen Aufnahmen. Im Log steht die Abweichung als „Takt … ppm“.
 * **PC-Ton über den R36S:** Wählt man am PC „Synth City“ als Wiedergabegerät, klingt der PC-Ton aus Lautsprecher/Kopfhörer des R36S (SET → „PC-Ton über R36S“).
 * **Sampling vom PC:** SET → „PC-Ton als Sample aufnehmen“ → A. Die Aufnahme startet mit dem ersten Ton, den der PC abspielt (max. 60 s), A beendet sie. Das Sample landet als `samples/pc/pc-NN.wav` und steht sofort zur Verfügung.

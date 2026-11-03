@@ -69,8 +69,9 @@ static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1};
+static bool intMuted = false;   // interne Ausgabe stumm, weil USB-Audio laeuft
 static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
 static char setPath[600];
@@ -128,6 +129,8 @@ static void loadSettings() {
         else if (!strcmp(line, "song")) cfg.song = clampi(atoi(v), 0, 31);
         else if (!strcmp(line, "usb_audio")) cfg.usbAudio = atoi(v) != 0;
         else if (!strcmp(line, "pc_in")) cfg.pcIn = atoi(v) != 0;
+        else if (!strcmp(line, "usb_volume")) cfg.usbVol = clampi(atoi(v), 0, 100);
+        else if (!strcmp(line, "internal_on_usb")) cfg.intUsb = atoi(v) != 0;
         else if (!strcmp(line, "hw_volume")) cfg.hwVol = clampi(atoi(v), 0, 100);
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
@@ -136,8 +139,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -422,8 +425,8 @@ static void pollVolumeKeys() {
             }
         if (step) {
             cfg.hwVol = clampi(cfg.hwVol + step, 0, 100);
-            hwVolumeSet(cfg.hwVol);
-            toast("LAUTSTAERKE %d%%", cfg.hwVol);
+            if (intMuted) toast("INTERN %d%% (STUMM, USB-AUDIO AKTIV)", cfg.hwVol);
+            else { hwVolumeSet(cfg.hwVol); toast("LAUTSTAERKE %d%%", cfg.hwVol); }
             saveSettings();
         }
     }
@@ -519,6 +522,9 @@ static void animate() {
             bool want = cfg.usbAudio && usbMode == 2 && !driveOn;
             if (want && !usbAudioActive()) usbAudioStart();
             if (!want && usbAudioActive()) usbAudioStop();
+            usbAudioSetGain(cfg.usbVol / 100.f);
+            bool mute = cfg.intUsb && usbAudioActive();   // interne Ausgabe stumm, solange USB-Audio laeuft
+            if (mute != intMuted) { intMuted = mute; hwVolumeSet(mute ? 0 : cfg.hwVol); }
             bool rec = pcRecState() == 1 || pcRecState() == 2;
             pcInGain = cfg.pcIn ? 1.f : 0.f;
             bool wantIn = (cfg.pcIn || rec) && usbMode == 2 && !driveOn;
@@ -2417,7 +2423,7 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_MUTATE, SI_UNMUTATE,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
     SI_H_SYS, SI_DISP, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
@@ -2471,6 +2477,8 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
         else snprintf(v, vn, usbAudioStatus() == 2 ? "AN - PC LIEST MIT" : (usbAudioActive() ? "AN - WARTET AUF PC" : "AN - SUCHE GERAET"));
         break;
+    case SI_USBVOL: snprintf(l, ln, "USB-Lautstaerke"); snprintf(v, vn, "%d%%", cfg.usbVol); break;
+    case SI_INTUSB: snprintf(l, ln, "Intern bei USB-Audio"); snprintf(v, vn, "%s", cfg.intUsb ? (intMuted ? "STUMM (AKTIV)" : "STUMM") : "AN"); break;
     case SI_USBTONE: snprintf(l, ln, "Testton an PC (5 s, 1 kHz)"); if (!usbAudioActive()) snprintf(v, vn, "erst Audio an PC"); break;
     case SI_PCIN: snprintf(l, ln, "PC-Ton ueber R36S");
         if (!cfg.pcIn) snprintf(v, vn, "AUS");
@@ -2535,6 +2543,8 @@ static void setChange(int i, int d) {
     case SI_MCH: cfg.chm = !cfg.chm; applyMidiSettings(); saveSettings(); break;
     case SI_USB: usbMode = clampi(usbMode + (d > 0 ? 1 : -1), 0, 2); usbApplyAt = SDL_GetTicks() + 1200; break;
     case SI_USBAUDIO: cfg.usbAudio = !cfg.usbAudio; saveSettings(); break;
+    case SI_USBVOL: cfg.usbVol = clampi(cfg.usbVol + (d > 0 ? 5 : -5), 0, 100); saveSettings(); break;
+    case SI_INTUSB: cfg.intUsb = !cfg.intUsb; saveSettings(); break;
     case SI_MUTATE: mutAmt = clampi(mutAmt + (d > 0 ? 1 : -1), 0, 2); break;
     case SI_PCIN: cfg.pcIn = !cfg.pcIn; saveSettings(); break;
     case SI_DISP: cfg.dispOff = clampi(cfg.dispOff + (d > 0 ? 3 : -3), -1920, 1920);   // 1 Pixel je Schritt, Farbanteil bleibt drmOutSetByteOffset(cfg.dispOff); saveSettings(); break;
@@ -2699,7 +2709,7 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
     if (fabsf(I.rx) > fabsf(I.ry)) dx += flick(I.rx, flRX, flRXt, now); else flRX = 0;
     if (dx && !setIsAction(setSel)) setChange(setSel, dx);
     float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;   // rechter Stick: stufenlos (Tempo etc.)
-    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_DISP || setSel == SI_LEN || setSel == SI_LENALL)) {
+    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_DISP || setSel == SI_USBVOL || setSel == SI_LEN || setSel == SI_LENALL)) {
         stickAcc += (ry > 0 ? 1.f : -1.f) * (30.f * (fabsf(ry) - 0.25f) + 2.f) * dt;
         int d = (int)stickAcc;
         if (d) { stickAcc -= d; setChange(setSel, d); }
