@@ -41,7 +41,8 @@ static bool findGadget(char* out, int n) {
 
 static int usbThread(void*) {
     snd_pcm_t* pcm = nullptr;
-    if (snd_pcm_open(&pcm, g_dev, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK) < 0) { g_active = false; return 0; }
+    int e = snd_pcm_open(&pcm, g_dev, SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+    if (e < 0) { printf("USB-Audio: %s nicht zu oeffnen (%s)\n", g_dev, snd_strerror(e)); g_active = false; return 0; }
     if (snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, 44100, 1, 40000) < 0) {
         printf("USB-Audio: Format nicht moeglich\n");
         snd_pcm_close(pcm); g_active = false; return 0;
@@ -70,6 +71,7 @@ static int usbThread(void*) {
 
 bool usbAudioStart() {
     if (g_active) return true;
+    if (g_thread) { SDL_WaitThread(g_thread, nullptr); g_thread = nullptr; }   // vorheriger Versuch beendet
     if (!findGadget(g_dev, sizeof g_dev)) return false;
     g_w = g_r = 0;
     g_run = true; g_active = true; g_status = 1;
