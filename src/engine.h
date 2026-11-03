@@ -23,7 +23,12 @@ struct Project {
     Pattern pat[NPATTERNS];
     uint8_t cmp[8];          // ab Version 2: Kompressor
     uint8_t fx[8];           // ab Version 2: Delay/Reverb (vorher in mst)
+    // ab Version 9: Song (Pattern-Kette)
+    struct SongEntry { uint8_t pat, rep; } song[64];
+    uint8_t songLen;
+    uint8_t pad2[3];
 };
+enum { PROJECT_VERSION = 9, SONG_MAX = 64 };
 
 struct Rng {
     uint32_t s = 0x9E3779B9u;
@@ -174,6 +179,10 @@ public:
     volatile int chMode = 0;      // 0 = AUTO (aktive Spur), 1 = Kanal 1-8 -> Spur 1-8
     volatile int uiTrack = 0, uiPage = 0, uiCursor = 0;
     volatile int stepRecCount = 0;
+    // Song-Modus: Pattern-Kette proj.song abspielen
+    volatile bool songOn = false;
+    volatile int songPos = 0, songRep = 0;
+    void songStart(int pos);   // ab Eintrag pos (nur Engine-Zustand; Wiedergabe startet mit start())
 
     void init(int sampleRate);
     void setRate(int sampleRate);
@@ -193,6 +202,11 @@ public:
 
 private:
     struct Retrig { int left = 0; int interval = 0; int timer = 0; float vel = 1, fade = 0; uint8_t lk[NPARAMS]; } rt[NTRACKS];
+    // Arpeggiator je Spur: spielt waehrend der Trig-Laenge die Akkordtoene
+    struct Arp { int left = 0; int interval = 0; int timer = 0; int idx = 0, n = 0, mode = 0, gate = 0; float vel = 1, acc = 0;
+                 uint8_t notes[48]; uint8_t lk[NPARAMS]; Rng rng; } ar[NTRACKS];
+    void arpFire(int t);
+    void playNote(int t, const uint8_t* lk, float velScale, int gs, bool toMidi);
     float* dlyL = nullptr; float* dlyR = nullptr; int dlyLen = 0, dlyPos = 0; float dlpL = 0, dlpR = 0;
     Reverb rev;
     SVF djL, djR;

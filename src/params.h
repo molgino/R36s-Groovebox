@@ -4,15 +4,15 @@
 #include <stdio.h>
 #include <math.h>
 
-// Speicher-Seiten je Spur (je 8 Parameter): 0 TRG, 1 SRC, 2 FLT, 3 AMP, 4 LFO1, 5 INS, 6 SRC2, 7 LFO2, 8 LFO3, 9 SEQ
-enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 11, NPARAMS = NPAGES * 8, NLFO = 3 };
+// Speicher-Seiten je Spur (je 8 Parameter): 0 TRG, 1 SRC, 2 FLT, 3 AMP, 4 LFO1, 5 INS, 6 SRC2, 7 LFO2, 8 LFO3, 9 SEQ, 10 FLT2, 11 ARP
+enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 12, NPARAMS = NPAGES * 8, NLFO = 3 };
 // Oberflaechen-Seiten (Reihenfolge = Navigation). Spurseiten zuerst.
-enum UiPage { PG_TRG, PG_SEQ, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_MST, PG_SYS, NUI_PAGES };
+enum UiPage { PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_SONG, PG_MST, PG_SYS, NUI_PAGES };
 enum { PG_LFO = PG_LFO1 };
 enum { PAGE_INS = PG_INS, PAGE_FX = PG_FX, PAGE_CMP = PG_CMP, PAGE_MST = PG_MST, PAGE_SYS = PG_SYS, PAGE_MIX = PG_MIX, PAGE_PRJ = PG_PRJ,
        FIRST_GLOBAL_PAGE = PG_MIX };
-static const int PG_STORE[NUI_PAGES] = {0, 9, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
-static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2};
+static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
+static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2};
 static const char* const GROUP_NAMES[3] = {"SPUR", "MIX & FX", "PROJEKT"};
 enum { NO_LOCK = 255 };
 
@@ -25,16 +25,17 @@ static const char* const MACHINE_LONG[M_COUNT] = {"Bassdrum", "Snare", "Hi-Hat",
 static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_TOM, M_RIM, M_SHKR, M_SYNTH, M_FM, M_WTBL, M_SAMPLE, M_CHOP, M_GRAN};
 inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
 inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SET"};
-static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "KLANG", "KLANG 2", "FILTER", "FILTER 2 (BASE-WIDTH)", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
-                                                 "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "MASTER", "EINSTELLUNGEN"};
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "SNG", "MST", "SET"};
+static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 (BASE-WIDTH)", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
+                                                 "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN"};
 
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
     K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK, K_DIR, K_TLEN, K_TSPD, K_RANGE, K_MTIM, K_WTAB, K_SLICE,
-    K_SCALE, K_ROOT, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
+    K_SCALE, K_ROOT, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR,
+    K_ARPM, K_ACHD, K_ARAT
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -50,7 +51,8 @@ enum {
     P_X0 = 48, P_X1, P_X2, P_X3, P_X4, P_X5, P_X6, P_X7,      // SRC2 (maschinenabhaengig)
     P_L2 = 56, P_L3 = 64,                                        // LFO2, LFO3
     P_DIR = 72, P_QLEN, P_QSPD, P_PULS, P_EROT, P_DENS, P_CHNG, P_RANGE,  // SEQ: Richtung, Laenge, Tempo, Euklid, Generator
-    P_BASE = 80, P_WDTH, P_KEYT, P_VELF                                    // FLT2: Base-Width-Filter, Key-/Velocity-Tracking
+    P_BASE = 80, P_WDTH, P_KEYT, P_VELF,                                   // FLT2: Base-Width-Filter, Key-/Velocity-Tracking
+    P_AMOD = 88, P_ACHD, P_AOCT, P_ARAT, P_AGAT, P_AACC                    // ARP: Modus, Akkord, Oktaven, Tempo, Gate, Akzent
 };
 // Master-Seite
 enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV, MS_SCALE, MS_ROOT };
@@ -108,7 +110,17 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     // FLT2: Base-Width-Filter (Hochpass BASE, Tiefpass BASE+WDTH), Key-Tracking und Velocity fuer Filter 1
     {"BASE", K_NUM, 0, 127}, {"WDTH", K_NUM, 127, 127}, {"KEYT", K_PCT, 0, 100}, {"VELF", K_BIP, 64, 127},
     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
+    // ARP: spielt waehrend der Trig-Laenge die Akkordtoene ueber OCT Oktaven im Tempo RATE
+    {"MODE", K_ARPM, 0, 4}, {"CHRD", K_ACHD, 2, 9}, {"OCT", K_CNT, 0, 3}, {"RATE", K_ARAT, 2, 5},
+    {"GATE", K_PCT, 60, 100}, {"ACCT", K_PCT, 0, 100}, PDEF_NONE, PDEF_NONE,
 };
+// Arpeggiator: Akkord-Intervalle (Halbtoene), Tempo in Steps
+static const char* const ARP_MODES[5] = {"AUS", "UP", "DOWN", "UPDN", "RAND"};
+static const char* const ARP_CHORDS[10] = {"OKT", "5TH", "MAJ", "MIN", "SUS4", "MAJ7", "MIN7", "DOM7", "DIM", "SKALA"};
+static const int8_t ARP_IV[10][5] = {{0, -1}, {0, 7, -1}, {0, 4, 7, -1}, {0, 3, 7, -1}, {0, 5, 7, -1},
+                                     {0, 4, 7, 11, -1}, {0, 3, 7, 10, -1}, {0, 4, 7, 10, -1}, {0, 3, 6, 9, -1}, {-1}};
+static const char* const ARP_RATES[6] = {"1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4"};
+static const float ARP_STEPS[6] = {0.5f, 2.f / 3.f, 1.f, 4.f / 3.f, 2.f, 4.f};
 // Tonskalen pro Spur: Wert 0 = chromatisch, sonst 1 + Skala*12 + Grundton
 enum { NSCALES = 10 };
 static const char* const SCALE_NAMES[NSCALES] = {"MAJ", "MIN", "DOR", "PHR", "LYD", "MIX", "HMI", "PMA", "PMI", "BLU"};
@@ -290,6 +302,9 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_DIR: { static const char* dn[6] = {"FWD", "REV", "PING", "PEND", "RND", "DRNK"}; snprintf(buf, n, "%s", dn[v % 6]); } break;
     case K_TLEN: snprintf(buf, n, "%d", v); break;
     case K_TSPD: snprintf(buf, n, "%s", SPEED_NAMES[v % 7]); break;
+    case K_ARPM: snprintf(buf, n, "%s", ARP_MODES[v % 5]); break;
+    case K_ACHD: snprintf(buf, n, "%s", ARP_CHORDS[v % 10]); break;
+    case K_ARAT: snprintf(buf, n, "%s", ARP_RATES[v % 6]); break;
     case K_RANGE: if (v) snprintf(buf, n, "+%d", v); else snprintf(buf, n, "AUS"); break;
     case K_MTIM: if (v == 23) snprintf(buf, n, "0"); else snprintf(buf, n, "%+d/24", v - 23); break;
     case K_WTAB: { static const char* wt[4] = {"BASIC", "PWM", "VOKAL", "OBERT"}; snprintf(buf, n, "%s", wt[v & 3]); } break;

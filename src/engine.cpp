@@ -911,7 +911,7 @@ void Engine::initPattern(Pattern& p) {
 void Engine::defaultProject(bool demo) {
     memset(&proj, 0, sizeof(proj));
     memcpy(proj.magic, "GBX1", 4);
-    proj.version = 8;
+    proj.version = PROJECT_VERSION;
     proj.bpm = 120;
     for (int i = 0; i < 8; i++) proj.mst[i] = MST_DEFS[i].def;
     for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
@@ -932,6 +932,7 @@ void Engine::defaultProject(bool demo) {
 }
 
 void Engine::start() {
+    if (songOn && proj.songLen > 0) { curPat = proj.song[songPos % proj.songLen].pat % NPATTERNS; songRep = 0; nextPat = -1; }
     if (nextPat >= 0) { curPat = nextPat; nextPat = -1; }
     for (int t = 0; t < NTRACKS; t++) { resetSeq(t); skipStep[t] = -1; }
     patTick = 0; globalTick = 0;
@@ -944,7 +945,7 @@ void Engine::start() {
 
 void Engine::stop() {
     playing = false;
-    for (int t = 0; t < NTRACKS; t++) { if (v[t].gated()) v[t].noteOff(); rt[t].left = 0; pend[t][0].on = pend[t][1].on = false; preDone[t] = -1; }
+    for (int t = 0; t < NTRACKS; t++) { if (v[t].gated()) v[t].noteOff(); rt[t].left = 0; ar[t].left = 0; pend[t][0].on = pend[t][1].on = false; preDone[t] = -1; }
     sendStop = true;
 }
 
@@ -960,17 +961,41 @@ void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, boo
     float ls = lenSteps(val(P_LEN));
     double tss = trackStepSamples(t);
     int gs = ls < 0 ? -1 : (int)(ls * tss) + 1;
-    v[t].scaleVal = proj.mst[MS_SCALE];
-    v[t].stepSec = (float)(stepSamples() / sr);
-    v[t].noteOn(P.machine[t], b, lk, velScale, gs, (float)sr);
-    if (toMidi && notesOut && midiOut) {
-        if (midiNote[t] >= 0) emit(0x80 | t, (uint8_t)midiNote[t], 0, curOff);
-        int nn = quantizeNote(val(P_NOTE), proj.mst[MS_SCALE]);
-        int vv = (int)(val(P_VEL) * velScale + 0.5f);
-        emit(0x90 | t, (uint8_t)nn, (uint8_t)(vv < 1 ? 1 : (vv > 127 ? 127 : vv)), curOff);
-        midiNote[t] = nn;
-        midiGate[t] = gs > 0 ? gs : (int)tss;
+    // Arpeggiator (nur Klangerzeuger mit Tonhoehe): statt eines Tons die Akkordtoene im Tempo RATE
+    if (fromSeq && val(P_AMOD) > 0 && !machineIsDrum(P.machine[t])) {
+        Arp& a = ar[t];
+        int base = val(P_NOTE), chord = val(P_ACHD) % 10, oct = val(P_AOCT) % 4 + 1;
+        int sv = proj.mst[MS_SCALE];
+        uint8_t L[48]; int n = 0;
+        if (chord == 9) {   // Skalentoene (ohne Skala: Dur)
+            static const int maj[7] = {0, 2, 4, 5, 7, 9, 11};
+            if (sv) { int x = quantizeNote(base, sv); while (x < base + 12 * oct && n < 48 && x <= 127) { L[n++] = (uint8_t)x; x = stepScale(x, 1, sv); } }
+            else for (int o = 0; o < oct; o++) for (int k = 0; k < 7 && n < 48; k++) { int x = base + 12 * o + maj[k]; if (x <= 127) L[n++] = (uint8_t)x; }
+        } else {
+            for (int o = 0; o < oct; o++)
+                for (int k = 0; k < 5 && ARP_IV[chord][k] >= 0 && n < 48; k++) { int x = base + 12 * o + ARP_IV[chord][k]; if (x <= 127) L[n++] = (uint8_t)x; }
+        }
+        if (n == 0) L[n++] = (uint8_t)base;
+        a.mode = val(P_AMOD);
+        a.n = 0;
+        if (a.mode == 2) for (int i = n - 1; i >= 0; i--) a.notes[a.n++] = L[i];                 // DOWN
+        else { for (int i = 0; i < n; i++) a.notes[a.n++] = L[i];                                    // UP / RAND
+               if (a.mode == 3) for (int i = n - 2; i >= 1 && a.n < 48; i--) a.notes[a.n++] = L[i]; }  // UPDN
+        a.interval = (int)(tss * ARP_STEPS[val(P_ARAT) % 6]);
+        if (a.interval < 16) a.interval = 16;
+        a.gate = (int)(a.interval * val(P_AGAT) / 100.f);
+        if (a.gate < 16) a.gate = 16;
+        a.left = gs > 0 ? gs : (1 << 30);   // unendliche Laenge: bis zum naechsten Trig
+        a.timer = 0; a.idx = 0;
+        a.vel = velScale; a.acc = val(P_AACC) / 100.f;
+        a.rng.s ^= (uint32_t)(t * 7919 + base);
+        for (int i = 0; i < NPARAMS; i++) a.lk[i] = lk ? lk[i] : NO_LOCK;
+        rt[t].left = 0;
+        arpFire(t);
+        return;
     }
+    if (fromSeq) ar[t].left = 0;   // neuer normaler Trig beendet einen laufenden Arp
+    playNote(t, lk, velScale, gs, toMidi);
     if (fromSeq) {
         int r = val(P_RTRG);
         if (r > 0) {
@@ -986,6 +1011,43 @@ void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, boo
             rt[t].left = 0;
         }
     }
+}
+
+void Engine::playNote(int t, const uint8_t* lk, float velScale, int gs, bool toMidi) {
+    Pattern& P = proj.pat[curPat];
+    const uint8_t* b = P.p[t];
+    auto val = [&](int i) { return (lk && lk[i] != NO_LOCK) ? lk[i] : b[i]; };
+    v[t].scaleVal = proj.mst[MS_SCALE];
+    v[t].stepSec = (float)(stepSamples() / sr);
+    v[t].noteOn(P.machine[t], b, lk, velScale, gs, (float)sr);
+    if (toMidi && notesOut && midiOut) {
+        if (midiNote[t] >= 0) emit(0x80 | t, (uint8_t)midiNote[t], 0, curOff);
+        int nn = quantizeNote(val(P_NOTE), proj.mst[MS_SCALE]);
+        int vv = (int)(val(P_VEL) * velScale + 0.5f);
+        emit(0x90 | t, (uint8_t)nn, (uint8_t)(vv < 1 ? 1 : (vv > 127 ? 127 : vv)), curOff);
+        midiNote[t] = nn;
+        midiGate[t] = gs > 0 ? gs : (int)trackStepSamples(t);
+    }
+}
+
+// naechsten Arp-Ton spielen
+void Engine::arpFire(int t) {
+    Arp& a = ar[t];
+    if (a.n <= 0) return;
+    int i = a.mode == 4 ? (int)(a.rng.uni() * a.n) % a.n : a.idx % a.n;
+    a.lk[P_NOTE] = a.notes[i];
+    float vel = a.vel * ((a.idx % a.n) == 0 ? 1.f : 1.f - 0.6f * a.acc);
+    a.idx++;
+    playNote(t, a.lk, vel, a.gate, true);
+}
+
+void Engine::songStart(int pos) {
+    if (proj.songLen == 0) { songOn = false; return; }
+    songPos = ((pos % proj.songLen) + proj.songLen) % proj.songLen;
+    songRep = 0;
+    songOn = true;
+    int pt = proj.song[songPos].pat % NPATTERNS;
+    if (playing) nextPat = pt; else { curPat = pt; nextPat = -1; }
 }
 
 // Trig-Bedingung pruefen (Digitone-II-Stil). Ergebnis wird fuer PRE/NEI gemerkt.
@@ -1156,7 +1218,15 @@ void Engine::doTick() {
         long l = (long)(P->len[t] < 1 ? 1 : P->len[t]) * SPEED_TPS[P->speed[t] % 7];
         if (l > master) master = l;
     }
-    if (++patTick >= master) patTick = 0;
+    if (++patTick >= master) {
+        patTick = 0;
+        if (songOn && proj.songLen > 0 && nextPat < 0) {   // Song: Wiederholungen zaehlen, dann naechster Eintrag
+            int rep = proj.song[songPos % proj.songLen].rep; if (rep < 1) rep = 1;
+            if (++songRep >= rep) { songRep = 0; songPos = (songPos + 1) % proj.songLen; }
+            int np = proj.song[songPos].pat % NPATTERNS;
+            if (np != curPat) nextPat = np;
+        }
+    }
     if (clockMode == 1 && (globalTick & 1) == 0) emit(0xF8, 0, 0, curOff);   // 24 ppqn
     globalTick++;
 }
@@ -1194,6 +1264,12 @@ void Engine::render(float* out, int frames) {
             }
         }
         for (int t = 0; t < NTRACKS; t++) {
+            Arp& a = ar[t];
+            if (a.left > 0) {
+                a.left -= m;
+                a.timer += m;
+                if (a.timer >= a.interval && a.left > 0) { a.timer -= a.interval; arpFire(t); }
+            }
             Retrig& q = rt[t];
             if (q.left > 0) {
                 q.timer -= m;
@@ -1357,15 +1433,15 @@ bool Engine::load(const char* path) {
     long oldPat = 16 + 8 * oldNp + NTRACKS * 16 * (1 + oldNp);
     long expect = 20 + NPATTERNS * oldPat + (ver >= 2 ? 16 : 0);
     // v5..v7: 72 bzw. 80 Parameter, 128 Steps, speed-Feld
-    long nNp = ver == 5 ? 72 : 80;
+    long nNp = ver == 5 ? 72 : (ver <= 7 ? 80 : 88);
     long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nSize = 20 + NPATTERNS * nPat + 16;
-    if (ok && ver == 8 && size == (long)sizeof(Project)) {
+    if (ok && ver == PROJECT_VERSION && size == (long)sizeof(Project)) {
         memcpy(&proj, buf, sizeof(Project));
-    } else if (ok && ver >= 5 && ver <= 7 && size == nSize) {
+    } else if (ok && ver >= 5 && ver <= 8 && size == nSize) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
         memcpy(np, buf, 20);
-        np->version = 8;
+        np->version = PROJECT_VERSION;
         for (int pi = 0; pi < NPATTERNS; pi++) {
             const uint8_t* q = buf + 20 + pi * nPat;
             Pattern& P = np->pat[pi];
@@ -1387,12 +1463,12 @@ bool Engine::load(const char* path) {
         memcpy(np->fx, buf + 20 + NPATTERNS * nPat + 8, 8);
         memcpy(&proj, np, sizeof(Project));
         free(np);
-        printf("Projekt von Version %u auf 8 umgestellt\n", ver);
+        printf("Projekt von Version %u auf %d umgestellt\n", ver, PROJECT_VERSION);
     } else if (ok && ver >= 1 && ver <= 4 && size == expect) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
         memcpy(np->magic, "GBX1", 4);
-        np->version = 8;
+        np->version = PROJECT_VERSION;
         memcpy(&np->bpm, buf + 8, 2);
         memcpy(np->mst, buf + 10, 8);
         int scaleFromV3 = 0;
@@ -1436,7 +1512,7 @@ bool Engine::load(const char* path) {
         if (ver <= 3) np->mst[MS_SCALE] = (uint8_t)scaleFromV3;
         memcpy(&proj, np, sizeof(Project));
         free(np);
-        printf("Projekt von Version %u auf 8 umgestellt\n", ver);
+        printf("Projekt von Version %u auf %d umgestellt\n", ver, PROJECT_VERSION);
     } else {
         ok = false;
     }

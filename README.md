@@ -97,6 +97,32 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * Die Grafik zeigt den Euklid-Kreis mit wanderndem Playhead, die Richtung und das Schieberegister mit den erzeugten Tonhöhen.
 * Alle SEQ-Regler außer LEN und SPD sind auch **LFO-Ziele**. Ein langsamer LFO auf PULS oder DENS lässt einen Beat „atmen“.
 
+## Arpeggiator (ARP-Seite)
+
+Für alle Spuren mit Tonhöhe (Synth, FM, Wavetable, Samples …). Ein Trig spielt dann statt eines Tons die Akkordtöne – so lange, wie der Trig dauert (LEN auf der TRG-Seite).
+
+| Regler | Bedeutung |
+|---|---|
+| MODE | AUS, UP, DOWN, UPDN (hoch und runter), RAND (zufällig) |
+| CHRD | OKT, 5TH, MAJ, MIN, SUS4, MAJ7, MIN7, DOM7, DIM, SKALA (Töne der globalen Skala) |
+| OCT | über 1–4 Oktaven |
+| RATE | 1/32, 1/16T, 1/16, 1/8T, 1/8, 1/4 |
+| GATE | Tonlänge in % des Abstands |
+| ACCT | Akzent: der erste Ton jeder Runde lauter |
+
+Alle Werte lassen sich pro Step locken. Die Grafik zeigt die Tonfolge über die Trig-Länge.
+
+## Song-Modus (SNG-Seite, Gruppe PROJEKT)
+
+Eine Kette aus Patterns mit Wiederholungen (bis 64 Einträge):
+* ↑/↓ Eintrag wählen, ←/→ Pattern ändern, X/Y Wiederholungen, A neuer Eintrag, B löschen
+* **START** spielt den Song ab dem gewählten Eintrag, **R1** schaltet den Song-Modus an/aus
+* Im Song-Modus steht im Kopf „SNG 2/5“; START auf anderen Seiten setzt den Song fort
+
+## Pattern-Mutation (SET → PATTERN)
+
+„Pattern mutieren“ variiert das aktuelle Pattern: Trigs kommen dazu oder fallen weg, Velocity, Töne (in der Skala), gelegentliche Ratchets und Mikrotiming. Stärke mit ←/→ (LEICHT, MITTEL, STARK), A wendet sie an. „Mutation rückgängig“ holt das Pattern vor der letzten Mutation zurück.
+
 ## Mikrotiming (MTIM)
 
 MTIM verschiebt einen Trig um bis zu ±23/24 eines Steps, vorgezogen oder verspätet. Pro Step lockst du es mit A halten und MTIM drehen.
