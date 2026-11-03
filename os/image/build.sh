@@ -24,8 +24,10 @@ TOTAL_S=$((START + BOOT_S + ROOT_S + 2048))
 
 rm -f "$IMG" "$IMG.xz"
 truncate -s $((TOTAL_S * 512)) "$IMG"
+DISKID=47425653                    # feste MBR-Kennung -> root=PARTUUID=47425653-02 (Kernel ohne Initramdisk kennt kein LABEL=)
 sfdisk -q "$IMG" <<EOF
 label: dos
+label-id: 0x$DISKID
 start=$START, size=$BOOT_S, type=c, bootable
 start=$((START + BOOT_S)), size=$ROOT_S, type=83
 EOF
@@ -35,11 +37,12 @@ B="$O/boot.vfat"
 rm -f "$B"
 mkfs.vfat -F 32 -n GBBOOT -C "$B" $((BOOT_MB * 1024)) >/dev/null
 mkdir -p "$O/bootfiles/extlinux"
-cat > "$O/bootfiles/extlinux/extlinux.conf" <<'EOF'
+# Testphase: Kernelmeldungen auf dem Display (console=tty0), bei einem Absturz 60 s stehen bleiben (panic=60)
+cat > "$O/bootfiles/extlinux/extlinux.conf" <<EOF
 LABEL groovebox
   LINUX /Image
   FDT /rk3326-groovebox-r36s.dtb
-  APPEND root=LABEL=GBROOT rootfstype=ext4 rootwait rw console=ttyS2,1500000 quiet loglevel=3 vt.global_cursor_default=0 consoleblank=0
+  APPEND root=PARTUUID=$DISKID-02 rootfstype=ext4 rootwait rw console=ttyS2,1500000 console=tty0 loglevel=7 panic=60 consoleblank=0
 EOF
 cat > "$O/bootfiles/LIESMICH.txt" <<'EOF'
 R36S Groovebox OS
