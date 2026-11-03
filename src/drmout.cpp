@@ -144,18 +144,20 @@ void drmOutPresent(SDL_Surface* s) {
     if (g_off != 0 && s->w == w && s->h == h && s->format->BytesPerPixel == 4) {
         // Das Display zeigt an Byte k den Byte k+off des Zeilenstroms (R,G,B je Pixel) -> vorab um -off rotieren.
         // off = 3*N + r: Pixel um N verschieben, bei r=1/2 die Kanaele aus zwei Nachbarpixeln zusammensetzen.
+        // Der Versatz laeuft ueber das ganze Bild weiter: die ersten N Pixel einer Zeile stammen vom Ende der Vorzeile.
         int L = w * 3, o = ((g_off % L) + L) % L, N = o / 3, r = o % 3;
         for (int y = 0; y < h; y++) {
-            const uint32_t* src = (const uint32_t*)((uint8_t*)s->pixels + (size_t)y * s->pitch);
-            uint32_t* dst = tmp;
-            int q = (w - N) % w, qm = (q + w - 1) % w;
+            const uint32_t* cur = (const uint32_t*)((uint8_t*)s->pixels + (size_t)y * s->pitch);
+            const uint32_t* prv = (const uint32_t*)((uint8_t*)s->pixels + (size_t)(y > 0 ? y - 1 : h - 1) * s->pitch);
+            // Quelle fuer Ausgabepixel x: Pixel x-N fortlaufend (x<N -> Vorzeile), dazu der Vorgaenger fuer r=1/2
+            uint32_t prev = N > 0 ? prv[w - N - 1] : prv[w - 1];   // N <= w-1
             for (int x = 0; x < w; x++) {
-                uint32_t a = src[qm], c = src[q], v;
+                uint32_t c = x < N ? prv[x - N + w] : cur[x - N], v;
                 if (r == 0) v = c;
-                else if (r == 1) v = ((a & 0xffu) << 16) | ((c >> 8) & 0xffffu);
-                else v = ((a & 0xffffu) << 8) | ((c >> 16) & 0xffu);
-                dst[x] = 0xff000000u | v;
-                qm = q; if (++q == w) q = 0;
+                else if (r == 1) v = ((prev & 0xffu) << 16) | ((c >> 8) & 0xffffu);
+                else v = ((prev & 0xffffu) << 8) | ((c >> 16) & 0xffu);
+                tmp[x] = 0xff000000u | v;
+                prev = c;
             }
             memcpy(b.map + (size_t)y * b.pitch, tmp, (size_t)w * 4);
         }
