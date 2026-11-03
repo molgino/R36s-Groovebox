@@ -19,7 +19,7 @@ jobs:
       - name: Abhaengigkeiten
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-aarch64-linux-gnu libsdl2-dev libasound2-dev zip
+          sudo apt-get install -y g++-aarch64-linux-gnu libsdl2-dev libasound2-dev zip python3-numpy
 
       - name: Desktop-Build (Kompilierpruefung)
         run: make
@@ -28,7 +28,9 @@ jobs:
         run: ./tools/cross-build.sh
 
       - name: Paket
-        run: ./tools/package.sh
+        run: |
+          python3 tools/gensamples.py
+          ./tools/package.sh
 
       - uses: actions/upload-artifact@v4
         with:

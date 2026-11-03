@@ -54,7 +54,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq mmdebstrap debian-archive-keyring libsdl2-dev libasound2-dev \
-            mtools dosfstools e2fsprogs fdisk xz-utils kmod
+            mtools dosfstools e2fsprogs fdisk xz-utils kmod python3-numpy file
       - uses: actions/download-artifact@v4
         with: { name: uboot, path: os/out/uboot }
       - uses: actions/download-artifact@v4
@@ -64,6 +64,7 @@ jobs:
           tar -C os/out -xzf kernel.tgz
           make -j4
           file groovebox
+          python3 tools/gensamples.py
       - name: Grundsystem (Debian) bauen
         run: sudo os/rootfs/build.sh "$PWD/groovebox"
       - name: Image zusammensetzen
