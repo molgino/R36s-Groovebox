@@ -18,16 +18,24 @@ static volatile int g_status = 0;              // 0 aus, 1 wartet auf PC, 2 PC l
 static SDL_Thread* g_thread = nullptr;
 static char g_dev[32];
 
+// Gadget-Soundkarte suchen: Name/Langname/Treiber mit "uac"/"gadget"; sonst (im PC-Modus gibt es keine
+// USB-Host-Geraete) die erste Karte, die nicht der interne Codec rk817 ist
 static bool findGadget(char* out, int n) {
-    int card = -1;
+    int card = -1, other = -1;
     while (snd_card_next(&card) == 0 && card >= 0) {
-        char* nm = nullptr;
-        if (snd_card_get_name(card, &nm) == 0 && nm) {
-            bool hit = strcasestr(nm, "uac2") || strcasestr(nm, "gadget");
-            free(nm);
-            if (hit) { snprintf(out, n, "hw:%d,0", card); return true; }
-        }
+        char *nm = nullptr, *ln = nullptr;
+        snd_card_get_name(card, &nm);
+        snd_card_get_longname(card, &ln);
+        bool hit = (nm && (strcasestr(nm, "uac") || strcasestr(nm, "gadget"))) ||
+                   (ln && (strcasestr(ln, "uac") || strcasestr(ln, "gadget")));
+        bool internal = (nm && strcasestr(nm, "rk817")) || (ln && strcasestr(ln, "rk817"));
+        static int logged = 0;
+        if (logged < 8) { printf("USB-Audio: Karte %d '%s' / '%s'\n", card, nm ? nm : "?", ln ? ln : "?"); logged++; }
+        free(nm); free(ln);
+        if (hit) { snprintf(out, n, "hw:%d,0", card); return true; }
+        if (!internal && other < 0) other = card;
     }
+    if (other >= 0) { snprintf(out, n, "hw:%d,0", other); return true; }
     return false;
 }
 
