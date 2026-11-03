@@ -4,11 +4,18 @@
 set -u
 LOGDIR=/data/logs
 DEV=$(blkid -L GROOVEBOX 2>/dev/null || true)
+ROOTDEV=$(findmnt -no SOURCE /)
+ROOTDISK=/dev/$(lsblk -no PKNAME "$ROOTDEV")
+# nur eine GROOVEBOX-Partition auf der Systemkarte zaehlt (nicht auf einer zweiten Karte)
+case "$DEV" in "$ROOTDISK"*) ;; *) DEV=$(lsblk -lnpo NAME,LABEL "$ROOTDISK" | awk '$2=="GROOVEBOX"{print $1}' | head -1) ;; esac
 if [ -z "$DEV" ]; then
     ROOT=$(findmnt -no SOURCE /)
     DISK=/dev/$(lsblk -no PKNAME "$ROOT")
     echo "Lege Datenpartition auf $DISK an"
-    echo ",,c" | sfdisk --append --no-reread --force "$DISK"
+    # hinter der letzten Partition anlegen (die Luecke vor Partition 1 gehoert dem Bootloader!)
+    START=$(sfdisk -d "$DISK" | awk -F'[=,]' '/start=/{s=$2+0; z=$4+0; if (s+z>m) m=s+z} END{print m}')
+    START=$(( (START + 2047) / 2048 * 2048 ))
+    echo "start=$START, type=c" | sfdisk --append --no-reread --force "$DISK"
     partx -a "$DISK" 2>/dev/null || partx -u "$DISK" 2>/dev/null || true
     udevadm settle
     DEV=$(lsblk -lnpo NAME "$DISK" | tail -1)

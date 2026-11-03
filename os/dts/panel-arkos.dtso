@@ -9,7 +9,7 @@
         __overlay__ {
             compatible = "rocknix,generic-dsi";
             panel_description =
-                "G name='r36s-arkos' size=52,70 delays=20,150,20,120,20 format=rgb888 lanes=4 flags=0xe03",
+                "G size=52,70 delays=20,150,20,120,20 format=rgb888 lanes=4 flags=0xe03",
 
                 "M clock=29000 horizontal=640,46,24,44 vertical=480,165,111,14",
                 "M clock=29070 horizontal=640,46,35,44 vertical=480,165,101,14",
