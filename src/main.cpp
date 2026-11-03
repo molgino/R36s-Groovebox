@@ -368,37 +368,76 @@ static void savePcRecording(const int16_t* d, int frames) {
     printf("PC-Aufnahme gespeichert: %s (%d Frames)\n", path, frames);
 }
 
-// Lautstaerketasten (Kernel-Geraet "gpio-keys-vol", im Groovebox-OS nicht ueber SDL sichtbar)
-static int volKeyFd = -2;
+// Lautstaerke- und Power-Taste (Kernel-Geraete "gpio-keys-vol" und "rk805 pwrkey", im Groovebox-OS nicht ueber SDL sichtbar)
+// Power kurz: Display aus/an (Musik laeuft weiter), Power lang (1,5 s): speichern und ausschalten
+static int volKeyFd = -2, pwrKeyFd = -1;
+static bool screenOff = false;
+static Uint32 pwrDownAt = 0;
+static void setBacklight(bool on) {
+    DIR* d = opendir("/sys/class/backlight");
+    struct dirent* e;
+    while (d && (e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        char p[300]; snprintf(p, sizeof p, "/sys/class/backlight/%s/bl_power", e->d_name);
+        FILE* f = fopen(p, "w"); if (f) { fputs(on ? "0" : "4", f); fclose(f); }
+    }
+    if (d) closedir(d);
+}
+static void drawAll(bool help);
+static void powerOff() {
+    toast("SPEICHERN UND AUSSCHALTEN ...");
+    msgUntil = SDL_GetTicks() + 10000;
+    if (screenOff) { setBacklight(true); screenOff = false; }
+    drawAll(false); present();
+    saveProject();
+    saveSettings();
+    sync();
+    if (system("systemctl poweroff") != 0) printf("Ausschalten fehlgeschlagen\n");
+    quitReq = true;
+}
 static void pollVolumeKeys() {
     if (volKeyFd == -2) {
         volKeyFd = -1;
         struct stat st;
-        if (stat("/etc/groovebox-os", &st) != 0) return;   // ArkOS regelt die Lautstaerke selbst
-        for (int i = 0; i < 16 && volKeyFd < 0; i++) {
+        if (stat("/etc/groovebox-os", &st) != 0) return;   // ArkOS regelt Lautstaerke/Power selbst
+        for (int i = 0; i < 16; i++) {
             char p[32]; snprintf(p, sizeof p, "/dev/input/event%d", i);
             int fd = open(p, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
             if (fd < 0) continue;
             char nm[64] = "";
             ioctl(fd, EVIOCGNAME(sizeof nm), nm);
-            if (strstr(nm, "vol")) { volKeyFd = fd; printf("Lautstaerketasten: %s (%s)\n", nm, p); }
+            if (strstr(nm, "vol") && volKeyFd < 0) { volKeyFd = fd; printf("Lautstaerketasten: %s (%s)\n", nm, p); }
+            else if (strstr(nm, "pwrkey") && pwrKeyFd < 0) { pwrKeyFd = fd; printf("Power-Taste: %s (%s)\n", nm, p); }
             else close(fd);
         }
         if (volKeyFd >= 0) hwVolumeSet(cfg.hwVol);   // gespeicherte Lautstaerke wiederherstellen
     }
-    if (volKeyFd < 0) return;
     struct input_event ev;
-    int step = 0;
-    while (read(volKeyFd, &ev, sizeof ev) == (ssize_t)sizeof ev)
-        if (ev.type == EV_KEY && ev.value != 0) {   // 1 = gedrueckt, 2 = gehalten (Wiederholung)
-            if (ev.code == KEY_VOLUMEUP) step += 5;
-            if (ev.code == KEY_VOLUMEDOWN) step -= 5;
+    if (volKeyFd >= 0) {
+        int step = 0;
+        while (read(volKeyFd, &ev, sizeof ev) == (ssize_t)sizeof ev)
+            if (ev.type == EV_KEY && ev.value != 0) {   // 1 = gedrueckt, 2 = gehalten (Wiederholung)
+                if (ev.code == KEY_VOLUMEUP) step += 5;
+                if (ev.code == KEY_VOLUMEDOWN) step -= 5;
+            }
+        if (step) {
+            cfg.hwVol = clampi(cfg.hwVol + step, 0, 100);
+            hwVolumeSet(cfg.hwVol);
+            toast("LAUTSTAERKE %d%%", cfg.hwVol);
+            saveSettings();
         }
-    if (step) {
-        cfg.hwVol = clampi(cfg.hwVol + step, 0, 100);
-        hwVolumeSet(cfg.hwVol);
-        toast("LAUTSTAERKE %d%%", cfg.hwVol);
-        saveSettings();
+    }
+    if (pwrKeyFd >= 0) {
+        Uint32 now = SDL_GetTicks();
+        while (read(pwrKeyFd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
+            if (ev.type != EV_KEY || ev.code != KEY_POWER) continue;
+            if (ev.value == 1) pwrDownAt = now ? now : 1;
+            else if (ev.value == 0 && pwrDownAt) {   // losgelassen vor 1,5 s: Display umschalten
+                if (now - pwrDownAt < 1500) { screenOff = !screenOff; setBacklight(!screenOff); }
+                pwrDownAt = 0;
+            }
+        }
+        if (pwrDownAt && now - pwrDownAt >= 1500) { pwrDownAt = 0; powerOff(); }
     }
 }
 
@@ -3503,9 +3542,10 @@ int main(int argc, char** argv) {
         }
         bool help = in.down[BT_SELECT] && !funcUsed && in.heldMs(BT_SELECT, now) > 700;
         Uint64 tq0 = SDL_GetPerformanceCounter();
-        drawAll(help);
+        bool draw = !screenOff || remoteWanted();   // Display aus: nicht zeichnen (Akku), ausser jemand schaut im Browser zu
+        if (draw) drawAll(help);
         Uint64 tq1 = SDL_GetPerformanceCounter();
-        present();
+        if (draw) present();
         Uint64 tq2 = SDL_GetPerformanceCounter();
         {   // Bildschirm-Spiegelung fuers Webinterface (nur wenn jemand zuschaut, max. 30 Bilder/s)
             static Uint32 snapAt = 0;

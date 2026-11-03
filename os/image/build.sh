@@ -37,16 +37,19 @@ B="$O/boot.vfat"
 rm -f "$B"
 mkfs.vfat -F 32 -n GBBOOT -C "$B" $((BOOT_MB * 1024)) >/dev/null
 mkdir -p "$O/bootfiles/extlinux"
-# Testphase: Kernelmeldungen auf dem Display (console=tty0), bei einem Absturz 60 s stehen bleiben (panic=60)
+# Ruhiger Start ohne Textmeldungen auf dem Display. Zur Fehlersuche in extlinux.conf "console=tty0 loglevel=7 panic=60" ergaenzen.
 cat > "$O/bootfiles/extlinux/extlinux.conf" <<EOF
 LABEL groovebox
   LINUX /Image
   FDT /rk3326-groovebox-r36s.dtb
-  APPEND root=PARTUUID=$DISKID-02 rootfstype=ext4 rootwait rw console=ttyS2,1500000 console=tty0 loglevel=7 panic=60 consoleblank=0
+  APPEND root=PARTUUID=$DISKID-02 rootfstype=ext4 rootwait rw console=ttyS2,1500000 quiet loglevel=3 panic=10 consoleblank=0 vt.global_cursor_default=0
 EOF
 cat > "$O/bootfiles/LIESMICH.txt" <<'EOF'
 SYNTH CITY OS
-Diagnose-Logs liegen nach dem ersten Start auf der Partition GROOVEBOX im Ordner logs/.
+Diagnose-Logs liegen auf der Partition GROOVEBOX im Ordner logs/ (auch im Browser: http://192.168.77.1 -> Logs).
+Startmeldungen auf dem Display anzeigen (Fehlersuche): in extlinux/extlinux.conf an die APPEND-Zeile
+  console=tty0 loglevel=7 panic=60
+anhaengen.
 Anderes Display testen: in extlinux/extlinux.conf die FDT-Zeile auf
 /rk3326-gameconsole-r36s.dtb (ROCKNIX-Standard-Display) aendern.
 EOF

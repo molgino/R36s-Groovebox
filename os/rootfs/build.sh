@@ -45,9 +45,9 @@ ln -sfn /data/update update
 echo "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null) $(date +%Y-%m-%d)" > VERSION
 cd - >/dev/null
 
-echo "Groovebox-OS $(date +%Y-%m-%d) ($(git -C "$REPO" rev-parse --short HEAD 2>/dev/null))" > "$ROOT/etc/groovebox-os"
-echo r36s-groovebox > "$ROOT/etc/hostname"
-printf '127.0.0.1\tlocalhost\n127.0.1.1\tr36s-groovebox\n' > "$ROOT/etc/hosts"
+echo "SYNTH CITY OS $(date +%Y-%m-%d) ($(git -C "$REPO" rev-parse --short HEAD 2>/dev/null))" > "$ROOT/etc/groovebox-os"
+echo synth-city > "$ROOT/etc/hostname"
+printf '127.0.0.1\tlocalhost\n127.0.1.1\tsynth-city\n' > "$ROOT/etc/hosts"
 cat > "$ROOT/etc/fstab" <<'EOF'
 LABEL=GBROOT  /      ext4  defaults,noatime,commit=30  0 1
 LABEL=GBBOOT  /boot  vfat  defaults,noauto              0 0
