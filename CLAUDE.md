@@ -5,11 +5,12 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 
 ## Aufbau
 - `src/engine.*` Sequencer + 7 Engines (KICK SNARE HAT CLAP SYNTH FM SMPL), Insert-FX, Delay/Reverb, Kompressor mit Sidechain
-- `src/params.h` alle Parameter. Speicherseiten je Spur (TRG SRC FLT AMP LFO INS SRC2, je 8) und UI-Seiten `PG_*` (TRG SRC SRC2 FLT AMP LFO INS | MIX FX CMP | PRJ MST SET); SET (=PG_SYS) ist eine Listen-Seite (`SetItem`, `drawSettings`), Mapping `PG_STORE`; FM = 4 OP/8 Algorithmen (`FM_MODS/FM_CARRIERS/FM_LAYOUT`); globale Skala `mst[MS_SCALE]`
+- `src/params.h` alle Parameter. Speicherseiten je Spur (TRG SRC FLT AMP LFO1 INS SRC2 LFO2 LFO3, je 8 = 72 Parameter; `LFO_BASE`, `LF_*`) und UI-Seiten `PG_*` (TRG SRC SR2 FLT AMP LF1 LF2 LF3 INS | MIX FX CMP | PRJ MST SET); SET (=PG_SYS) ist eine Listen-Seite (`SetItem`, `drawSettings`), Mapping `PG_STORE`; FM = 4 OP/8 Algorithmen (`FM_MODS/FM_CARRIERS/FM_LAYOUT`); globale Skala `mst[MS_SCALE]`
 - `src/main.cpp` UI (640x480, Grafiken/Animationen), Bedienung, Einstellungen, PC-Modus-Steuerung
 - `src/midi.cpp` ALSA-Seq + rawmidi + USB-Seriell + RTP-MIDI (Port 5004/5005); `src/dhcpd.cpp` Mini-DHCP (`groovebox --dhcpd usb0`)
 - `arkos/` Ports-Skripte, `arkos/groovebox/pc-modus.sh` (USB-Gadget: RNDIS + DHCP + SSH), `dtb-otg/` gepatchte DTBs
-- Projektformat v4 (`Project` in engine.h, 56 Parameter/Spur) mit Migration v1–v3 in `Engine::load` – bei Strukturänderungen Version erhöhen + migrieren
+- Projektformat v5 (`Project` in engine.h: 72 Parameter, 128 Steps, `speed` pro Spur) mit Migration v1–v4 in `Engine::load` (`remapLegacy`) – bei Strukturänderungen Version erhöhen + migrieren
+- Sequencer: 12 Ticks pro 16tel (`doTick`/`stepTrack`), Tempo-Faktor `SPEED_TPS`, Trig-Bedingungen `P_COND` (`condOk`, Schleifenzähler `loopCount`), FILL `eng.fill`
 - Projekte `projects/songNN.gbx` (32 Plätze, aktiver Platz in settings.cfg `song`), Presets `presets/<ENGINE>/NN.gbp`
 
 ## Bauen
@@ -26,4 +27,4 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 
 ## Offene Ideen
 - Kernel-Module `usb_f_midi`/`usb_f_uac2` für ArkOS 4.4.189 bauen (echtes USB-MIDI/Audio)
-- Song-Modus, Sampling vom USB-Eingang, Trig-Bedingungen
+- Song-Modus, Sampling vom USB-Eingang, Mikrotiming

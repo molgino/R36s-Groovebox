@@ -9,6 +9,7 @@ struct Step { uint8_t on; uint8_t lock[NPARAMS]; };
 struct Pattern {
     uint8_t machine[NTRACKS];
     uint8_t len[NTRACKS];
+    uint8_t speed[NTRACKS];      // Index in SPEED_TPS (ab v5)
     uint8_t p[NTRACKS][NPARAMS];
     Step s[NTRACKS][NSTEPS];
 };
@@ -81,7 +82,12 @@ struct Voice {
     int scaleVal = 0;   // globale Tonskala (vom Engine gesetzt)
     ADSR aenv, fenv;
     SVF filt, aux;
-    float lfoPh = 0, lfoSH = 0, lfoVal = 0;
+    // 3 LFOs pro Stimme (Ziel = beliebiger Spurparameter)
+    float lfPh[NLFO] = {0}, lfVal[NLFO] = {0}, lfSH[NLFO] = {0}, lfSHp[NLFO] = {0}, lfRun[NLFO] = {0}, lfFade[NLFO] = {1, 1, 1};
+    float lfHeld[NLFO] = {0}, lfOff[NLFO] = {0};
+    int lfDst[NLFO] = {-1, -1, -1}, lfMax[NLFO] = {127, 127, 127};
+    float noteMod = 0;
+    float stepSec = 0.125f;   // Laenge eines 16tels (fuer synchrone LFOs)
     float hold = 0; int holdC = 0;
     float glideCo = 0;
     // Sample-Wiedergabe
@@ -102,7 +108,15 @@ struct Voice {
     volatile uint32_t trigs = 0;
     volatile float peakHold = 0;
 
-    inline int P(int i) const { return lk[i] != NO_LOCK ? lk[i] : base[i]; }
+    inline int PR(int i) const { return lk[i] != NO_LOCK ? lk[i] : base[i]; }   // ohne LFO
+    inline int P(int i) const {                                                   // mit LFO-Modulation
+        int r = PR(i);
+        for (int k = 0; k < NLFO; k++)
+            if (i == lfDst[k]) { r += (int)lfOff[k]; if (r < 0) r = 0; if (r > lfMax[k]) r = lfMax[k]; }
+        return r;
+    }
+    void lfoUpdate(int n, float sr);
+    void lfoTrigger();
     void noteOn(int machine, const uint8_t* base, const uint8_t* locks, float velScale, int gateSamples, float sr);
     void noteOff() { aenv.off(); fenv.off(); }
     bool gated() const { return machine == M_SYNTH || machine == M_FM || (machine == M_SAMPLE && P(P_S5)); }
@@ -127,8 +141,9 @@ public:
     volatile int curPat = 0, nextPat = -1;
     volatile int trackPos[NTRACKS] = {0};
     volatile int playedStep[NTRACKS] = {0};
-    int globalStep = 0;
-    double clock = 0, nextStepAt = 0;
+    double clock = 0;
+    volatile bool fill = false;        // FILL-Modus fuer Trig-Bedingungen
+    volatile int loopCount[NTRACKS] = {0};
     bool mute[NTRACKS] = {false};
     volatile float dj = 0;     // -1..1 DJ-Filter (rechter Stick)
     bool solo[NTRACKS] = {false};
@@ -177,16 +192,24 @@ private:
     int curOff = 0;
     int midiNote[NTRACKS], midiGate[NTRACKS], liveNote[NTRACKS], skipStep[NTRACKS];
     uint8_t liveLk[NTRACKS][NPARAMS];
-    double stepStartClock = 0, curStepLen = 1;
-    double nextTickAt = 0, tickInt = 1; int ticksLeft = 0;
+    // Sequencer-Raster: 12 Ticks pro 16tel, jede Spur mit eigener Geschwindigkeit
+    double nextTickAt = 0;
+    long globalTick = 0, patTick = 0;
+    int trackTick[NTRACKS] = {0};
+    bool lastCond[NTRACKS] = {false};
+    double stepStartT[NTRACKS] = {0}, stepLenT[NTRACKS] = {1};
     int tickCount = 0; double tickHist[25]; int tickHistN = 0;
+    float dSm = 0, dhpL = 0, dhpR = 0;   // Delay: geglaettete Zeit, Hochpass in der Schleife
+    void doTick();
+    void stepTrack(int t);
+    bool condOk(int t, int cond);
+    double trackStepSamples(int t) const { return stepSamples() * SPEED_TPS[proj.pat[curPat].speed[t] % 7] / 12.0; }
     bool sendStart = false, sendStop = false;
     void initFx(int sampleRate);
     void emit(uint8_t st, uint8_t d1, uint8_t d2, int off) { if (midiOut) midiOut(st, d1, d2, off); }
     void allNotesOff();
     void liveNoteOn(int t, int note, int vel);
     void clockTick();
-    void doStep();
     void trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, bool toMidi = true);
     void processBlock(float* out, int n);
 };

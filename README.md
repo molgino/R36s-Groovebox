@@ -1,7 +1,7 @@
 # R36S Groovebox
 
 Elektron-artige Groovebox für den R36S unter ArkOS 2.0 (läuft auch auf dem Linux-Desktop).
-8 Spuren, 16 Patterns à 16 Steps, Parameter-Locks, Sample-Spuren, USB-Audio, USB-MIDI, Ping-Pong-Delay, Reverb und ein DJ-Filter.
+8 Spuren, 16 Patterns mit bis zu 128 Steps pro Spur, Parameter-Locks, Sample-Spuren, USB-Audio, USB-MIDI, Ping-Pong-Delay, Reverb und ein DJ-Filter.
 Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt EmulationStation.
 
 ## Klangerzeugung
@@ -21,14 +21,14 @@ Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regle
 
 Jede Spur hat diese Seiten:
 
-* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE
+* **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE, **COND** (Trig-Bedingung, siehe unten)
 * **SRC** (und **SRC2** bei FM): Regler der Engine (siehe Tabelle). Grafisch dargestellt werden:
   * bei SYNTH die tatsächlich klingende, gemischte Wellenform
   * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten
   * bei SMPL die Sample-Wellenform mit Start, Ende und Abspielposition
 * **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve.
 * **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
-* **LFO** (Welle mit laufender Phase): Tempo, Tiefe, Ziel (Pitch/Freq/Vol/Pan/Reso/Crush), Wellenform, Retrigger, Bitcrusher, Samplerate-Reduktion, Drive
+* **LF1 / LF2 / LF3**: drei LFOs pro Spur (siehe unten)
 * **INS**: Insert-Effekt der Spur. Zuerst unter TYPE den Effekt wählen, dann MIX aufdrehen:
 
   | TYPE | Regler |
@@ -40,18 +40,60 @@ Jede Spur hat diese Seiten:
   | RING (Ringmodulator) | FREQ, FINE |
   | APAN (Autopan) | RATE, DEPTH |
 
+  Dazu kommen auf derselben Seite **CRSH** (Bitcrusher), **SRR** (Samplerate-Reduktion) und **DRIV** (Drive).
   Alle Regler, auch TYPE, lassen sich pro Step locken. Die Insert-Effekte sitzen hinter Filter und Hüllkurve, also vor Panorama und den Sends.
 
 Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 
 * **FX**: die Send-Effekte
-  * Delay: D.TIME (1/32 bis 1/2, im Songtempo), D.FBK, D.TONE, D.PING (0 = mono, 127 = volles Ping-Pong)
+  * Delay:
+    * D.TIME: 1/64 bis 1/1 im Songtempo, auch triolisch (T) und punktiert (.). Zeitwechsel gleiten wie beim Bandecho.
+    * **D.FBK bis 120 %**: Ab etwa 100 % kippt das Delay in eine selbsterhaltende **Feedback-Schleife**. Sättigung und Bassfilter in der Schleife halten sie dabei im Rahmen.
+    * D.TONE, D.PING (0 = mono, 127 = volles Ping-Pong)
   * Reverb: R.SIZE, R.DAMP, R.PRE (Predelay bis 250 ms), R.WIDE (Stereobreite)
 * **CMP**: Master-Kompressor mit **Sidechain** (siehe unten)
 * **MIX**: Mixer mit Mute/Solo (siehe unten)
 * **PRJ**: Projekte und Presets (siehe unten)
 * **MST**: BPM, Swing, Gesamtlautstärke, DRIVE (Sättigung der Summe) und die globale Tonskala SCALE
 * **SET**: Einstellungen als Liste (siehe unten, wird in `settings.cfg` gespeichert)
+
+## Steps, Seiten und Geschwindigkeit
+
+* Jede Spur hat **1 bis 128 Steps**. Die Länge stellst du über SELECT + L2/R2 oder in SET ein.
+* Angezeigt werden immer 16 Steps. Die Leiste über den Step-Tasten zeigt die bis zu 8 Seiten: Die Cursor-Seite ist hell, die laufende Seite in Spurfarbe.
+* Das Steuerkreuz läuft durch alle Steps. **L1/R1 springt eine Seite** (16 Steps) weiter.
+* **Tempo-Faktor pro Spur** (SET → „Tempo-Faktor Spur“): 1/8×, 1/4×, 1/2×, 3/4×, 1×, 3/2× und 2×.
+* Ein Pattern-Wechsel greift, wenn die längste Spur durchgelaufen ist.
+
+## Trig-Bedingungen (COND, Digitone-II-Stil)
+
+COND auf der TRG-Seite gilt für die Spur. Meist lockst du COND aber pro Step: A halten und COND drehen. PROB gilt zusätzlich.
+
+| COND | Trig spielt, wenn … |
+|---|---|
+| `A:B` | im A-ten von je B Durchläufen der Spur, z. B. `1:2` = jeder zweite Durchlauf, `4:4` = jeder vierte |
+| `!A:B` | in allen Durchläufen außer dem A-ten von je B, z. B. `!1:4` |
+| `FILL` / `!FILL` | nur bei eingeschaltetem bzw. ausgeschaltetem FILL-Modus (**SELECT + L1**, im Header blinkt FILL) |
+| `PRE` / `!PRE` | die vorige Bedingung auf dieser Spur erfüllt war bzw. nicht |
+| `NEI` / `!NEI` | die letzte Bedingung der Nachbarspur (Spur davor) erfüllt war bzw. nicht |
+| `1ST` / `!1ST` | nur im ersten Durchlauf nach Start bzw. Pattern-Wechsel, bzw. in allen außer dem ersten |
+
+## LFOs (LF1, LF2, LF3)
+
+Jede Spur hat drei LFOs. Jeder kann **jeden Parameter der Spur** modulieren, auch die Regler eines anderen LFOs.
+
+| Regler | Funktion |
+|---|---|
+| RATE | Frequenz (frei, 0,05–25 Hz) |
+| SYNC | FREE oder taktsynchron: 4BAR, 2BAR, 1BAR, 1/2 … 1/32, 1/4T, 1/8T, 1/16T |
+| ZIEL | Zielparameter (NOTE = Tonhöhe, ±12 Halbtöne bei voller Tiefe) |
+| DEPTH | Tiefe, bipolar |
+| WAVE | SIN, TRI, SAW+, SAW−, SQR, **EXP+**, **EXP−**, S&H, RND (weicher Zufall) |
+| MODE | **FREE** (läuft durch), **TRIG** (Neustart bei jedem Trig), **HOLD** (Wert beim Trig festhalten), **ONE** (eine Periode, dann stehen bleiben), **HALF** (halbe Periode) |
+| PHASE | Startphase bei TRIG/ONE/HALF |
+| FADE | links einblenden, rechts ausblenden (startet bei jedem Trig) |
+
+Die Grafik zeigt die Kurve, die laufende Phase und das Ziel.
 
 ## Tonskala (global)
 
@@ -170,7 +212,8 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | **SELECT kurz antippen** | **Seitenmenü**: alle Seiten nach Gruppen (SPUR / MIX & FX / PROJEKT), Steuerkreuz wählt, A öffnet |
 | SELECT halten | Hilfe-Einblendung |
 | SELECT + rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass |
-| L1/R1, L2/R2 | Regler bzw. Seite (alternativ zu den Sticks) |
+| L1/R1 | auf Spurseiten: Step-Seite ±16, sonst Regler |
+| L2/R2 | Seite (alternativ zum rechten Stick) |
 | START | Play / Stop |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
 | SELECT + ↑ | Aufnahme an/aus (für MIDI-Eingabe) |
@@ -178,8 +221,9 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | SELECT + A | Spur stummschalten |
 | SELECT + B | Spur löschen |
 | SELECT + X/Y | Engine der Spur wechseln (alternativ: Regler ENGINE auf der TRG-Seite) |
-| SELECT + L1/R1 | Pattern kopieren / einfügen |
-| SELECT + L2/R2 | Spurlänge (Polymetrie, 1 bis 16) |
+| SELECT + L1 | FILL-Modus an/aus |
+| SELECT + R1 | Pattern einfügen (kopieren: SET-Seite) |
+| SELECT + L2/R2 | Spurlänge (Polymetrie, 1 bis 128) |
 | SELECT + START | Speichern (2 s halten: Speichern und Beenden) |
 
 Im Header siehst du den **Akkustand**: grün beim Laden, gelb unter 30 %, rot und blinkend unter 10 %.

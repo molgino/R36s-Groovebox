@@ -314,7 +314,12 @@ static void animate() {
     float k = 1.f - expf(-dt * 18.f);
     float ty = 244.f + track * 18.f;
     hlY = hlY < 0 ? ty : hlY + (ty - hlY) * k;
-    curXg = curXg < 0 ? cursor : curXg + (cursor - curXg) * k;
+    {
+        static int lastPg = -1;
+        int pg = cursor / 16, cx = cursor % 16;
+        if (pg != lastPg || curXg < 0) curXg = (float)cx; else curXg += (cx - curXg) * k;
+        lastPg = pg;
+    }
     oscDrift += dt;
     if (now - batAt > 10000 || batAt == 0) { batAt = now; readBattery(); }
 }
@@ -366,7 +371,8 @@ static void drawHeader() {
     text(8, 4, b, C_TEXT, 2);
     if (eng.nextPat >= 0) {
         if ((SDL_GetTicks() / 250) % 2) { snprintf(b, sizeof b, ">%02d", eng.nextPat + 1); text(58, 4, b, C_ACC); }
-        int prog = eng.playing ? (eng.playedStep[0] + 1) * 48 / NSTEPS : 0;
+        int l0 = curP().len[0] < 1 ? 1 : curP().len[0];
+        int prog = eng.playing ? (eng.playedStep[0] + 1) * 48 / l0 : 0;
         fill(8, 36, 48, 2, C_OFF); fill(8, 36, prog, 2, C_ACC);
     }
     playIcon(62, 20, eng.playing);
@@ -380,11 +386,15 @@ static void drawHeader() {
     }
     snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]);
     text(84, 21, b, C_DIM);
-    if (curScale() && !eng.recording) { fmtParam(MST_DEFS[MS_SCALE], curScale(), b, sizeof b); text(140, 21, b, dimC(C_ACC, 0.8f)); }
+    if (curScale() && !eng.recording && !eng.fill) { fmtParam(MST_DEFS[MS_SCALE], curScale(), b, sizeof b); text(140, 21, b, dimC(C_ACC, 0.8f)); }
     if (eng.recording) {
         float pl = 0.5f + 0.5f * sinf(animTime * 6.f);
         rrect(140, 24, 9, 9, 4, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
         text(152, 21, "REC", C_TRIG);
+    } else if (eng.fill) {
+        float pl = 0.5f + 0.5f * sinf(animTime * 8.f);
+        rrect(138, 21, 40, 16, 4, mix(dimC(C_LOCK, 0.5f), C_LOCK, pl));
+        text(142, 21, "FILL", C_BG);
     }
     snprintf(b, sizeof b, "T%d %s", track + 1, MACHINE_NAMES[curP().machine[track]]);
     text(196, 4, b, eng.mute[track] ? C_DIM : mix(tc, C_PLAY, flash[track] * 0.35f), 2);
@@ -485,6 +495,7 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         if (idx == P_NOTE) {   // Note in die Skala der Spur einrasten
             val = quantizeNote(val, curScale());
         }
+        if (d.kind == K_LDEST) snprintf(label, ln, "%s", val > 0 ? "ZIEL" : "DEST");
         if (d.kind == K_SCALE && val > 0) snprintf(label, ln, "%s %s", NOTE_NAMES[(val - 1) % 12], SCALE_LONG[((val - 1) / 12) % NSCALES]);
         if (d.kind == K_SMPL) {
             d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
@@ -502,6 +513,7 @@ static bool isEnvTime(int k) {
 static bool isEnvSus(int k) { return (page == PG_AMP && k == 2) || (page == PG_FLT && k == 6); }
 
 static void knobText(const ParamDef& d, int val, char* b, int n, int k = -1) {
+    if (d.kind == K_LDEST) { if (val > 0) snprintf(b, n, "%.5s", paramDef(curP().machine[track], val - 1).name); else snprintf(b, n, "---"); return; }
     if (k >= 0 && trackPage(page) && isEnvTime(k)) {
         float s = envSec(val);
         if (s < 1.f) snprintf(b, n, "%.0fms", s * 1000.f); else snprintf(b, n, "%.1fs", s);
@@ -634,33 +646,51 @@ static float waveAt(int w, float ph, float pw) {
 }
 
 // LFO-Welle mit laufender Phase
-static void lfoGraph(int gx, int gy, int gw, int gh, int spd, int dep, int wave, float ph, Col c) {
+static int pv(int idx);
+static float lfoWaveUi(int wave, float p) {   // wie in der Engine, Zufall fest fuer die Anzeige
+    p -= floorf(p);
+    switch (wave) {
+    case LW_SIN: return sinf(p * 6.2831853f);
+    case LW_TRI: return 1.f - 4.f * fabsf(p - 0.5f);
+    case LW_SAWUP: return 2.f * p - 1.f;
+    case LW_SAWDN: return 1.f - 2.f * p;
+    case LW_SQR: return p < 0.5f ? 1.f : -1.f;
+    case LW_EXPUP: return (exp2f(p * 5.f) - 1.f) / 31.f * 2.f - 1.f;
+    case LW_EXPDN: return (exp2f((1.f - p) * 5.f) - 1.f) / 31.f * 2.f - 1.f;
+    case LW_SH: { int seg = (int)(p * 4); return sinf(seg * 12.9898f + 1.3f) * 0.9f; }
+    default: { float q = p * 4; int seg = (int)q; float x = (1.f - cosf((q - seg) * 3.14159f)) * 0.5f;
+               float a = sinf(seg * 12.9898f + 1.3f) * 0.9f, b = sinf((seg + 1) * 12.9898f + 1.3f) * 0.9f; return a + (b - a) * x; }
+    }
+}
+static float uiLfoPhase[NLFO];
+
+// LFO: Kurve bei voller Tiefe (grau), wirksame Kurve (farbig), laufende Phase, Ziel und Tempo
+static void lfoGraph(int gx, int gy, int gw, int gh, int k, int base, float livePh, bool live, Col c) {
     graphBox(gx, gy, gw, gh);
     int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 18) / 2;
+    int rate = pv(base + LF_RATE), sync = pv(base + LF_SYNC) % 12, dep = pv(base + LF_DEPTH), wave = pv(base + LF_WAVE) % LW_COUNT;
+    int mode = pv(base + LF_MODE), dest = pv(base + LF_DEST);
     float amp = (dep - 64) / 64.f;
+    float hz = sync ? 1.f / (LFO_SYNC_STEPS[sync] * 15.f / eng.proj.bpm) : 0.05f * exp2f(rate * (9.f / 127.f));
+    if (!live) uiLfoPhase[k] += hz * animDt;
+    float ph = live ? livePh : uiLfoPhase[k];
     fill(x0, mid, W, 1, C_OFF2);
     static int ys[700];
     if (W > 690) W = 690;
-    for (int i = 0; i < W; i++) {
-        float p = (float)i / W * 2.f, v;
-        if (wave == 4) { int seg = (int)(p * 4); v = sinf(seg * 12.9898f) * 0.9f; }   // S&H-Andeutung
-        else { int w = wave == 0 ? 3 : (wave == 1 ? 2 : (wave == 2 ? 0 : 1)); v = waveAt(w, p, 0.5f); }
-        ys[i] = mid - (int)(v * amp * A);
-    }
-    for (int i = 0; i < W; i += 3) {   // Wellenform bei voller Tiefe als Geisterkurve
-        float p = (float)i / W * 2.f, v;
-        if (wave == 4) { int seg = (int)(p * 4); v = sinf(seg * 12.9898f) * 0.9f; }
-        else { int w = wave == 0 ? 3 : (wave == 1 ? 2 : (wave == 2 ? 0 : 1)); v = waveAt(w, p, 0.5f); }
-        fill(x0 + i, mid - (int)(v * A), 2, 1, C_OFF2);
-    }
+    for (int i = 0; i < W; i += 3) fill(x0 + i, mid - (int)(lfoWaveUi(wave, (float)i / W * 2.f) * A), 2, 1, C_OFF2);
+    for (int i = 0; i < W; i++) ys[i] = mid - (int)(lfoWaveUi(wave, (float)i / W * 2.f) * amp * A);
     curve(x0, ys, W, mid, c, 35);
     float pp = ph - floorf(ph);
     int px = x0 + (int)(pp * W / 2.f);
     glowDot(px, ys[clampi(px - x0, 0, W - 1)], c);
-    glowDot(px + W / 2, ys[clampi(px + W / 2 - x0, 0, W - 1)], dimC(c, 0.6f));
-    char b[24];
-    snprintf(b, sizeof b, "%.2f HZ", 0.05f * exp2f(spd * (9.f / 127.f)));
-    text(gx + gw - 10 - textW(b), gy + 6, b, dimC(c, 0.8f));
+    char b[48];
+    static const char* mn[5] = {"FREE", "TRIG", "HOLD", "ONE", "HALF"};
+    if (sync) { char sb[12]; fmtParam(COMMON_DEFS[P_L1 + LF_SYNC], sync, sb, sizeof sb); snprintf(b, sizeof b, "%s  %s", sb, mn[mode % 5]); }
+    else snprintf(b, sizeof b, "%.2f HZ  %s", hz, mn[mode % 5]);
+    text(gx + gw - 10 - textW(b), gy + 4, b, dimC(c, 0.8f));
+    if (dest > 0) snprintf(b, sizeof b, "-> %s", paramDef(curP().machine[track], dest - 1).name);
+    else snprintf(b, sizeof b, "KEIN ZIEL");
+    text(gx + 10, gy + 4, b, dest > 0 && dep != 64 ? c : C_DIM);
 }
 
 // Oszillator: eine gemischte Wellenform (OSC1 + OSC2 + SUB) wie sie klingt; Verstimmung = Bewegung
@@ -795,7 +825,7 @@ static void paramChip(int k, int x, int y, Col tc) {
 static int graphKind(int row) {
     if (page == PG_AMP && row == 0) return 1;             // AMP: Huellkurve
     if (page == PG_FLT) return row == 0 ? 2 : 1;          // FLT: Filter + Huellkurve
-    if (page == PG_LFO && row == 0) return 3;             // LFO
+    if ((page == PG_LFO1 || page == PG_LFO2 || page == PG_LFO3) && row == 0) return 3;   // LFOs
     if (page == PG_SRC && row == 0) {
         int m = curP().machine[track];
         if (m == M_SYNTH) return 4;
@@ -913,10 +943,8 @@ static void drawKnobs() {
                             v.active ? v.fBase + v.fEnv * v.fenv.v : -1.f, tc);
                 break;
             case 3: {
-                float rate = 0.05f * exp2f(pv(P_LSPD) * (9.f / 127.f));
-                uiLfoPh += rate * animDt;
-                float ph = (v.active && pv(P_LTRG)) ? v.lfoPh : uiLfoPh;
-                lfoGraph(gx, gy, gw, gh, pv(P_LSPD), pv(P_LDEP), pv(P_LWAV), ph, tc);
+                int k = page - PG_LFO1;
+                lfoGraph(gx, gy, gw, gh, k, LFO_BASE[k], v.lfPh[k], v.active, tc);
             } break;
             case 4:
                 oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), pv(P_S4), selRel, tc);
@@ -1051,8 +1079,10 @@ static void drawGrid() {
         fill(12, y + 13, 62, 2, C_OFF);
         if (mw) fill(12, y + 13, mw, 2, tc);
         int len = P.len[t];
-        for (int s = 0; s < NSTEPS; s++) {
-            int x = 82 + s * 34;
+        int base = (cursor / 16) * 16;
+        for (int s0 = 0; s0 < 16; s0++) {
+            int s = base + s0;
+            int x = 82 + s0 * 34;
             if (s >= len) continue;
             const Step& st = P.s[t][s];
             bool ph = eng.playing && eng.playedStep[t] == s;
@@ -1078,34 +1108,47 @@ static void drawSteps() {
     int sv = curScale();
     if (eng.recording) {
         float pl = 0.5f + 0.5f * sinf(animTime * 6.f);
-        rrect(2, 388, 628, 54, 8, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
-        rrect(4, 390, 624, 50, 7, C_BG);
+        rrect(2, 386, 628, 56, 8, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
+        rrect(4, 388, 624, 52, 7, C_BG);
     }
+    // Seitenleiste: 8 Seiten a 16 Steps (Cursor-Seite hell, Wiedergabe in Spurfarbe)
+    {
+        int npg = (len + 15) / 16, cp = cursor / 16, pp = eng.playing ? eng.playedStep[track] / 16 : -1;
+        for (int k = 0; k < 8; k++) {
+            int x = 6 + k * 78;
+            Col c = k >= npg ? C_DARK : (k == cp ? C_TEXT : C_OFF2);
+            rrect(x, 389, 74, 4, 2, c);
+            if (k == pp && k != cp) rrect(x, 389, 74, 4, 2, tc);
+            if (k == pp && k == cp) rrect(x + 30, 389, 14, 4, 2, tc);
+        }
+    }
+    int base = (cursor / 16) * 16;
     // gleitender Cursor hinter den Tasten
     int ccx = 6 + (int)(curXg * 39 + 0.5f);
-    rrect(ccx - 3, 389, 42, 52, 8, aHeld ? C_LOCK : C_TEXT);
-    for (int s = 0; s < NSTEPS; s++) {
-        int x = 6 + s * 39, y = 392;
-        if (s >= len) { rrect(x, y, 36, 46, 6, C_DARK); continue; }
+    rrect(ccx - 3, 395, 42, 46, 8, aHeld ? C_LOCK : C_TEXT);
+    for (int s0 = 0; s0 < 16; s0++) {
+        int s = base + s0;
+        int x = 6 + s0 * 39, y = 398;
+        if (s >= len) { rrect(x, y, 36, 40, 6, C_DARK); continue; }
         const Step& st = P.s[track][s];
         bool ph = eng.playing && eng.playedStep[track] == s;
         Col c = st.on ? tc : offCol(s);
         int lift = 0;
         if (ph && st.on) { c = mix(tc, C_PLAY, 0.2f + flash[track] * 0.6f); lift = (int)(flash[track] * 3); }
-        rrect(x, y - lift, 36, 46, 6, c);
-        if (ph) rrect(x + 6, y + 4 - lift, 24, 4, 2, st.on ? C_BG : C_PLAY);
-        if (st.on && stepHasLock(st)) rrect(x + 27, y + 11 - lift, 5, 5, 2, C_BG);
+        rrect(x, y - lift, 36, 40, 6, c);
+        if (ph) rrect(x + 6, y + 3 - lift, 24, 4, 2, st.on ? C_BG : C_PLAY);
+        if (st.on && stepHasLock(st)) rrect(x + 27, y + 9 - lift, 5, 5, 2, C_BG);
         if (st.on && st.lock[P_NOTE] != NO_LOCK) {
             char nb[8];
             fmtParam(COMMON_DEFS[P_NOTE], quantizeNote(st.lock[P_NOTE], sv), nb, sizeof nb);
-            textC(x + 18, y + 13 - lift, nb, dimC(C_BG, 0.85f));
+            textC(x + 18, y + 9 - lift, nb, dimC(C_BG, 0.85f));
         }
         snprintf(b, sizeof b, "%d", s + 1);
-        textC(x + 18, y + 27 - lift, b, st.on ? C_BG : C_DIM);
+        textC(x + 18, y + 22 - lift, b, st.on ? C_BG : C_DIM);
     }
     const char* h;
     if (aHeld) h = "[X/Y/R-STICK] LOCK SETZEN   [B] LOCKS LOESCHEN   [A] LOSLASSEN = FERTIG";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [X/Y]ENGINE [R-STICK]DJ";
+    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
     else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
     else if (page == PG_PRJ) h = "[L-STICK]WAEHLEN [R-STICK^v]PLATZ [A/X]AUSFUEHREN [SEL]MENUE";
     else h = "[A]TRIG [B]HOER [L-STICK]REGLER [R-STICK]WERT/SEITE [SEL]MENUE";
@@ -1121,7 +1164,7 @@ static void drawHelp() {
         "  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo",
         "  A / B          Spur stumm / Spur loeschen",
         "  X / Y          Engine wechseln",
-        "  L1 / R1        Pattern kopieren / einfuegen",
+        "  L1 / R1        FILL an/aus / Pattern einfuegen",
         "  L2 / R2        Spurlaenge -/+",
         "  START          Speichern (2s halten: Ende)",
         "",
@@ -1208,6 +1251,19 @@ static void editValue(int delta) {
     if (page == PAGE_INS && slot >= 1 && slot <= 4) {
         int ty = P.p[track][P_ITYP];
         if (ty <= 0 || ty >= INS_COUNT || (slot <= 3 && INS_PNAMES[ty][slot - 1][0] == '-')) return;
+    }
+    if (d.kind == K_LDEST) {   // Ziel: naechster gueltiger Parameter
+        int cur = aHeld && holdS().lock[idx] != NO_LOCK ? holdS().lock[idx] : P.p[track][idx];
+        int dir = delta > 0 ? 1 : -1;
+        for (int i = 0; i < abs(delta); i++) {
+            int nv = cur;
+            do { nv += dir; } while (nv > 0 && nv <= NPARAMS && (paramDef(P.machine[track], nv - 1).kind == K_NONE ||
+                                                               paramDef(P.machine[track], nv - 1).kind == K_MACH));
+            if (nv < 0 || nv > NPARAMS) break;
+            cur = nv;
+        }
+        if (aHeld) { holdS().lock[idx] = (uint8_t)cur; aEdited = true; } else P.p[track][idx] = (uint8_t)cur;
+        return;
     }
     if (d.kind == K_MACH) {   // Engine der Spur (nicht lockbar)
         if (aHeld) return;
@@ -1377,7 +1433,7 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
 // ---------------------------------------------------------------- Einstellungen (Liste, Seite SET)
 
 enum SetItem {
-    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_BPM, SI_SWING, SI_SCALE, SI_COPY, SI_PASTE, SI_CLEAR,
+    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_COPY, SI_PASTE, SI_CLEAR,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_IP,
@@ -1398,6 +1454,8 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_PATTERN: snprintf(l, ln, "Pattern"); snprintf(v, vn, "P%02d%s", eng.curPat + 1, eng.nextPat >= 0 ? " >" : ""); break;
     case SI_LEN: snprintf(l, ln, "Laenge Spur %d", track + 1); snprintf(v, vn, "%d Steps", P.len[track]); break;
     case SI_LENALL: snprintf(l, ln, "Laenge alle Spuren"); snprintf(v, vn, "%d Steps", P.len[track]); break;
+    case SI_SPEED: snprintf(l, ln, "Tempo-Faktor Spur %d", track + 1); snprintf(v, vn, "%s", SPEED_NAMES[P.speed[track] % 7]); break;
+    case SI_FILL: snprintf(l, ln, "FILL-Modus (SELECT+L1)"); snprintf(v, vn, "%s", eng.fill ? "AN" : "AUS"); break;
     case SI_BPM: snprintf(l, ln, "Tempo"); snprintf(v, vn, "%d BPM", eng.proj.bpm); break;
     case SI_SWING: snprintf(l, ln, "Swing"); snprintf(v, vn, "%d%%", 50 + eng.proj.mst[MS_SWNG]); break;
     case SI_SCALE: snprintf(l, ln, "Tonskala");
@@ -1442,6 +1500,8 @@ static void setChange(int i, int d) {
     } break;
     case SI_LEN: P.len[track] = (uint8_t)clampi(P.len[track] + d, 1, NSTEPS); break;
     case SI_LENALL: { int l = clampi(P.len[track] + d, 1, NSTEPS); for (int t = 0; t < NTRACKS; t++) P.len[t] = (uint8_t)l; } break;
+    case SI_SPEED: P.speed[track] = (uint8_t)clampi(P.speed[track] + (d > 0 ? 1 : -1), 0, 6); break;
+    case SI_FILL: eng.fill = !eng.fill; break;
     case SI_BPM: eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + d, 30, 300); break;
     case SI_SWING: eng.proj.mst[MS_SWNG] = (uint8_t)clampi(eng.proj.mst[MS_SWNG] + d, 0, 30); break;
     case SI_SCALE: eng.proj.mst[MS_SCALE] = (uint8_t)clampi(eng.proj.mst[MS_SCALE] + d, 0, 120); break;
@@ -1487,7 +1547,7 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
     if (fabsf(I.rx) > fabsf(I.ry)) dx += flick(I.rx, flRX, flRXt, now); else flRX = 0;
     if (dx && !setIsAction(setSel)) setChange(setSel, dx);
     float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;   // rechter Stick: stufenlos (Tempo etc.)
-    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_SCALE)) {
+    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_SCALE || setSel == SI_LEN || setSel == SI_LENALL)) {
         stickAcc += (ry > 0 ? 1.f : -1.f) * (30.f * (fabsf(ry) - 0.25f) + 2.f) * dt;
         int d = (int)stickAcc;
         if (d) { stickAcc -= d; setChange(setSel, d); }
@@ -1624,16 +1684,16 @@ static void handleInput(Uint32 now, float dt) {
             lockA(); Engine::setMachine(curP(), track, m); unlockA();
             toast("ENGINE: %s", MACHINE_NAMES[m]);
         }
-        if (I.pressed(BT_L1)) { funcUsed = true; clip = curP(); haveClip = true; toast("PATTERN KOPIERT"); }
+        if (I.pressed(BT_L1)) { funcUsed = true; eng.fill = !eng.fill; toast(eng.fill ? "FILL AN" : "FILL AUS"); }
         if (I.pressed(BT_R1)) {
             funcUsed = true;
             if (haveClip) { lockA(); curP() = clip; unlockA(); toast("PATTERN EINGEFUEGT"); }
             else toast("ZWISCHENABLAGE LEER");
         }
-        if (I.pressed(BT_L2) || I.pressed(BT_R2)) {
+        if (I.repeat(BT_L2, now) || I.repeat(BT_R2, now)) {
             funcUsed = true;
             Pattern& P = curP();
-            P.len[track] = (uint8_t)clampi(P.len[track] + (I.pressed(BT_R2) ? 1 : -1), 1, NSTEPS);
+            P.len[track] = (uint8_t)clampi(P.len[track] + (I.down[BT_R2] ? 1 : -1), 1, NSTEPS);
             toast("SPURLAENGE %d", P.len[track]);
         }
         if (I.pressed(BT_START)) {
@@ -1648,8 +1708,9 @@ static void handleInput(Uint32 now, float dt) {
     } else {
         if (stickDj) { eng.dj = 0.f; stickDj = false; }
         if (!aHeld) {
-            if (I.repeat(BT_LEFT, now, 250, 70)) cursor = (cursor + NSTEPS - 1) % NSTEPS;
-            if (I.repeat(BT_RIGHT, now, 250, 70)) cursor = (cursor + 1) % NSTEPS;
+            int cl = curP().len[track] < 1 ? 1 : curP().len[track];
+            if (I.repeat(BT_LEFT, now, 250, 70)) cursor = (cursor % cl + cl - 1) % cl;
+            if (I.repeat(BT_RIGHT, now, 250, 70)) cursor = (cursor % cl + 1) % cl;
             if (I.repeat(BT_UP, now)) track = (track + NTRACKS - 1) % NTRACKS;
             if (I.repeat(BT_DOWN, now)) track = (track + 1) % NTRACKS;
         }
@@ -1678,8 +1739,15 @@ static void handleInput(Uint32 now, float dt) {
         // Rechter Stick: links/rechts = Seite, hoch/runter = Wert
         if (fabsf(I.rx) > fabsf(I.ry)) { int f = flick(I.rx, flRX, flRXt, now); if (f) gotoPage(f); }
         else flRX = 0;
-        if (I.repeat(BT_L1, now)) { if (mixP) mixRow = (mixRow + 3) % 4; else slot = (slot + 7) % 8; }
-        if (I.repeat(BT_R1, now)) { if (mixP) mixRow = (mixRow + 1) % 4; else slot = (slot + 1) % 8; }
+        {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
+            int cl = curP().len[track] < 1 ? 1 : curP().len[track];
+            int dl = (I.repeat(BT_R1, now) ? 1 : 0) - (I.repeat(BT_L1, now) ? 1 : 0);
+            if (dl) {
+                if (mixP) mixRow = (mixRow + 4 + dl) % 4;
+                else if (trackPage(page) && cl > 16) cursor = ((cursor + dl * 16) % cl + cl) % cl;
+                else slot = (slot + 8 + dl) % 8;
+            }
+        }
         if (I.pressed(BT_L2)) gotoPage(-1);
         if (I.pressed(BT_R2)) gotoPage(1);
         if (I.pressed(BT_START)) {
@@ -1712,6 +1780,7 @@ static void handleInput(Uint32 now, float dt) {
     }
     if (aHeld && !I.down[BT_A]) aHeld = false;
     if (!pageAvail(page)) page = PG_SRC;
+    { int cl = curP().len[track] < 1 ? 1 : curP().len[track]; if (cursor >= cl) cursor = cl - 1; }
     // Zustand fuer MIDI-Eingang / Step-Aufnahme
     eng.uiTrack = track; eng.uiPage = trackPage(page) ? sp() : 99; eng.uiCursor = cursor;
     if (eng.stepRecCount != lastStepRec) {
@@ -1987,6 +2056,16 @@ int main(int argc, char** argv) {
         if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
         if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.mute[3] = true; for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
         if (page == PG_PRJ) { slot = 2; }
+        if (page == PG_LFO1) {
+            track = 4; slot = 2;
+            Pattern& Pp = curP(); Pp.p[4][P_L1 + LF_DEST] = P_FREQ + 1; Pp.p[4][P_L1 + LF_DEPTH] = 110; Pp.p[4][P_L1 + LF_WAVE] = LW_EXPDN; Pp.p[4][P_L1 + LF_SYNC] = 6; Pp.p[4][P_L1 + LF_MODE] = LM_TRIG;
+            for (int k2 = 0; k2 < 3; k2++) { eng.render(tmp, 22050 / 2); animate(); }
+        }
+        if (shotPage == 28) {   // 64 Steps, Cursor auf Seite 3, COND-Overlay
+            page = PG_TRG; track = 4; Pattern& Pp = curP(); Pp.len[4] = 64; cursor = 37;
+            Pp.s[4][37].on = 1; Pp.s[4][37].lock[P_COND] = CND_AB + 35 + 5; slot = 7; editSlot = 7; editAt = 1;
+            holdPat = eng.curPat; holdTrack = 4; holdStep = 37; aHeld = true; eng.fill = true;
+        }
         if (page == PG_SYS) { setSel = SI_OUT; setScroll = SI_OUT - 7.5f; animate(); }
         if (page == PG_CMP) {   // Sidechain-Beispiel
             eng.proj.cmp[CM_SRC] = 1; eng.proj.cmp[CM_THR] = 40; eng.proj.cmp[CM_RAT] = 6; slot = 5;
