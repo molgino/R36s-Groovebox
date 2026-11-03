@@ -80,7 +80,9 @@ static volatile int cbFrames = 256;
 
 static void lockA() { if (audioDev) SDL_LockAudioDevice(audioDev); }
 static void unlockA() { if (audioDev) SDL_UnlockAudioDevice(audioDev); }
+static bool driveOn = false;   // Groovebox-OS: Datenpartition gerade als USB-Laufwerk am PC
 static bool saveProject() {
+    if (driveOn) return false;
     lockA(); bool ok = eng.save(projPath); if (ok) memcpy(&lastSaved, &eng.proj, sizeof(Project)); unlockA();
     return ok;
 }
@@ -1766,6 +1768,8 @@ static void drawHelp() {
 }
 
 static void drawSettings();
+static void drawDrive();
+static bool isGrooveboxOS();
 static void drawAll(bool help) {
     animate();
     setCol(C_BG);
@@ -1776,6 +1780,7 @@ static void drawAll(bool help) {
     if (help) drawHelp();
     if (menuOpen) drawMenu();
     if (confirmOpen) drawConfirm();
+    if (driveOn) drawDrive();
 }
 
 // ---------------------------------------------------------------- Bedienung
@@ -2033,13 +2038,13 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_IP, SI_WEB,
+    SI_H_USB, SI_USB, SI_IP, SI_WEB, SI_DRIVE,
     SI_H_SYS, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
 static float setScroll = 0;
 static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SYS; }
-static bool setIsAction(int i) { return i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
+static bool setIsAction(int i) { return i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
 static bool runLearn();
 static char versionStr[32] = "";
 
@@ -2091,6 +2096,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         snprintf(v, vn, "%s  %d Samples  %s", versionStr[0] ? versionStr : "dev", sampleCount(), midiBackend());
         break;
     case SI_QUIT: snprintf(l, ln, "Groovebox beenden"); break;
+    case SI_DRIVE: snprintf(l, ln, "USB-Laufwerk (Samples vom PC)"); if (!isGrooveboxOS()) snprintf(v, vn, "nur Groovebox-OS"); break;
     }
 }
 
@@ -2130,6 +2136,56 @@ static void setChange(int i, int d) {
     }
 }
 
+static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0; }
+static void reloadSamples();
+static bool usbScript(const char* args, char* okMsg, int n) {   // pc-modus.sh ausfuehren, OK:/FEHLER:-Zeile liefern
+    char cmd[800], lp[700], line[200];
+    snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s", basePath, args);
+    int rc = system(cmd);
+    snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
+    bool ok = false;
+    snprintf(okMsg, n, rc == 0 ? "FERTIG" : "FEHLER (PC-MODUS.LOG)");
+    FILE* f = fopen(lp, "r");
+    if (f) {
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if (!strncmp(line, "OK:", 3)) { ok = true; snprintf(okMsg, n, "%.60s", line + 4); }
+            if (!strncmp(line, "FEHLER:", 7)) { ok = false; snprintf(okMsg, n, "%.60s", line); }
+        }
+        fclose(f);
+    }
+    return ok;
+}
+// Datenpartition als USB-Laufwerk an den PC geben (nur Groovebox-OS)
+static void startDrive() {
+    if (!isGrooveboxOS()) { toast("NUR IM GROOVEBOX-OS"); return; }
+    saveProject();
+    toast("USB-LAUFWERK WIRD VERBUNDEN ...");
+    drawAll(false); SDL_RenderPresent(ren);
+    char m[200];
+    if (usbScript("laufwerk nosleep", m, sizeof m)) { driveOn = true; usbMode = 1; }
+    toast("%s", m);
+    msgUntil = SDL_GetTicks() + 3000;
+}
+static void stopDrive() {
+    char m[200];
+    toast("LAUFWERK WIRD GETRENNT ...");
+    drawAll(false); SDL_RenderPresent(ren);
+    usbScript("laufwerk-aus nosleep", m, sizeof m);
+    driveOn = false; usbMode = 2;
+    reloadSamples();
+    toast("%d SAMPLES GELADEN", sampleCount());
+}
+static void drawDrive() {
+    rrect(60, 120, 520, 220, 16, C_ACC);
+    rrect(62, 122, 516, 216, 15, C_BG, 250);
+    textC(320, 142, "USB-LAUFWERK AKTIV", C_ACC);
+    textC(320, 182, "Am PC erscheint das Laufwerk GROOVEBOX.", C_TEXT);
+    textC(320, 204, "Samples in den Ordner samples/ kopieren,", C_TEXT);
+    textC(320, 226, "dann das Laufwerk am PC AUSWERFEN.", C_TEXT);
+    rrect(200, 270, 240, 36, 9, C_GREEN); textC(320, 280, "A = FERTIG, ZURUECK", C_BG);
+}
+
 static void setAction(int i) {
     switch (i) {
     case SI_COPY: clip = curP(); haveClip = true; toast("PATTERN %02d KOPIERT", eng.curPat + 1); break;
@@ -2139,6 +2195,7 @@ static void setAction(int i) {
         break;
     case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, "ALLE STEPS VON PATTERN %02d LOESCHEN?", eng.curPat + 1); break;
     case SI_LEARN: runLearn(); break;
+    case SI_DRIVE: startDrive(); break;
     case SI_QUIT: askConfirm(ACT_QUIT, 0, "GROOVEBOX BEENDEN? (PROJEKT WIRD GESPEICHERT)"); break;
     default: setChange(i, 1); break;   // Umschalter: A schaltet weiter
     }
@@ -2243,6 +2300,7 @@ static void handleInput(Uint32 now, float dt) {
         return;
     }
     if (menuOpen) { menuInput(I, now); return; }
+    if (driveOn) { if (I.pressed(BT_A) || I.pressed(BT_START)) stopDrive(); return; }
     {   // rechter Stick: Achse beim Auslenken festlegen, erst in der Mitte wieder frei
         float m = sqrtf(I.rx * I.rx + I.ry * I.ry);
         if (m < 0.22f) rsAxis = 0;

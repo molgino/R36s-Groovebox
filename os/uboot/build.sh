@@ -40,9 +40,11 @@ make -s -j$(nproc) u-boot-dtb.bin
 
 # Rockchip-Verpackung (wie ROCKNIX bootloader/rkhelper)
 RK=$WORK/rkbin
-DDR=$RK/bin/rk33/rk3326_ddr_333MHz_v2.12.bin
-MINI=$RK/bin/rk33/rk3326_miniloader_v1.40.bin
-BL31=$RK/bin/rk33/rk3326_bl31_v1.37.elf
+newest() { ls $RK/bin/rk33/$1 2>/dev/null | sort -V | tail -1; }
+DDR=$(newest 'rk3326_ddr_333MHz_v*.bin')
+MINI=$(newest 'rk3326_miniloader_v*.bin')
+BL31=$(newest 'rk3326_bl31_v*.elf')
+echo ">> rkbin: $(basename "$DDR") $(basename "$MINI") $(basename "$BL31")"
 for f in $DDR $MINI $BL31; do [ -f $f ] || { echo "!! fehlt: $f"; ls $RK/bin/rk33 | grep rk3326; exit 1; }; done
 rm -f idbloader.img uboot.img trust.img uboot.bin
 ./tools/mkimage -n px30 -T rksd -d "$DDR" -C bzip2 idbloader.img

@@ -14,6 +14,12 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 - Sequencer: 12 Ticks pro 16tel (`doTick`/`stepTrack`), Tempo-Faktor `SPEED_TPS`, Trig-Bedingungen `P_COND` (`condOk`, Durchläufe `loopCount` über `stepCnt`), FILL `eng.fill`; SEQ-Seite: Richtung `P_DIR`, Euklid `P_PULS/P_EROT`, Turing-Generator `P_DENS/P_CHNG/P_RANGE` (`tmReg`), LEN/SPD zeigen auf `Pattern.len/speed`
 - Projekte `projects/songNN.gbx` (32 Plätze, aktiver Platz in settings.cfg `song`), Presets `presets/<ENGINE>/NN.gbp`
 
+## Groovebox-OS (`os/`)
+- Eigenes Image statt ArkOS: Linux `LINUX_VERSION` (gregkh/linux-Tag) + ROCKNIX-Patches/DTS (gepinnt `ROCKNIX_COMMIT`, `os/versions.env`), Panel aus ArkOS-DTB als Overlay `os/dts/panel-arkos.dtso` (generic-dsi), eigener Tree `rk3326-groovebox-r36s.dts` (OTG-Port an, usb-role-switch)
+- `os/kernel/build.sh` (arm64-Runner nativ), `os/uboot/build.sh` (x86: rkbin-Tools), `os/rootfs/build.sh` (mmdebstrap Debian trixie, Overlay in `os/rootfs/overlay`), `os/image/build.sh` (MBR: U-Boot @64, GBBOOT FAT, GBROOT ext4; GROOVEBOX FAT wird beim 1. Start angelegt)
+- Workflow `.github/workflows/os.yml` → Release **os-nightly**; Kernel/fremder Code nicht im Container bauen, nur in CI
+- Gerät: `/opt/groovebox` (Symlinks nach `/data` = Partition GROOVEBOX), Dienst `groovebox.service`, Logs `/data/logs/{boot.txt,groovebox.log}`, `pc-modus.sh` (aus|an|an audio|laufwerk|laufwerk-aus, configfs-Gadget RNDIS+MIDI+UAC2 bzw. Mass-Storage), SET „USB-Laufwerk“ (`startDrive/stopDrive`, nur wenn `/etc/groovebox-os` existiert)
+
 ## Bauen
 - Desktop: `make` (libsdl2-dev, libasound2-dev). Tests ohne Display: `./groovebox --render out.wav 4`, `./groovebox --shot bild.bmp <PG-Nummer | 20 Hilfe, 21 Lock, 22 Overlay, 23 Engine, 24 Skala, 25 Menü, 26 Abfrage>`
 - R36S: `./tools/cross-build.sh && ./tools/package.sh` (Ubuntu-18.04-arm64-Sysroot, kein libstdc++ – nur C-Header, keine Exceptions/RTTI)

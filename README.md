@@ -365,6 +365,33 @@ Ist dort `uac2` oder `uac1` dabei, funktioniert PC+A als Audio-Interface auch oh
 
 Wenn es nicht klappt, steht der Grund in `groovebox/pc-modus.log`. Die App zeigt ihn zusätzlich direkt an.
 
+## Groovebox-OS (eigenes System, Testphase)
+
+Statt ArkOS kann der R36S direkt in die Groovebox starten. Das eigene System basiert auf einem aktuellen Linux-Kernel (mit den R36S-Anpassungen von ROCKNIX) und einem minimalen Debian.
+Dadurch funktioniert der R36S am PC als **echtes USB-Audiointerface und USB-MIDI-Gerät** – ohne rtpMIDI, ohne Treiber.
+
+**Wichtig: Eine ZWEITE microSD-Karte verwenden.** Die ArkOS-Karte bleibt unangetastet. Startet etwas nicht, einfach die alte Karte wieder einstecken.
+
+1. Image `r36s-groovebox-os.img.xz` aus dem Release **os-nightly** laden.
+2. Mit **balenaEtcher** oder dem **Raspberry Pi Imager** („Eigenes Image“) auf die zweite Karte schreiben (das .xz muss nicht entpackt werden).
+3. Karte in den R36S (Steckplatz, aus dem ArkOS startet) und einschalten.
+4. Beim ersten Start legt das System im freien Platz die Partition **GROOVEBOX** an (Samples, Projekte, Einstellungen, Logs) und fragt einmal die Tasten ab.
+
+| Am PC (SET → USB) | Was der PC sieht |
+|---|---|
+| **PC (MIDI + Audio)** | Audiogerät „R36S Groovebox“ (Ein-/Ausgang, 44,1 kHz) + MIDI-Gerät „R36S Groovebox“ + Netzwerk (Browser-Upload, SSH) |
+| **PC (MIDI)** | MIDI-Gerät + Netzwerk |
+| SET → **USB-Laufwerk** | Die Partition GROOVEBOX als normales USB-Laufwerk: Samples reinkopieren, am PC auswerfen, am R36S A drücken |
+
+* Damit der Klang zum PC geht, in SET unter **Ausgang** das Gerät mit „UAC2“ bzw. „Groovebox“ im Namen wählen.
+* SSH: `ssh ark@192.168.77.1`, Passwort `ark`.
+
+**Wenn etwas nicht klappt:** Die Karte in den PC stecken. Auf dem Laufwerk **GROOVEBOX** liegen im Ordner `logs/` die Dateien `boot.txt` (Display, Tasten, Sound, USB) und `groovebox.log`. Diese bitte schicken.
+Bleibt das Display schwarz und die Partition GROOVEBOX fehlt, startet das System gar nicht – dann bitte melden, wie sich die LED verhält.
+Auf der Partition **GBBOOT** lässt sich in `extlinux/extlinux.conf` testweise das ROCKNIX-Standard-Display wählen (siehe `LIESMICH.txt`).
+
+Gebaut wird das Image automatisch von GitHub Actions (`.github/workflows/os.yml`, Skripte in `os/`).
+
 ## Installation auf dem R36S (ArkOS 2.0)
 
 1. Die Datei `dist/r36s-groovebox-arkos.zip` entpacken. Ihren Inhalt in den Ordner `ports` der SD-Karte kopieren. Das ist die Partition `EASYROMS`, auf dem Gerät `/roms/ports/`. Danach sieht es so aus:

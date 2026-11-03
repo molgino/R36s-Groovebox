@@ -25,8 +25,9 @@ if [ ! -d rocknix ]; then
     git -C rocknix checkout -q $ROCKNIX_COMMIT
 fi
 if [ ! -d rocknix-joypad ]; then
-    git clone -q https://github.com/hackbar/rocknix-joypad.git
-    git -C rocknix-joypad checkout -q $JOYPAD_COMMIT
+    git init -q rocknix-joypad
+    git -C rocknix-joypad fetch -q --depth 1 https://github.com/hackbar/rocknix-joypad.git $JOYPAD_COMMIT
+    git -C rocknix-joypad checkout -q FETCH_HEAD
 fi
 RN=$WORK/rocknix/projects/ROCKNIX
 K=$WORK/linux-$LINUX_VERSION
