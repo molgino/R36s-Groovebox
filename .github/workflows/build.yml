@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'ui-*']
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -66,6 +66,17 @@ jobs:
           gh release create nightly dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz --prerelease \
             --title "SYNTH CITY Nightly ($(git rev-parse --short HEAD))" \
             --notes "Automatischer Build von main ($(git rev-parse --short HEAD)). ArkOS: r36s-groovebox-arkos.zip. Groovebox-OS: groovebox-os-update.tgz (App-Update ohne neues Image)." --target "$GITHUB_SHA"
+
+      - name: Test-Release fuer UI-Branches (nightly-<branch>)
+        if: startsWith(github.ref, 'refs/heads/ui-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="nightly-${GITHUB_REF_NAME}"
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz --prerelease \
+            --title "SYNTH CITY Test ${GITHUB_REF_NAME} ($(git rev-parse --short HEAD))" \
+            --notes "Testversion vom Branch ${GITHUB_REF_NAME}. Groovebox-OS: groovebox-os-update.tgz im Browser unter Update einspielen. Zurueck: Update aus dem Release nightly einspielen." --target "$GITHUB_SHA"
 
       - name: Versions-Release
         if: startsWith(github.ref, 'refs/tags/v')
