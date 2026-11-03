@@ -390,7 +390,7 @@ static void drawHeader() {
     }
     snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]);
     text(84, 21, b, C_DIM);
-    if (curScale() && !eng.recording && !eng.fill) { fmtParam(MST_DEFS[MS_SCALE], curScale(), b, sizeof b); text(140, 21, b, dimC(C_ACC, 0.8f)); }
+    if (curScale() && !eng.recording && !eng.fill) { snprintf(b, sizeof b, "%s%s", NOTE_NAMES[(curScale() - 1) % 12], SCALE_NAMES[scaleType(curScale()) - 1]); text(140, 21, b, dimC(C_ACC, 0.8f)); }
     if (eng.recording) {
         float pl = 0.5f + 0.5f * sinf(animTime * 6.f);
         rrect(140, 24, 9, 9, 4, mix(dimC(C_TRIG, 0.4f), C_TRIG, pl));
@@ -509,7 +509,8 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
             val = quantizeNote(val, curScale());
         }
         if (d.kind == K_LDEST) snprintf(label, ln, "%s", val > 0 ? "ZIEL" : "DEST");
-        if (d.kind == K_SCALE && val > 0) snprintf(label, ln, "%s %s", NOTE_NAMES[(val - 1) % 12], SCALE_LONG[((val - 1) / 12) % NSCALES]);
+        if (d.kind == K_SCALE && val > 0) snprintf(label, ln, "%s", SCALE_LONG[((val - 1) / 12) % NSCALES]);
+        if (d.kind == K_ROOT) snprintf(label, ln, "GRUNDTON");
         if (d.kind == K_SMPL) {
             d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
             snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
@@ -1180,6 +1181,13 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         return;
     }
     if (d.kind == K_SWNG) { disc(x + w / 4, y + h - 8, 6, c); fill(x + w / 4 + 5, y + 4, 2, h - 12, c); int sx = x + w / 2 + (int)(fr * w / 3); disc(sx, y + h - 8, 6, c); fill(sx + 5, y + 4, 2, h - 12, c); return; }
+    if (d.kind == K_ROOT) {   // Tastatur, Grundton leuchtet
+        static const int wk[7] = {0, 2, 4, 5, 7, 9, 11}, bk[5] = {1, 3, 6, 8, 10}, bp[5] = {0, 1, 3, 4, 5};
+        int kw = w / 7;
+        for (int i = 0; i < 7; i++) rrect(x + i * kw, y + 4, kw - 1, h - 6, 2, wk[i] == val ? C_PLAY : C_OFF2);
+        for (int i = 0; i < 5; i++) rrect(x + bp[i] * kw + kw - kw / 3, y + 4, kw * 2 / 3, (h - 6) * 3 / 5, 2, bk[i] == val ? C_PLAY : C_BG);
+        return;
+    }
     if (d.kind == K_SCALE) {
         static const int wk[7] = {0, 2, 4, 5, 7, 9, 11};
         int kw = w / 7;
@@ -1814,6 +1822,14 @@ static void editValue(int delta) {
     }
     if (page == PAGE_MST) {
         if (slot == MS_BPM) eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + delta, 30, 300);
+        else if (slot == MS_SCALE) {
+            uint8_t* m = eng.proj.mst;
+            m[MS_SCALE] = (uint8_t)scaleCombine(clampi(scaleType(m[MS_SCALE]) + (delta > 0 ? 1 : -1), 0, NSCALES), m[MS_ROOT]);
+        } else if (slot == MS_ROOT) {
+            uint8_t* m = eng.proj.mst;
+            m[MS_ROOT] = (uint8_t)((m[MS_ROOT] + 12 + (delta > 0 ? 1 : -1)) % 12);
+            m[MS_SCALE] = (uint8_t)scaleCombine(scaleType(m[MS_SCALE]), m[MS_ROOT]);
+        }
         else if (MST_DEFS[slot].kind != K_NONE) eng.proj.mst[slot] = (uint8_t)clampi(eng.proj.mst[slot] + delta, 0, MST_DEFS[slot].max);
         return;
     }
@@ -1947,7 +1963,7 @@ static void doNewSong() {
     int j = -1;
     for (int i = 0; i < 32 && j < 0; i++) if (!songExists(i)) j = i;
     if (j < 0) { toast("ALLE 32 PLAETZE BELEGT"); return; }
-    lockA(); eng.stop(); eng.defaultProject(); unlockA();
+    lockA(); eng.stop(); eng.defaultProject(false); unlockA();
     prjSel = j;
     doSaveSong(j);
     toast("NEUES PROJEKT: SONG %02d", j + 1);
@@ -2013,7 +2029,7 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
 // ---------------------------------------------------------------- Einstellungen (Liste, Seite SET)
 
 enum SetItem {
-    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_COPY, SI_PASTE, SI_CLEAR,
+    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_IP,
@@ -2039,9 +2055,10 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_BPM: snprintf(l, ln, "Tempo"); snprintf(v, vn, "%d BPM", eng.proj.bpm); break;
     case SI_SWING: snprintf(l, ln, "Swing"); snprintf(v, vn, "%d%%", 50 + eng.proj.mst[MS_SWNG]); break;
     case SI_SCALE: snprintf(l, ln, "Tonskala");
-        if (curScale()) snprintf(v, vn, "%s %s", NOTE_NAMES[(curScale() - 1) % 12], SCALE_LONG[((curScale() - 1) / 12) % NSCALES]);
+        if (curScale()) snprintf(v, vn, "%s", SCALE_LONG[scaleType(curScale()) - 1]);
         else snprintf(v, vn, "AUS (chromatisch)");
         break;
+    case SI_ROOT: snprintf(l, ln, "Grundton"); snprintf(v, vn, "%s", NOTE_NAMES[eng.proj.mst[MS_ROOT] % 12]); break;
     case SI_COPY: snprintf(l, ln, "Pattern kopieren"); break;
     case SI_PASTE: snprintf(l, ln, "Pattern einfuegen"); snprintf(v, vn, "%s", haveClip ? "" : "(leer)"); break;
     case SI_CLEAR: snprintf(l, ln, "Pattern leeren"); break;
@@ -2084,7 +2101,12 @@ static void setChange(int i, int d) {
     case SI_FILL: eng.fill = !eng.fill; break;
     case SI_BPM: eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + d, 30, 300); break;
     case SI_SWING: eng.proj.mst[MS_SWNG] = (uint8_t)clampi(eng.proj.mst[MS_SWNG] + d, 0, 30); break;
-    case SI_SCALE: eng.proj.mst[MS_SCALE] = (uint8_t)clampi(eng.proj.mst[MS_SCALE] + d, 0, 120); break;
+    case SI_SCALE: eng.proj.mst[MS_SCALE] = (uint8_t)scaleCombine(clampi(scaleType(eng.proj.mst[MS_SCALE]) + (d > 0 ? 1 : -1), 0, NSCALES), eng.proj.mst[MS_ROOT]); break;
+    case SI_ROOT: {
+        uint8_t* m = eng.proj.mst;
+        m[MS_ROOT] = (uint8_t)((m[MS_ROOT] + 12 + (d > 0 ? 1 : -1)) % 12);
+        m[MS_SCALE] = (uint8_t)scaleCombine(scaleType(m[MS_SCALE]), m[MS_ROOT]);
+    } break;
     case SI_VOL: eng.proj.mst[MS_VOL] = (uint8_t)clampi(eng.proj.mst[MS_VOL] + d, 0, 127); break;
     case SI_OUT: {
         refreshDevices();
@@ -2127,7 +2149,7 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
     if (fabsf(I.rx) > fabsf(I.ry)) dx += flick(I.rx, flRX, flRXt, now); else flRX = 0;
     if (dx && !setIsAction(setSel)) setChange(setSel, dx);
     float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;   // rechter Stick: stufenlos (Tempo etc.)
-    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_SCALE || setSel == SI_LEN || setSel == SI_LENALL)) {
+    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_LEN || setSel == SI_LENALL)) {
         stickAcc += (ry > 0 ? 1.f : -1.f) * (30.f * (fabsf(ry) - 0.25f) + 2.f) * dt;
         int d = (int)stickAcc;
         if (d) { stickAcc -= d; setChange(setSel, d); }
@@ -2706,7 +2728,7 @@ int main(int argc, char** argv) {
         if (shotPage == 21) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
         if (shotPage == 22) { page = PG_FLT; slot = 0; track = 4; animate(); editAt = 1; editSlot = 0; eng.recording = true; }
         if (shotPage == 23) { page = PG_TRG; slot = 6; track = 4; editSlot = 6; editAt = 1; }
-        if (shotPage == 24) { page = PG_MST; slot = MS_SCALE; eng.proj.mst[MS_SCALE] = 1 + 1 * 12 + 9; editSlot = MS_SCALE; editAt = 1; }
+        if (shotPage == 24) { page = PG_MST; slot = MS_SCALE; eng.proj.mst[MS_SCALE] = 1 + 1 * 12 + 9; eng.proj.mst[MS_ROOT] = 9; editSlot = MS_SCALE; editAt = 1; }
         if (shotPage == 25) { page = PG_AMP; menuOpen = true; menuSel = PG_MIX; }
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }

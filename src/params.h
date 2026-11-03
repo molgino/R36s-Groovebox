@@ -34,7 +34,7 @@ enum Kind {
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
     K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK, K_DIR, K_TLEN, K_TSPD, K_RANGE, K_MTIM, K_WTAB, K_SLICE,
-    K_SCALE, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
+    K_SCALE, K_ROOT, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -53,7 +53,7 @@ enum {
     P_BASE = 80, P_WDTH, P_KEYT, P_VELF                                    // FLT2: Base-Width-Filter, Key-/Velocity-Tracking
 };
 // Master-Seite
-enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV, MS_SCALE };
+enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV, MS_SCALE, MS_ROOT };
 // LFO: Versatz innerhalb einer LFO-Seite
 enum { LF_RATE = 0, LF_SYNC, LF_DEST, LF_DEPTH, LF_WAVE, LF_MODE, LF_PHASE, LF_FADE };
 static const int LFO_BASE[NLFO] = {32, 56, 64};
@@ -135,6 +135,9 @@ inline int stepScale(int note, int dir, int sv) {   // naechste Skalennote in Ri
     do { n += dir; } while (n >= 0 && n <= 127 && !inScale(n, sv));
     return n < 0 ? note : (n > 127 ? note : n);
 }
+// Skala (mst[MS_SCALE]: 0 = aus, sonst 1 + Grundton + 12*Skala) und Grundton getrennt einstellen
+inline int scaleType(int sv) { return sv > 0 ? (sv - 1) / 12 % NSCALES + 1 : 0; }   // 0 = aus
+inline int scaleCombine(int type, int root) { return type > 0 ? 1 + (root % 12) + 12 * (type - 1) : 0; }
 
 enum InsType { INS_OFF, INS_CHORUS, INS_PHASER, INS_FLANGER, INS_DRIVE, INS_RING, INS_APAN, INS_COUNT };
 static const char* const INS_NAMES[INS_COUNT] = {"OFF", "CHORS", "PHASE", "FLNGR", "DRIVE", "RING", "APAN"};
@@ -186,7 +189,7 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
 
 static const ParamDef MST_DEFS[8] = {
     {"BPM", K_BPM, 0, 0}, {"SWNG", K_SWNG, 0, 30}, {"VOL", K_NUM, 100, 127}, {"DRIVE", K_NUM, 0, 127},
-    {"SCALE", K_SCALE, 0, 120}, PDEF_NONE, PDEF_NONE, PDEF_NONE,
+    {"SCALE", K_SCALE, 0, 120}, {"ROOT", K_ROOT, 0, 11}, PDEF_NONE, PDEF_NONE,
 };
 // zweite Klangseite: nur FM nutzt sie bisher (Pegel = Mod-Index bzw. Ausgangspegel, Decay je Operator)
 static const ParamDef SRC2_DEFS[M_COUNT][8] = {
@@ -311,8 +314,9 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_CHM: snprintf(buf, n, "%s", v ? "1-8" : "AUTO"); break;
     case K_SCALE:
         if (v <= 0) snprintf(buf, n, "CHROM");
-        else snprintf(buf, n, "%s%s", NOTE_NAMES[(v - 1) % 12], SCALE_NAMES[((v - 1) / 12) % NSCALES]);
+        else snprintf(buf, n, "%s", SCALE_NAMES[((v - 1) / 12) % NSCALES]);
         break;
+    case K_ROOT: snprintf(buf, n, "%s", NOTE_NAMES[v % 12]); break;
     case K_ALGO: snprintf(buf, n, "A%d", v + 1); break;
     case K_DECAY: if (v >= 127) snprintf(buf, n, "INF"); else snprintf(buf, n, "%d", v); break;
     case K_ACT: snprintf(buf, n, ">>"); break;

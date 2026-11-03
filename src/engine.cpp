@@ -908,7 +908,7 @@ void Engine::initPattern(Pattern& p) {
     p.p[7][P_S0] = 11; p.p[7][P_DLY] = 35; p.p[7][P_REV] = 45;   // Sample (Start-Paket: keys/stab-minor)
 }
 
-void Engine::defaultProject() {
+void Engine::defaultProject(bool demo) {
     memset(&proj, 0, sizeof(proj));
     memcpy(proj.magic, "GBX1", 4);
     proj.version = 8;
@@ -917,6 +917,7 @@ void Engine::defaultProject() {
     for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
     for (int i = 0; i < 8; i++) proj.fx[i] = FX_DEFS[i].def;
     for (int i = 0; i < NPATTERNS; i++) initPattern(proj.pat[i]);
+    if (!demo) return;   // neues Projekt: leere Init-Patterns
     // Demo-Beat in Pattern 1
     Pattern& p = proj.pat[0];
     for (int s = 0; s < 16; s += 4) p.s[0][s].on = 1;
@@ -1438,6 +1439,11 @@ bool Engine::load(const char* path) {
         printf("Projekt von Version %u auf 8 umgestellt\n", ver);
     } else {
         ok = false;
+    }
+    if (ok) {   // Grundton getrennt merken (aeltere Projekte hatten ihn nur in SCALE)
+        if (proj.mst[MS_SCALE] > 120) proj.mst[MS_SCALE] = 0;
+        if (proj.mst[MS_SCALE]) proj.mst[MS_ROOT] = (uint8_t)((proj.mst[MS_SCALE] - 1) % 12);
+        else proj.mst[MS_ROOT] %= 12;
     }
     free(buf);
     return ok;

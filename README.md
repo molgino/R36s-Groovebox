@@ -66,7 +66,7 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * **CMP**: Master-Kompressor mit **Sidechain** (siehe unten)
 * **MIX**: Mixer mit Mute/Solo (siehe unten)
 * **PRJ**: Projekte und Presets (siehe unten)
-* **MST**: BPM, Swing, Gesamtlautstärke, DRIVE (Sättigung der Summe) und die globale Tonskala SCALE
+* **MST**: BPM, Swing, Gesamtlautstärke, DRIVE (Sättigung der Summe) die globale Tonskala SCALE und ihr Grundton ROOT
 * **SET**: Einstellungen als Liste (siehe unten, wird in `settings.cfg` gespeichert)
 
 ## Steps, Seiten und Geschwindigkeit
@@ -145,7 +145,7 @@ Die Grafik zeigt die Kurve, die laufende Phase und das Ziel.
 
 ## Tonskala (global)
 
-Auf der MST-Seite wählt **SCALE** Grundton und Skala für das ganze Projekt: CHROM (aus), Dur, Moll, Dorisch, Phrygisch, Lydisch, Mixolydisch, Harmonisch Moll, Pentatonik Dur/Moll und Blues.
+Auf der MST-Seite wählt **SCALE** die Skala und **ROOT** den Grundton (C bis B) für das ganze Projekt, beides unabhängig voneinander. Skalen: CHROM (aus), Dur, Moll, Dorisch, Phrygisch, Lydisch, Mixolydisch, Harmonisch Moll, Pentatonik Dur/Moll und Blues.
 Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im Header neben dem Swing.
 
 * NOTE (auch als Lock) springt nur zwischen Skalentönen.
@@ -155,7 +155,7 @@ Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im 
 
 Über das SELECT-Menü (Gruppe PROJEKT) oder mit SELECT + rechtem Stick erreichst du die Einstellungsliste:
 
-* **PATTERN:** Pattern wählen, Länge der Spur bzw. aller Spuren, Tempo, Swing, Tonskala, Pattern kopieren/einfügen/leeren
+* **PATTERN:** Pattern wählen, Länge der Spur bzw. aller Spuren, Tempo, Swing, Tonskala, Grundton, Pattern kopieren/einfügen/leeren
 * **AUDIO:** Ausgang (interner Lautsprecher, S-1, USB-Interface …), Puffer mit Latenz in ms, Lautstärke
 * **MIDI:** Eingang, Noten ausgeben, Clock (senden/empfangen), Eingangskanäle
 * **USB:** HOST (Geräte am R36S) oder PC (Netz-MIDI, SSH) und die IP-Adresse
@@ -174,7 +174,7 @@ Hier siehst du alle 8 Spuren als Kanalzüge mit Fader, Pegelanzeige, Panorama, D
 
 ## Projekte und Presets (PRJ-Seite)
 
-* **SONG** (32 Plätze) mit **LADEN**, **SPEICHERN** und **NEU** (legt das Projekt im nächsten freien Platz an).
+* **SONG** (32 Plätze) mit **LADEN**, **SPEICHERN** und **NEU** (legt ein leeres Projekt mit leeren Init-Patterns im nächsten freien Platz an; der Demo-Beat kommt nur beim allerersten Start).
   Gespeichert wird in `groovebox/projects/songNN.gbx`. Der aktive Platz wird gemerkt, und das automatische Speichern landet dort.
 * **PRESET** (32 Plätze pro Engine) mit **P.LADEN** und **P.SPEICHERN**. Ein Preset enthält den kompletten Klang der Spur: Engine und alle Seiten außer den Steps.
   Gespeichert wird in `groovebox/presets/<ENGINE>/NN.gbp`.

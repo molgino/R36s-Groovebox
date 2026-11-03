@@ -178,7 +178,7 @@ public:
     void init(int sampleRate);
     void setRate(int sampleRate);
     void midiIn(uint8_t st, uint8_t d1, uint8_t d2);
-    void defaultProject();
+    void defaultProject(bool demo = true);
     void initPattern(Pattern& p);
     static void setMachine(Pattern& p, int t, int m);
     static void initTrack(Pattern& p, int t, int m);   // Klang einer Spur auf Grundwerte der Engine
