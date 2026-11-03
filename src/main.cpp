@@ -2228,12 +2228,21 @@ static bool usbScript(const char* args, char* okMsg, int n) {   // pc-modus.sh a
     return ok;
 }
 // Datenpartition als USB-Laufwerk an den PC geben (nur Groovebox-OS)
+static void openAudio();
+static char driveSavedDev[128] = "";
+static bool isUsbAudioDev(const char* n) { return strcasestr(n, "uac") || strcasestr(n, "gadget"); }
 static void startDrive() {
     if (!isGrooveboxOS()) { toast("NUR IM GROOVEBOX-OS"); return; }
     saveProject();
     toast("USB-LAUFWERK WIRD VERBUNDEN ...");
     drawAll(false); present();
     char m[200];
+    driveSavedDev[0] = 0;
+    if (usbMode) {   // aus dem PC-Modus: erst USB-Audio freigeben und das Geraet sauber abmelden
+        if (isUsbAudioDev(cfg.dev)) { snprintf(driveSavedDev, sizeof driveSavedDev, "%s", cfg.dev); cfg.dev[0] = 0; openAudio(); }
+        usbScript("aus nosleep", m, sizeof m);
+        SDL_Delay(500);
+    }
     if (usbScript("laufwerk nosleep", m, sizeof m)) { driveOn = true; usbMode = 1; }
     toast("%s", m);
     msgUntil = SDL_GetTicks() + 3000;
@@ -2244,6 +2253,10 @@ static void stopDrive() {
     drawAll(false); present();
     usbScript("laufwerk-aus nosleep", m, sizeof m);
     driveOn = false; usbMode = 2;
+    if (driveSavedDev[0]) {   // USB-Audio als Ausgang wiederherstellen, sobald das Geraet wieder da ist
+        snprintf(cfg.dev, sizeof cfg.dev, "%s", driveSavedDev); driveSavedDev[0] = 0;
+        audioApplyAt = SDL_GetTicks() + 2500;
+    }
     {   // Update-Datei ueber das Laufwerk kopiert? -> neu starten, groovebox-run installiert
         char ud[700]; snprintf(ud, sizeof ud, "%supdate", basePath);
         DIR* d = opendir(ud); struct dirent* e; bool upd = false;
@@ -3050,8 +3063,10 @@ int main(int argc, char** argv) {
             sDraw += dd; sPres += dp; if (dd + dp > sMax) sMax = dd + dp; nFr++;
             if (!statAt) statAt = now;
             if (now - statAt >= 10000) {
-                printf("Bild: %.1f fps, zeichnen %.1f ms, ausgeben %.1f ms (max %.1f ms), CPU Audio %d%%\n",
-                       nFr * 1000.0 / (now - statAt), sDraw / nFr, sPres / nFr, sMax, (int)(cpuLoad * 100));
+                double cpy = 0, flp = 0; drmOutStats(&cpy, &flp);
+                printf("Bild: %.1f fps, zeichnen %.1f ms, ausgeben %.1f ms (kopieren %.1f, warten/flip %.1f%s) max %.1f ms, CPU Audio %d%%\n",
+                       nFr * 1000.0 / (now - statAt), sDraw / nFr, sPres / nFr, cpy, flp, drmOutSingleBuffer() ? ", 1 Puffer" : "",
+                       sMax, (int)(cpuLoad * 100));
                 fflush(stdout);
                 sDraw = sPres = sMax = 0; nFr = 0; statAt = now;
             }

@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <poll.h>
+#include <errno.h>
 #include <sys/mman.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -21,6 +22,14 @@ static DumbBuf g_buf[2];
 static int g_back = 1;
 static bool g_flipPending = false;
 static drmModeCrtc* g_saved = nullptr;
+static bool g_single = false;   // Page-Flip geht nicht -> direkt in den angezeigten Puffer schreiben
+static double g_copyMs = 0, g_flipMs = 0; static int g_frames = 0;
+static double nowMs() { return SDL_GetPerformanceCounter() * 1000.0 / SDL_GetPerformanceFrequency(); }
+void drmOutStats(double* copyMs, double* flipMs) {
+    *copyMs = g_frames ? g_copyMs / g_frames : 0; *flipMs = g_frames ? g_flipMs / g_frames : 0;
+    g_copyMs = g_flipMs = 0; g_frames = 0;
+}
+bool drmOutSingleBuffer() { return g_single; }
 static int g_off = 0;   // Byte-Versatz im RGB-Datenstrom einer Zeile (siehe drmOutSetByteOffset)
 void drmOutSetByteOffset(int bytes) { g_off = bytes; }
 
@@ -96,10 +105,20 @@ bool drmOutActive() { return g_fd >= 0; }
 
 static void onFlip(int, unsigned int, unsigned int, unsigned int, void*) { g_flipPending = false; }
 
+static int g_flipTimeouts = 0;
 static void waitFlip(int timeoutMs) {
     while (g_flipPending) {
         struct pollfd p = {g_fd, POLLIN, 0};
-        if (poll(&p, 1, timeoutMs) <= 0) { g_flipPending = false; break; }
+        if (poll(&p, 1, timeoutMs) <= 0) {   // keine Flip-Meldung: nach 3 Mal ohne Page-Flip weiter
+            g_flipPending = false;
+            if (++g_flipTimeouts >= 3 && !g_single) {
+                printf("DRM: keine Page-Flip-Meldungen - nutze einen Bildspeicher\n");
+                g_single = true;
+                drmModeSetCrtc(g_fd, g_crtc, g_buf[0].fb, 0, 0, &g_conn, 1, &g_mode);
+            }
+            break;
+        }
+        g_flipTimeouts = 0;
         drmEventContext ev;
         memset(&ev, 0, sizeof ev);
         ev.version = 2;
@@ -110,8 +129,11 @@ static void waitFlip(int timeoutMs) {
 
 void drmOutPresent(SDL_Surface* s) {
     if (g_fd < 0 || !s) return;
+    double t0 = nowMs();
     waitFlip(40);
-    DumbBuf& b = g_buf[g_back];
+    double t1 = nowMs();
+    DumbBuf& b = g_single ? g_buf[0] : g_buf[g_back];
+    static uint32_t tmp[4096];   // Zeile erst im (gecachten) Speicher bauen, dann am Stueck kopieren
     int w = g_mode.hdisplay, h = g_mode.vdisplay;
     SDL_LockSurface(s);
     if (g_off != 0 && s->w == w && s->h == h && s->format->BytesPerPixel == 4) {
@@ -120,7 +142,7 @@ void drmOutPresent(SDL_Surface* s) {
         int L = w * 3, o = ((g_off % L) + L) % L, N = o / 3, r = o % 3;
         for (int y = 0; y < h; y++) {
             const uint32_t* src = (const uint32_t*)((uint8_t*)s->pixels + (size_t)y * s->pitch);
-            uint32_t* dst = (uint32_t*)(b.map + (size_t)y * b.pitch);
+            uint32_t* dst = tmp;
             int q = (w - N) % w, qm = (q + w - 1) % w;
             for (int x = 0; x < w; x++) {
                 uint32_t a = src[qm], c = src[q], v;
@@ -130,6 +152,7 @@ void drmOutPresent(SDL_Surface* s) {
                 dst[x] = 0xff000000u | v;
                 qm = q; if (++q == w) q = 0;
             }
+            memcpy(b.map + (size_t)y * b.pitch, tmp, (size_t)w * 4);
         }
     } else if (s->w == w && s->h == h && s->format->BytesPerPixel == 4) {
         for (int y = 0; y < h; y++) memcpy(b.map + (size_t)y * b.pitch, (uint8_t*)s->pixels + (size_t)y * s->pitch, (size_t)w * 4);
@@ -141,9 +164,17 @@ void drmOutPresent(SDL_Surface* s) {
         }
     }
     SDL_UnlockSurface(s);
-    if (drmModePageFlip(g_fd, g_crtc, b.fb, DRM_MODE_PAGE_FLIP_EVENT, nullptr) == 0) g_flipPending = true;
-    else drmModeSetCrtc(g_fd, g_crtc, b.fb, 0, 0, &g_conn, 1, &g_mode);
-    g_back ^= 1;
+    double t2 = nowMs();
+    if (!g_single) {
+        if (drmModePageFlip(g_fd, g_crtc, b.fb, DRM_MODE_PAGE_FLIP_EVENT, nullptr) == 0) { g_flipPending = true; g_back ^= 1; }
+        else {   // kein Page-Flip moeglich: einmal Puffer 0 anzeigen und kuenftig direkt hineinschreiben (kein Modus-Neusetzen pro Bild!)
+            printf("DRM: Page-Flip nicht moeglich (%s) - nutze einen Bildspeicher\n", strerror(errno));
+            g_single = true;
+            drmModeSetCrtc(g_fd, g_crtc, g_buf[0].fb, 0, 0, &g_conn, 1, &g_mode);
+        }
+    }
+    double t3 = nowMs();
+    g_copyMs += t2 - t1; g_flipMs += (t1 - t0) + (t3 - t2); g_frames++;
 }
 
 void drmOutClose() {
@@ -159,6 +190,8 @@ void drmOutClose() {
 }
 
 #else
+void drmOutStats(double* a, double* b) { *a = *b = 0; }
+bool drmOutSingleBuffer() { return false; }
 void drmOutSetByteOffset(int) {}
 bool drmOutOpen() { return false; }
 bool drmOutActive() { return false; }
