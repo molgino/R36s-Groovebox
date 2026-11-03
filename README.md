@@ -97,6 +97,16 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * Die Grafik zeigt den Euklid-Kreis mit wanderndem Playhead, die Richtung und das Schieberegister mit den erzeugten Tonhöhen.
 * Alle SEQ-Regler außer LEN und SPD sind auch **LFO-Ziele**. Ein langsamer LFO auf PULS oder DENS lässt einen Beat „atmen“.
 
+## Kopieren und Einfügen
+
+| Was | Kopieren | Einfügen |
+|---|---|---|
+| **Trig** (mit allen Locks, auch trigless) | Step mit **A halten + L1** | Ziel-Step **A halten + R1** – geht auch auf anderen Spuren; im Lock-Modus mit ←/→ weiterspringen und mehrfach einfügen |
+| **Seite** (die 8 Werte einer Spurseite) | Seitenmenü (SELECT antippen), Seite markieren, **X** | Zur Ziel-Spur wechseln, Seitenmenü, gleiche Seite markieren, **Y** |
+| **Pattern** | SET → „Pattern kopieren“ | SET → „Pattern einfügen“ oder **SELECT + R1** |
+
+Die Seite SRC/SR2 lässt sich nur zwischen Spuren mit gleicher Engine übertragen (die Regler sind je Engine verschieden). Bei SEQ werden Länge und Tempo mitkopiert.
+
 ## Trigless Locks (nur Parameter, kein Ton)
 
 Ein trigless Step trägt nur Parameter-Locks und schlägt keinen Ton an. Er ändert die Werte des gerade klingenden Tons, z. B. Filter oder Resonanz mitten in einer langen Fläche. Die Werte gelten bis zum nächsten Trig. Im Raster erscheint er als **Umriss mit Punkt**.

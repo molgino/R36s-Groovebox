@@ -55,6 +55,10 @@ static Uint32 editAt = 0, msgAt = 0;
 static int editSlot = 0;
 static Pattern clip;
 static bool haveClip = false;
+static Step trigClip;               // Trig-Ablage (A halten + L1 / R1)
+static bool haveTrigClip = false;
+static uint8_t pageClip[8];         // Seiten-Ablage (Seitenmenue X / Y)
+static int pageClipStore = -1, pageClipMachine = 0, pageClipTrack = 0, pageClipLen = 16, pageClipSpeed = 4;
 static Pattern mutUndo;            // Pattern vor der letzten Mutation
 static bool haveMutUndo = false;
 static int mutAmt = 1, mutPat = 0;
@@ -1728,23 +1732,32 @@ static void drawMixer(int ox) {
 
 // Seitenmenue (SELECT kurz antippen)
 static void drawMenu() {
-    rrect(70, 60, 500, 300, 14, C_ACC);
-    rrect(72, 62, 496, 296, 13, C_BG, 250);
-    textC(320, 72, "SEITE WAEHLEN", C_ACC, 2);
+    rrect(50, 40, 540, 360, 14, C_ACC);
+    rrect(52, 42, 536, 356, 13, C_BG, 250);
+    textC(320, 50, "SEITE WAEHLEN", C_ACC, 2);
+    int y = 104;
     for (int g = 0; g < 3; g++) {
-        int y = 128 + g * 72;
-        text(92, y - 20, GROUP_NAMES[g], C_DIM);
-        int x = 92;
+        text(72, y - 20, GROUP_NAMES[g], C_DIM);
+        int x = 72;
         for (int p = 0; p < NUI_PAGES; p++) {
             if (PG_GROUP[p] != g || !pageAvail(p)) continue;
             bool sel = p == menuSel, cur = p == page;
             int w = textW(PAGE_NAMES[p]) + 22;
+            if (x + w > 568) { x = 72; y += 36; }   // Zeile umbrechen (viele Spurseiten)
             rrect(x, y, w, 30, 8, sel ? C_ACC : (cur ? C_SEL : C_PANEL));
             text(x + 11, y + 7, PAGE_NAMES[p], sel ? C_BG : (cur ? C_ACC : C_TEXT));
             x += w + 8;
         }
+        y += 64;
     }
-    textC(320, 334, PAGE_LONG[menuSel], C_TEXT);
+    textC(320, 344, PAGE_LONG[menuSel], C_TEXT);
+    if (PG_STORE[menuSel] >= 0) {
+        char hb[80];
+        int cq = 0; for (int q = 0; q < NUI_PAGES; q++) if (PG_STORE[q] == pageClipStore) { cq = q; break; }
+        if (pageClipStore >= 0) snprintf(hb, sizeof hb, "[X] SEITE KOPIEREN  [Y] EINFUEGEN (%s VON T%d)", PAGE_NAMES[cq], pageClipTrack + 1);
+        else snprintf(hb, sizeof hb, "[X] SEITE DER SPUR KOPIEREN  [Y] EINFUEGEN");
+        hint(320 - textW(hb) / 2, 368, hb, C_ACC, C_DIM);
+    }
 }
 
 static void drawConfirm() {
@@ -2002,8 +2015,8 @@ static void drawSteps() {
         textC(x + 18, y + 22 - lift, b, st.on == 1 ? C_BG : (st.on == 2 ? tc : C_DIM));
     }
     const char* h;
-    if (lockLatch) h = "LOCK [R-STICK/X/Y]WERT [</>]STEP [B]LOCKS WEG [SEL+A]TRIGLESS [A]FERTIG";
-    else if (aHeld) h = "[X/Y/R-STICK] LOCK  [B] LOESCHEN  LANGE HALTEN = LOCK-MODUS";
+    if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [L1/R1]KOPIE/EINF [A]OK";
+    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LOESCHEN [L1]KOPIE [R1]EINFUEGEN  LANG = LOCK-MODUS";
     else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
     else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
     else if (page == PG_PRJ) h = "[L-STICK]WAEHLEN [R-STICK^v]PLATZ [A/X]AUSFUEHREN [SEL]MENUE";
@@ -2028,6 +2041,7 @@ static void drawHelp() {
         "  A              Trig setzen/loeschen",
         "  A lang halten  LOCK-MODUS: R-Stick/X/Y lockt, </> Step",
         "                 B Locks loeschen, A antippen = fertig",
+        "  A halten+L1/R1 Trig kopieren / einfuegen",
         "  B              Spur vorhoeren",
         "  Linker Stick   Kachel waehlen (je Antippen 1 Schritt)",
         "  Rechter Stick  hoch/runter: Wert (nur Werte)",
@@ -2883,6 +2897,29 @@ static void menuInput(Input& I, Uint32 now) {
         for (int p = 0; p < NUI_PAGES; p++) if (PG_GROUP[p] == ng && pageAvail(p)) { if (c <= col) best = p; c++; }
         if (best >= 0) menuSel = best;
     }
+    if (I.pressed(BT_X) && PG_STORE[menuSel] >= 0) {   // Seite (8 Werte der Spur) kopieren
+        const Pattern& P = curP();
+        int st = PG_STORE[menuSel];
+        for (int i = 0; i < 8; i++) pageClip[i] = P.p[track][st * 8 + i];
+        pageClipStore = st; pageClipMachine = P.machine[track]; pageClipTrack = track;
+        pageClipLen = P.len[track]; pageClipSpeed = P.speed[track];
+        toast("SEITE %s VON T%d KOPIERT", PAGE_NAMES[menuSel], track + 1);
+    }
+    if (I.pressed(BT_Y) && PG_STORE[menuSel] >= 0) {   // auf der aktuellen Spur einfuegen
+        int st = PG_STORE[menuSel];
+        bool srcPage = menuSel == PG_SRC || menuSel == PG_SRC2;
+        if (pageClipStore < 0) toast("SEITEN-ABLAGE LEER (X = KOPIEREN)");
+        else if (pageClipStore != st) toast("ABLAGE IST EINE ANDERE SEITE");
+        else if (srcPage && pageClipMachine != curP().machine[track]) toast("ANDERE ENGINE (%s) - NICHT EINGEFUEGT", MACHINE_NAMES[pageClipMachine % M_COUNT]);
+        else {
+            lockA();
+            Pattern& P = curP();
+            for (int i = 0; i < 8; i++) P.p[track][st * 8 + i] = pageClip[i];
+            if (menuSel == PG_SEQ) { P.len[track] = (uint8_t)pageClipLen; P.speed[track] = (uint8_t)pageClipSpeed; }
+            unlockA();
+            toast("SEITE %s EINGEFUEGT (T%d -> T%d)", PAGE_NAMES[menuSel], pageClipTrack + 1, track + 1);
+        }
+    }
     if (I.pressed(BT_A) || I.pressed(BT_START)) { page = menuSel; menuOpen = false; }
     if (I.pressed(BT_B) || I.pressed(BT_SELECT)) menuOpen = false;
 }
@@ -3045,7 +3082,18 @@ static void handleInput(Uint32 now, float dt) {
         }
         // Rechter Stick: links/rechts = Seite, hoch/runter = Wert
         flRX = 0;   // Seite wechseln nur mit SELECT + rechtem Stick, L2/R2 oder dem Menue
-        {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
+        if (aHeld && I.pressed(BT_L1)) {   // Trig kopieren (Zustand vor dem Druck, mit allen Locks)
+            Step& hs = holdS();
+            if (aPrevOn == 0) { hs.on = 0; memset(hs.lock, NO_LOCK, NPARAMS); }   // leerer Step: nicht anlegen
+            else hs.on = (uint8_t)aPrevOn;
+            trigClip = hs; haveTrigClip = true; aEdited = true;
+            toast(aPrevOn == 0 ? "LEEREN STEP KOPIERT" : (aPrevOn == 2 ? "TRIGLESS STEP KOPIERT" : "TRIG KOPIERT (MIT LOCKS)"));
+        }
+        if (aHeld && I.pressed(BT_R1)) {   // Trig einfuegen in den gehaltenen Step
+            if (!haveTrigClip) toast("TRIG-ABLAGE LEER (A HALTEN + L1)");
+            else { lockA(); holdS() = trigClip; unlockA(); aEdited = true; toast("TRIG EINGEFUEGT IN STEP %d", holdStep + 1); }
+        }
+        if (!aHeld) {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             int dl = (I.repeat(BT_R1, now) ? 1 : 0) - (I.repeat(BT_L1, now) ? 1 : 0);
             if (dl) {
@@ -3448,7 +3496,7 @@ int main(int argc, char** argv) {
         if (shotPage == 22) { page = PG_FLT; slot = 0; track = 4; animate(); editAt = 1; editSlot = 0; eng.recording = true; }
         if (shotPage == 23) { page = PG_TRG; slot = 6; track = 4; editSlot = 6; editAt = 1; }
         if (shotPage == 24) { page = PG_MST; slot = MS_SCALE; eng.proj.mst[MS_SCALE] = 1 + 1 * 12 + 9; eng.proj.mst[MS_ROOT] = 9; editSlot = MS_SCALE; editAt = 1; }
-        if (shotPage == 25) { page = PG_AMP; menuOpen = true; menuSel = PG_MIX; }
+        if (shotPage == 25) { page = PG_AMP; menuOpen = true; menuSel = PG_FLT; pageClipStore = 2; pageClipTrack = 1; }
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
         lastPage = page;
