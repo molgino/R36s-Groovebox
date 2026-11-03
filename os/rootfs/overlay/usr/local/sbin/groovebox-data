@@ -34,5 +34,6 @@ fi
 # GB_DISPLAY=drm   -> Bild direkt per CPU (Standard, ohne GPU)
 # GB_DISPLAY=sdl   -> Bild ueber SDL/GPU (Panfrost), zum Testen
 # PAN_MESA_DEBUG=noafbc
+# GB_DRM_FLIP=1   -> Puffer-Wechsel (Page-Flip) statt einem Bildspeicher, zum Testen
 EOF
 sync

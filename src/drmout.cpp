@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <poll.h>
 #include <errno.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -89,12 +90,16 @@ bool drmOutOpen() {
             return false;
         }
         g_saved = drmModeGetCrtc(fd, g_crtc);
+        // Standard: ein Bildspeicher, direkt beschrieben (Page-Flip war auf dem R36S langsam/unzuverlaessig);
+        // GB_DRM_FLIP=1 in config/groovebox.env schaltet den Puffer-Wechsel zum Testen ein
+        const char* fl = getenv("GB_DRM_FLIP");
+        g_single = !(fl && fl[0] == '1');
         if (drmModeSetCrtc(fd, g_crtc, g_buf[0].fb, 0, 0, &g_conn, 1, &g_mode)) {
             printf("DRM: Modus setzen fehlgeschlagen (%s)\n", path);
             close(fd); g_fd = -1; g_conn = 0;
             return false;
         }
-        printf("DRM-Ausgabe: %s, %dx%d@%d, direkt ohne GPU\n", path, w, h, g_mode.vrefresh);
+        printf("DRM-Ausgabe: %s, %dx%d@%d, direkt ohne GPU, %s\n", path, w, h, g_mode.vrefresh, g_single ? "1 Bildspeicher" : "Page-Flip");
         return true;
     }
     printf("DRM: keine Anzeige gefunden\n");
