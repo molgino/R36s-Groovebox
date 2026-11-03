@@ -5,6 +5,10 @@ Neo-Noir-Optik in Neon-Magenta und Cyan; beim Start erscheint ein Splashscreen m
 8 Spuren, 16 Patterns mit bis zu 128 Steps pro Spur, Parameter-Locks, Sample-Spuren, USB-Audio, USB-MIDI, Ping-Pong-Delay, Reverb und ein DJ-Filter.
 Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt EmulationStation.
 
+## Testversion C: Zoom-Ebenen (Branch `ui-zoom`)
+
+Die Oberfläche hat vier Ebenen: **SONG** (Song, Mixer, FX, Kompressor, Master) → **PATTERN** (alle 8 Spuren × 16 Steps groß, darunter die TRIG-Werte des Steps) → **SPUR** (TRIG, SEQ, ARP mit großen Steps) → **KLANG** (Quelle, Filter, Amp, LFOs, Insert). **L2/R2** (oder SELECT + ↑/↓) zoomt hinaus/hinein, **L1/R1** blättert die Seiten der Ebene. Die Kopfzeile zeigt den Pfad, im Raster rechts die Ebenen-Karte. Projekt und Einstellungen liegen im SELECT-Menü. Nach dem Start bist du im Pattern-Raster.
+
 ## Klangerzeugung
 
 | Maschine | Regler auf der SRC-Seite |
@@ -330,12 +334,12 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | **SELECT kurz antippen** | **Seitenmenü**: alle Seiten nach Gruppen (SPUR / MIX & FX / PROJEKT), Steuerkreuz wählt, A öffnet |
 | SELECT halten | Hilfe-Einblendung |
 | SELECT + rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass. Die Richtung rastet beim Auslenken ein, schräg drücken wechselt nicht aus Versehen |
-| L1/R1 | auf Spurseiten: Step-Seite ±16, sonst Regler |
-| L2/R2 | Seite (alternativ zu SELECT + rechtem Stick oder SELECT-Menü) |
+| L1/R1 | Seite innerhalb der Ebene (im Pattern-Raster: Step-Seite ±16) |
+| L2/R2 | **Zoom-Ebene**: L2 hinaus, R2 hinein (SONG → PATTERN → SPUR → KLANG) |
 | START | Play / Stop |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
-| SELECT + ↑ | Aufnahme an/aus (für MIDI-Eingabe) |
-| SELECT + ↓ | Tap-Tempo (mehrmals im Takt tippen) |
+| SELECT + ↑ / ↓ | Zoom-Ebene hinaus / hinein (wie L2/R2) |
+| X / Y im Pattern-Raster | Aufnahme an/aus / Tap-Tempo |
 | SELECT + A | Spur stummschalten |
 | SELECT + B | Spur löschen |
 | SELECT + X/Y | Engine der Spur wechseln (alternativ: Regler ENGINE auf der TRG-Seite) |

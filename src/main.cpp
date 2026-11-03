@@ -558,8 +558,35 @@ static bool pageAvail(int p) {
     if (p == PG_ARP) return !machineIsDrum(curP().machine[track]);   // Arpeggiator nur fuer Klangerzeuger mit Tonhoehe
     return true;
 }
-static void gotoPage(int dir) {
-    for (int i = 0; i < NUI_PAGES; i++) { page = (page + dir + NUI_PAGES) % NUI_PAGES; if (pageAvail(page)) break; }
+// Oberflaeche C: Zoom-Ebenen 0 SONG, 1 PATTERN (Raster), 2 SPUR, 3 KLANG, 4 = nur ueber das SELECT-Menue (PRJ, SET)
+static bool patView = true;
+static int lvLast[5] = {PG_SONG, PG_TRG, PG_TRG, PG_SRC, PG_PRJ};
+static const char* const LEVEL_NAMES[4] = {"SONG", "PATTERN", "SPUR", "KLANG"};
+static int levelOf(int p) {
+    switch (p) {
+    case PG_SONG: case PG_MIX: case PG_FX: case PG_CMP: case PG_MST: return 0;
+    case PG_TRG: case PG_SEQ: case PG_ARP: return 2;
+    case PG_PRJ: case PG_SYS: return 4;
+    default: return 3;
+    }
+}
+static int curLevel() { return patView ? 1 : levelOf(page); }
+static void zoomTo(int lv) {
+    if (!patView) lvLast[levelOf(page)] = page;
+    if (lv == 1) { patView = true; page = lvLast[2]; }
+    else { patView = false; page = lvLast[lv]; if (!pageAvail(page)) page = lv == 2 ? PG_TRG : (lv == 3 ? PG_SRC : page); }
+}
+static void zoomDir(int d) {   // d = +1 hinein (Richtung KLANG), -1 hinaus (Richtung SONG)
+    int cur = curLevel();
+    if (cur == 4) { zoomTo(1); return; }
+    int nl = cur + d;
+    if (nl < 0 || nl > 3) return;
+    zoomTo(nl);
+}
+static void gotoPage(int dir) {   // Seiten nur innerhalb der aktuellen Ebene
+    if (patView) return;
+    int lv = levelOf(page);
+    for (int i = 0; i < NUI_PAGES; i++) { page = (page + dir + NUI_PAGES) % NUI_PAGES; if (levelOf(page) == lv && pageAvail(page)) break; }
 }
 static int curScale() { return eng.proj.mst[MS_SCALE]; }
 
@@ -639,9 +666,10 @@ static void drawHeader() {
         text(310, 2, b, C_DIM);
     }
     {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
-        int g = PG_GROUP[page], x = 334, right = 612;
+        int g = levelOf(page), x = 334, right = 612;
         int list[NUI_PAGES], n = 0, cur = 0;
-        for (int p = 0; p < NUI_PAGES; p++) if (PG_GROUP[p] == g && pageAvail(p)) { if (p == page) cur = n; list[n++] = p; }
+        if (!patView) for (int p = 0; p < NUI_PAGES; p++) if (levelOf(p) == g && pageAvail(p)) { if (p == page) cur = n; list[n++] = p; }
+        if (patView) { text(x, 4, "8 SPUREN x 16 STEPS", C_DIM); n = 0; }
         // zu viele Reiter: so weit nach links schieben, dass die aktuelle Seite sichtbar bleibt
         int first = 0;
         auto widthFrom = [&](int f, int upto) { int w = 0; for (int i = f; i <= upto; i++) w += textW(PAGE_NAMES[list[i]]) + 5; return w; };
@@ -659,13 +687,21 @@ static void drawHeader() {
         snprintf(b, sizeof b, lockLatch ? "LOCK-MODUS STEP %02d" : "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
         text(332, 23, b, C_LOCK);
     } else {
-        text(334, 23, GROUP_NAMES[PG_GROUP[page]], dimC(C_ACC, 0.8f));
-        snprintf(b, sizeof b, "CPU %d%%", (int)(cpuLoad * 100));
-        text(334 + textW(GROUP_NAMES[PG_GROUP[page]]) + 10, 23, b, C_DIM);
+        {   // Pfad SONG > PATTERN > SPUR > KLANG, aktuelle Ebene hell
+            int lv = curLevel(), xx = 334;
+            if (lv == 4) { text(xx, 23, "PROJEKT / SET", C_ACC); xx += textW("PROJEKT / SET"); }
+            else for (int l = 0; l < 4; l++) {
+                const char* nm = l == 1 ? "PTN" : LEVEL_NAMES[l];
+                text(xx, 23, nm, l == lv ? C_CYAN : (l < lv ? C_TEXT : C_DIM));
+                if (l == lv) fill(xx, 38, textW(nm), 2, C_CYAN);
+                xx += textW(nm);
+                if (l < 3) { text(xx, 23, ">", C_DIM); xx += 8; }
+            }
+        }
         if (strcmp(midiBackend(), "AUS")) {
             bool act = SDL_GetTicks() - midiActivity < 150;
-            rrect(462, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
-            text(471, 23, "MIDI", act ? C_GREEN : C_DIM);
+            rrect(492, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
+            text(500, 23, "MIDI", act ? C_GREEN : C_DIM);
         }
         battery(530, 26);
     }
@@ -1813,8 +1849,77 @@ static void drawConfirm() {
     rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, "B = NEIN", C_TEXT);
 }
 
-static void drawKnobs() {
+static void drawOverlays() {
     char b[32], label[24];
+    Col tc = TCOL[track];
+    Uint32 now = SDL_GetTicks();
+    // grosse Werteanzeige beim Drehen bzw. Meldung (die juengste gewinnt)
+    bool showEdit = editAt && (now - editAt < 900 || editAt == 1) && editAt >= msgAt;
+    bool showMsg = now < msgUntil && msgAt > editAt;
+    if (showEdit) {
+        ParamDef d; int val, baseVal; bool locked;
+        if (knobInfo(editSlot, d, val, locked, baseVal, label, sizeof label)) {
+            knobText(d, val, b, sizeof b, editSlot);
+            Col c = locked ? C_LOCK : (!trackPage(page) ? C_ACC : tc);
+            float t = editAt == 1 ? 1.f : fminf((now - editAt) / 120.f, 1.f);   // kurzes Aufpoppen
+            int oy = 204 + (int)((1.f - t) * 8);
+            rrect(150, oy, 340, 34, 8, C_BG);
+            rrect(150, oy, 4, 34, 2, c);
+            text(164, oy + 9, label[0] ? label : d.name, C_DIM);
+            int bx = 330, bw = 100;
+            if (d.kind == K_SCALE) {   // Mini-Tastatur mit den Skalentoenen
+                static const int white[7] = {0, 2, 4, 5, 7, 9, 11}, black[5] = {1, 3, 6, 8, 10};
+                static const int bpos[5] = {0, 1, 3, 4, 5};
+                int kx = 300, kw = 14;
+                for (int i = 0; i < 7; i++) {
+                    bool on = val == 0 || inScale(white[i], val), root = val > 0 && (val - 1) % 12 == white[i];
+                    rrect(kx + i * kw, oy + 6, kw - 2, 22, 2, root ? C_PLAY : (on ? c : C_OFF2));
+                }
+                for (int i = 0; i < 5; i++) {
+                    bool on = val == 0 || inScale(black[i], val), root = val > 0 && (val - 1) % 12 == black[i];
+                    rrect(kx + bpos[i] * kw + kw - 5, oy + 6, 9, 13, 2, root ? C_PLAY : (on ? dimC(c, 0.7f) : C_BG));
+                }
+            } else {
+                rrect(bx, oy + 13, bw, 8, 3, C_OFF2);
+                int fw = (int)(bw * knobFrac(d, val));
+                if (fw > 0) rrect(bx, oy + 13, fw, 8, 3, c);
+            }
+            text(478 - textW(b, 1) - 2, oy + 9, b, c);
+            if (locked) text(bx, oy + 1, "LOCK", C_LOCK);
+            if (d.kind == K_MACH) drawEnginePicker(val, c);
+            if (d.kind == K_MTIM) {   // Zeitlineal: Mitte = Raster
+                rrect(bx - 8, oy + 6, bw + 16, 22, 6, C_BG);
+                fill(bx, oy + 17, bw, 1, C_DIM);
+                for (int k2 = 0; k2 <= 4; k2++) fill(bx + k2 * bw / 4, oy + (k2 == 2 ? 9 : 13), 1, k2 == 2 ? 16 : 8, k2 == 2 ? C_TEXT : C_DIM);
+                int mx = bx + bw / 2 + (val - 23) * (bw / 2) / 23;
+                rrect(mx - 3, oy + 11, 7, 12, 3, c);
+            }
+            if (d.kind == K_INS) {
+                const char* const* names = INS_NAMES;
+                int cnt = INS_COUNT;
+                rrect(150, oy, 340, 34, 8, C_BG, 250);
+                rrect(150, oy, 4, 34, 2, c);
+                for (int m = 0; m < cnt; m++) {
+                    int mx = 160 + m * 47;
+                    if (m == val) rrect(mx - 2, oy + 7, 46, 20, 5, c);
+                    textC(mx + 21, oy + 9, names[m], m == val ? C_BG : C_DIM);
+                }
+            }
+        }
+    } else if (showMsg) {
+        int w = textW(msg) + 28;
+        rrect(320 - w / 2, 210, w, 26, 8, C_ACC);
+        textC(320, 215, msg, C_BG);
+    }
+    if (pageAt && now - pageAt < 450) {
+        textAlpha = (Uint8)(200 * (1.f - (now - pageAt) / 450.f));
+        textC(320 - (int)slideOff, 120, PAGE_NAMES[page], C_PLAY, 4);
+        textAlpha = 255;
+    }
+}
+
+static void drawKnobs() {
+    char label[24];
     Col tc = TCOL[track];
     Uint32 now = SDL_GetTicks();
     int ox = (int)slideOff;
@@ -1886,69 +1991,7 @@ static void drawKnobs() {
         }
     }
 overlays:
-    // grosse Werteanzeige beim Drehen bzw. Meldung (die juengste gewinnt)
-    bool showEdit = editAt && (now - editAt < 900 || editAt == 1) && editAt >= msgAt;
-    bool showMsg = now < msgUntil && msgAt > editAt;
-    if (showEdit) {
-        ParamDef d; int val, baseVal; bool locked;
-        if (knobInfo(editSlot, d, val, locked, baseVal, label, sizeof label)) {
-            knobText(d, val, b, sizeof b, editSlot);
-            Col c = locked ? C_LOCK : (!trackPage(page) ? C_ACC : tc);
-            float t = editAt == 1 ? 1.f : fminf((now - editAt) / 120.f, 1.f);   // kurzes Aufpoppen
-            int oy = 204 + (int)((1.f - t) * 8);
-            rrect(150, oy, 340, 34, 8, C_BG);
-            rrect(150, oy, 4, 34, 2, c);
-            text(164, oy + 9, label[0] ? label : d.name, C_DIM);
-            int bx = 330, bw = 100;
-            if (d.kind == K_SCALE) {   // Mini-Tastatur mit den Skalentoenen
-                static const int white[7] = {0, 2, 4, 5, 7, 9, 11}, black[5] = {1, 3, 6, 8, 10};
-                static const int bpos[5] = {0, 1, 3, 4, 5};
-                int kx = 300, kw = 14;
-                for (int i = 0; i < 7; i++) {
-                    bool on = val == 0 || inScale(white[i], val), root = val > 0 && (val - 1) % 12 == white[i];
-                    rrect(kx + i * kw, oy + 6, kw - 2, 22, 2, root ? C_PLAY : (on ? c : C_OFF2));
-                }
-                for (int i = 0; i < 5; i++) {
-                    bool on = val == 0 || inScale(black[i], val), root = val > 0 && (val - 1) % 12 == black[i];
-                    rrect(kx + bpos[i] * kw + kw - 5, oy + 6, 9, 13, 2, root ? C_PLAY : (on ? dimC(c, 0.7f) : C_BG));
-                }
-            } else {
-                rrect(bx, oy + 13, bw, 8, 3, C_OFF2);
-                int fw = (int)(bw * knobFrac(d, val));
-                if (fw > 0) rrect(bx, oy + 13, fw, 8, 3, c);
-            }
-            text(478 - textW(b, 1) - 2, oy + 9, b, c);
-            if (locked) text(bx, oy + 1, "LOCK", C_LOCK);
-            if (d.kind == K_MACH) drawEnginePicker(val, c);
-            if (d.kind == K_MTIM) {   // Zeitlineal: Mitte = Raster
-                rrect(bx - 8, oy + 6, bw + 16, 22, 6, C_BG);
-                fill(bx, oy + 17, bw, 1, C_DIM);
-                for (int k2 = 0; k2 <= 4; k2++) fill(bx + k2 * bw / 4, oy + (k2 == 2 ? 9 : 13), 1, k2 == 2 ? 16 : 8, k2 == 2 ? C_TEXT : C_DIM);
-                int mx = bx + bw / 2 + (val - 23) * (bw / 2) / 23;
-                rrect(mx - 3, oy + 11, 7, 12, 3, c);
-            }
-            if (d.kind == K_INS) {
-                const char* const* names = INS_NAMES;
-                int cnt = INS_COUNT;
-                rrect(150, oy, 340, 34, 8, C_BG, 250);
-                rrect(150, oy, 4, 34, 2, c);
-                for (int m = 0; m < cnt; m++) {
-                    int mx = 160 + m * 47;
-                    if (m == val) rrect(mx - 2, oy + 7, 46, 20, 5, c);
-                    textC(mx + 21, oy + 9, names[m], m == val ? C_BG : C_DIM);
-                }
-            }
-        }
-    } else if (showMsg) {
-        int w = textW(msg) + 28;
-        rrect(320 - w / 2, 210, w, 26, 8, C_ACC);
-        textC(320, 215, msg, C_BG);
-    }
-    if (pageAt && now - pageAt < 450) {
-        textAlpha = (Uint8)(200 * (1.f - (now - pageAt) / 450.f));
-        textC(320 - (int)slideOff, 120, PAGE_NAMES[page], C_PLAY, 4);
-        textAlpha = 255;
-    }
+    drawOverlays();
 }
 
 static Col offCol(int s) { return (s / 4) % 2 ? C_OFF2 : C_OFF; }
@@ -2061,10 +2104,10 @@ static void drawSteps() {
     const char* h;
     if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [L1/R1]KOPIE/EINF [A]OK";
     else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LOESCHEN [L1]KOPIE [R1]EINFUEGEN  LANG = LOCK-MODUS";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
+    else if (in.down[BT_SELECT]) h = "[^v]ZOOM [</>]PTN [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
     else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
     else if (page == PG_PRJ) h = "[L-STICK]WAEHLEN [R-STICK^v]PLATZ [A/X]AUSFUEHREN [SEL]MENUE";
-    else h = "[A]TRIG [B]HOER [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE";
+    else h = "[A]TRIG [B]HOER [L-ST]REGLER [R-ST]WERT [L1/R1]SEITE [L2/R2]ZOOM";
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -2074,7 +2117,7 @@ static void drawHelp() {
     static const char* lines[] = {
         "SELECT (FUNC) GEHALTEN +",
         "  LINKS/RECHTS   Pattern wechseln",
-        "  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo",
+        "  HOCH / RUNTER  Zoom raus / rein (SONG-PATTERN-SPUR-KLANG)",
         "  A / B          Spur stumm / Spur loeschen",
         "  X / Y          Engine wechseln",
         "  L1 / R1        FILL an/aus / Pattern einfuegen",
@@ -2089,11 +2132,131 @@ static void drawHelp() {
         "  B              Spur vorhoeren",
         "  Linker Stick   Kachel waehlen (je Antippen 1 Schritt)",
         "  Rechter Stick  hoch/runter: Wert (nur Werte)",
-        "  SEL+R-Stick    links/rechts: Seite  hoch/runter: DJ-Filter",
+        "  L1/R1 Seite der Ebene, L2/R2 Zoom, X/Y im Raster: REC/TAP",
         "  START          Play / Stop",
     };
     for (unsigned i = 0; i < sizeof lines / sizeof *lines; i++)
         text(48, 36 + i * 22, lines[i], i == 0 || i == 9 ? C_ACC : C_TEXT);
+}
+
+
+// ---------------------------------------------------------------- Oberflaeche C: Pattern-Raster und Spur-Ansicht
+static void zoomMap(int x, int y) {   // kleine Ebenen-Karte
+    int lv = curLevel();
+    text(x, y, "ZOOM", C_DIM);
+    for (int l = 0; l < 4; l++) {
+        int yy = y + 18 + l * 30;
+        bool on = l == lv;
+        rrect(x, yy, 76, 26, 4, on ? C_SEL : C_PANEL);
+        if (on) { rrect(x, yy, 76, 2, 1, C_CYAN); rrect(x, yy + 24, 76, 2, 1, C_CYAN); rrect(x, yy, 2, 26, 1, C_CYAN); rrect(x + 74, yy, 2, 26, 1, C_CYAN); }
+        text(x + 6, yy + 5, l == 1 ? "PATTERN" : LEVEL_NAMES[l], on ? C_CYAN : C_DIM);
+    }
+    text(x, y + 142, "L2 RAUS", C_DIM);
+    text(x, y + 158, "R2 REIN", C_DIM);
+}
+static void drawPatternView() {
+    const Pattern& P = curP();
+    char b[32];
+    int base = (cursor / 16) * 16;
+    int x0 = 86, cw = 27, gap = 2, y0 = 50, rh = 34;
+    for (int t = 0; t < NTRACKS; t++) {
+        int y = y0 + t * rh;
+        bool sel = t == track;
+        Col tc = eng.mute[t] ? dimC(TCOL[t], 0.35f) : TCOL[t];
+        if (sel) rrect(0, y - 2, x0 - 4, rh - 2, 4, C_SEL);
+        int chipH = 18 + (int)(flash[t] * 6);
+        rrect(3, y + 14 - chipH / 2, 3, chipH, 1, mix(tc, C_PLAY, flash[t] * 0.7f));
+        drawIcon(P.machine[t] % M_COUNT, 9, y + 2, 14, mix(tc, C_PLAY, flash[t] * 0.6f));
+        snprintf(b, sizeof b, "%d", t + 1);
+        text(26, y, b, sel ? tc : C_TEXT);
+        snprintf(b, sizeof b, "%.5s", MACHINE_NAMES[P.machine[t] % M_COUNT]);
+        text(38, y, b, eng.mute[t] ? C_DIM : (sel ? tc : C_TEXT));
+        if (eng.mute[t]) text(38, y + 14, "MUTE", C_TRIG);
+        else if (eng.solo[t]) text(38, y + 14, "SOLO", C_LOCK);
+        else { int mw = clampi((int)(sqrtf(meterV[t]) * 40), 0, 40); fill(38, y + 20, 40, 2, C_OFF); if (mw) fill(38, y + 20, mw, 2, tc); }
+        int len = P.len[t];
+        for (int s0 = 0; s0 < 16; s0++) {
+            int s = base + s0, x = x0 + s0 * (cw + gap);
+            if (s >= len) { rrect(x, y, cw, rh - 4, 4, C_DARK); continue; }
+            const Step& st = P.s[t][s];
+            bool ph = eng.playing && eng.playedStep[t] == s;
+            int pul = P.p[t][P_PULS];
+            bool shown = pul > 0 ? euclidHitUi(s, pul, len, P.p[t][P_EROT]) : st.on == 1;
+            Col c = shown ? tc : offCol(s);
+            if (ph) c = shown ? mix(tc, C_PLAY, 0.3f + flash[t] * 0.5f) : mix(c, C_PLAY, 0.18f);
+            rrect(x, y, cw, rh - 4, 4, c);
+            if (st.on == 2 && !shown) { rrect(x, y, cw, rh - 4, 4, tc); rrect(x + 2, y + 2, cw - 4, rh - 8, 3, offCol(s)); }
+            if (stepHasLock(st)) rrect(x + cw - 8, y + 3, 5, 5, 2, shown ? C_BG : C_LOCK);
+            if (ph) fill(x + 4, y + rh - 7, cw - 8, 2, C_PLAY);
+        }
+    }
+    // Cursor
+    {
+        int cx = x0 + (cursor - base) * (cw + gap), cy = y0 + track * rh;
+        Col cc = aHeld ? C_LOCK : C_PLAY;
+        rrect(cx - 3, cy - 3, cw + 6, 2, 1, cc); rrect(cx - 3, cy + rh - 5, cw + 6, 2, 1, cc);
+        rrect(cx - 3, cy - 3, 2, rh - 1, 1, cc); rrect(cx + cw + 1, cy - 3, 2, rh - 1, 1, cc);
+    }
+    // Step-Seiten
+    int len = P.len[track] < 1 ? 1 : P.len[track];
+    int npg = (len + 15) / 16;
+    for (int k = 0; k < 8 && npg > 1; k++) {
+        if (k >= npg) break;
+        rrect(x0 + k * 58, y0 + 8 * rh + 1, 54, 4, 2, k == cursor / 16 ? C_TEXT : C_OFF2);
+    }
+    zoomMap(560, 48);
+    // Step-Leiste: TRIG-Werte des Steps (A halten = Lock)
+    int iy = 334;
+    Col tc = TCOL[track];
+    rrect(0, iy, SW, 72, 0, C_PANEL);
+    fill(0, iy, 3, 72, tc);
+    const Step& st = P.s[track][cursor];
+    snprintf(b, sizeof b, "STEP %d  SPUR %d  %s", cursor + 1, track + 1, st.on == 1 ? "TRIG" : (st.on == 2 ? "NUR LOCKS" : "LEER"));
+    text(8, iy + 2, b, aHeld ? C_LOCK : tc);
+    text(SW - 8 - textW("A HALTEN = LOCK"), iy + 2, "A HALTEN = LOCK", C_DIM);
+    for (int k = 0; k < 8; k++) paramChip(k, (k % 4) * 160, iy + 18 + (k / 4) * 27, tc);
+    const char* h;
+    if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [A]OK";
+    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LOESCHEN [L1]KOPIE [R1]EINFUEGEN";
+    else if (in.down[BT_SELECT]) h = "[^v]ZOOM [</>]PTN [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
+    else h = eng.recording ? "[A]TRIG [B]HOER [X]REC AUS [Y]TAP [L1/R1]STEPS [L2/R2]ZOOM" : "[A]TRIG [B]HOER [X]REC [Y]TAP [L1/R1]STEPS [L2/R2]ZOOM [SEL]MENUE";
+    hint(6, 452, h, C_ACC, C_DIM);
+}
+// SPUR-Ebene: grosse Steps der Spur (bis 64 sichtbar)
+static void drawTrackBig() {
+    const Pattern& P = curP();
+    char b[8];
+    Col tc = eng.mute[track] ? dimC(TCOL[track], 0.35f) : TCOL[track];
+    int len = P.len[track] < 1 ? 1 : P.len[track];
+    int first = (cursor / 64) * 64;
+    int rows = clampi((len - first + 15) / 16, 1, 4), sh = 200 / rows - 6;   // nur benoetigte Reihen, dafuer hoeher
+    for (int r = 0; r < rows; r++) for (int s0 = 0; s0 < 16; s0++) {
+        int s = first + r * 16 + s0, x = 6 + s0 * 39, y = 246 + r * (sh + 6);
+        if (s >= len) { rrect(x, y, 36, sh, 6, C_DARK); continue; }
+        const Step& st = P.s[track][s];
+        bool ph = eng.playing && eng.playedStep[track] == s;
+        bool shown = st.on == 1;
+        Col c = shown ? tc : offCol(s);
+        if (ph) c = mix(c, C_PLAY, shown ? 0.3f + flash[track] * 0.5f : 0.2f);
+        rrect(x, y, 36, sh, 6, c);
+        if (st.on == 2) { rrect(x, y, 36, sh, 6, tc); rrect(x + 3, y + 3, 30, sh - 6, 4, offCol(s)); }
+        if (stepHasLock(st)) rrect(x + 27, y + 5, 5, 5, 2, shown ? C_BG : C_LOCK);
+        if (shown && st.lock[P_NOTE] != NO_LOCK) {
+            char nb[8]; fmtParam(COMMON_DEFS[P_NOTE], quantizeNote(st.lock[P_NOTE], curScale()), nb, sizeof nb);
+            textC(x + 18, y + 6, nb, dimC(C_BG, 0.85f));
+        }
+        snprintf(b, sizeof b, "%d", s + 1);
+        textC(x + 18, y + sh / 2 + 2, b, shown ? C_BG : C_DIM);
+        if (s == cursor) {
+            Col cc = aHeld ? C_LOCK : C_PLAY;
+            rrect(x - 2, y - 2, 40, 2, 1, cc); rrect(x - 2, y + sh, 40, 2, 1, cc); rrect(x - 2, y - 2, 2, sh + 4, 1, cc); rrect(x + 36, y - 2, 2, sh + 4, 1, cc);
+        }
+    }
+    const char* h;
+    if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [A]OK";
+    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LOESCHEN [L1]KOPIE [R1]EINFUEGEN";
+    else h = "[A]TRIG [L-ST]REGLER [R-ST]WERT [L1/R1]SEITE [L2/R2]ZOOM [SEL]MENUE";
+    hint(6, 452, h, C_ACC, C_DIM);
 }
 
 static void drawSettings();
@@ -2104,8 +2267,10 @@ static void drawAll(bool help) {
     animate();
     clearScreen(C_BG);
     drawHeader();
-    if (page == PG_SYS) drawSettings();
-    else if (page == PG_SONG) drawSong();
+    if (page == PG_SYS && !patView) drawSettings();
+    else if (page == PG_SONG && !patView) drawSong();
+    else if (patView) { drawPatternView(); drawOverlays(); }
+    else if (levelOf(page) == 2) { drawKnobs(); drawTrackBig(); }
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
     if (menuOpen) drawMenu();
@@ -2965,8 +3130,20 @@ static void menuInput(Input& I, Uint32 now) {
             toast("SEITE %s EINGEFUEGT (T%d -> T%d)", PAGE_NAMES[menuSel], pageClipTrack + 1, track + 1);
         }
     }
-    if (I.pressed(BT_A) || I.pressed(BT_START)) { page = menuSel; menuOpen = false; }
+    if (I.pressed(BT_A) || I.pressed(BT_START)) { page = menuSel; patView = false; menuOpen = false; }
     if (I.pressed(BT_B) || I.pressed(BT_SELECT)) menuOpen = false;
+}
+
+static void doTap(Uint32 now) {
+    if (tapN && now - taps[(tapN - 1) % 4] > 2000) tapN = 0;
+    taps[tapN % 4] = now; tapN++;
+    int n = tapN < 4 ? tapN : 4;
+    if (n >= 2) {
+        Uint32 newest = taps[(tapN - 1) % 4], oldest = taps[(tapN - n) % 4];
+        float iv = (newest - oldest) / (float)(n - 1);
+        if (iv > 0) eng.proj.bpm = (uint16_t)clampi((int)(60000.f / iv + 0.5f), 30, 300);
+        toast("TAP %d BPM", eng.proj.bpm);
+    } else toast("TAP ...");
 }
 
 static void handleInput(Uint32 now, float dt) {
@@ -2986,6 +3163,7 @@ static void handleInput(Uint32 now, float dt) {
     bool func = I.down[BT_SELECT];
     if (I.pressed(BT_SELECT)) { funcUsed = false; selDownAt = now; }
     if (I.released(BT_SELECT) && !funcUsed && now - selDownAt < 400) { menuOpen = true; menuSel = page; return; }
+    if (!func && !aHeld && (I.pressed(BT_L2) || I.pressed(BT_R2))) { zoomDir(I.pressed(BT_R2) ? 1 : -1); return; }   // Zoom-Ebene
     static int lastPgSeen = -1;
     if (page != lastPgSeen) { if (page == PG_SYS && lastPgSeen >= 0) prevPage = lastPgSeen; lastPgSeen = page; }
     if (page == PG_SYS && !func) { settingsInput(I, now, dt); return; }
@@ -3002,23 +3180,8 @@ static void handleInput(Uint32 now, float dt) {
             unlockA();
             toast("PATTERN %02d", to + 1);
         }
-        if (I.pressed(BT_UP)) {
-            funcUsed = true;
-            eng.recording = !eng.recording;
-            toast(eng.recording ? "AUFNAHME AN" : "AUFNAHME AUS");
-        }
-        if (I.pressed(BT_DOWN)) {   // Tap-Tempo
-            funcUsed = true;
-            if (tapN && now - taps[(tapN - 1) % 4] > 2000) tapN = 0;
-            taps[tapN % 4] = now; tapN++;
-            int n = tapN < 4 ? tapN : 4;
-            if (n >= 2) {
-                Uint32 newest = taps[(tapN - 1) % 4], oldest = taps[(tapN - n) % 4];
-                float iv = (newest - oldest) / (float)(n - 1);
-                if (iv > 0) eng.proj.bpm = (uint16_t)clampi((int)(60000.f / iv + 0.5f), 30, 300);
-                toast("TAP %d BPM", eng.proj.bpm);
-            } else toast("TAP ...");
-        }
+        if (I.pressed(BT_UP)) { funcUsed = true; zoomDir(-1); }     // hinaus (Richtung SONG)
+        if (I.pressed(BT_DOWN)) { funcUsed = true; zoomDir(1); }    // hinein (Richtung KLANG)
         if (I.pressed(BT_A) && lockLatch) {   // im Lock-Modus: Trig <-> trigless (nur Locks) umschalten
             funcUsed = true;
             Step& hs = holdS();
@@ -3143,7 +3306,8 @@ static void handleInput(Uint32 now, float dt) {
             int dl = (I.repeat(BT_R1, now) ? 1 : 0) - (I.repeat(BT_L1, now) ? 1 : 0);
             if (dl) {
                 if (mixP) mixRow = (mixRow + 4 + dl) % 4;
-                else if (trackPage(page) && cl > 16) cursor = ((cursor + dl * 16) % cl + cl) % cl;
+                else if (patView) { if (cl > 16) cursor = ((cursor + dl * 16) % cl + cl) % cl; }
+                else if (trackPage(page)) gotoPage(dl);   // Seite innerhalb der Ebene
                 else slot = (slot + 8 + dl) % 8;
             }
         }
@@ -3157,6 +3321,9 @@ static void handleInput(Uint32 now, float dt) {
         }
         if (prjAct) {
             if (I.pressed(BT_X)) prjTrigger(slot);
+        } else if (patView && !aHeld) {   // Pattern-Raster: X = Aufnahme, Y = Tap-Tempo
+            if (I.pressed(BT_X)) { eng.recording = !eng.recording; toast(eng.recording ? "AUFNAHME AN" : "AUFNAHME AUS"); }
+            if (I.pressed(BT_Y)) doTap(now);
         } else {
             int big = curMax() >= 100;
             int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
@@ -3490,6 +3657,7 @@ int main(int argc, char** argv) {
         for (int k = 0; k < 6; k++) eng.render(tmp, 22050 / 2);
         // 0..12 = Seiten (PG_*), 20 Hilfe, 21 P-Lock, 22 Werte-Overlay, 23 Engine-Leiste, 24 Skala, 25 Menue, 26 Abfrage, 27 FM SRC2
         page = shotPage < NUI_PAGES ? shotPage : PG_TRG; track = 4; cursor = 3; slot = 1;
+        patView = shotPage == 41;
         refreshDevices();
         if (page == PG_SRC) { track = 7; slot = 0; }
         if (page == PG_SRC || page == PG_SRC2 || shotPage == 27) { }
