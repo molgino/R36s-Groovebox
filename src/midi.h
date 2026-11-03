@@ -11,5 +11,6 @@ bool midiOutPush(const MidiMsg& m);     // nur vom Audio-Thread
 double midiNow();                       // Sekunden, monotone Uhr
 int midiPortInfo(char* buf, int n);     // Namen der verbundenen Geraete, liefert Anzahl
 const char* midiBackend();
+int hwVolumeSet(int pct);              // Codec-Lautstaerke (Master) in %, -1 = nicht vorhanden
 int audioJackPoll();                    // Kopfhoerer-Buchse pruefen + Pfad umschalten (-1 = nicht vorhanden)              // "SEQ", "RAW" oder "AUS"
 extern volatile uint32_t midiActivity;  // SDL-Ticks des letzten eingehenden Events

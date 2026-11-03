@@ -507,10 +507,37 @@ int audioJackPoll() {
     return hp;
 }
 
+// Hardware-Lautstaerke (Codec rk817 "Master") in Prozent setzen; -1 = nicht vorhanden
+int hwVolumeSet(int pct) {
+    snd_mixer_t* mx = nullptr;
+    if (snd_mixer_open(&mx, 0) < 0) return -1;
+    int res = -1;
+    for (int card = 0; card < 4 && res < 0; card++) {
+        char nm[16]; snprintf(nm, sizeof nm, "hw:%d", card);
+        if (snd_mixer_attach(mx, nm) < 0) continue;
+        if (snd_mixer_selem_register(mx, nullptr, nullptr) < 0 || snd_mixer_load(mx) < 0) { snd_mixer_detach(mx, nm); continue; }
+        for (snd_mixer_elem_t* e = snd_mixer_first_elem(mx); e; e = snd_mixer_elem_next(e)) {
+            if (strcmp(snd_mixer_selem_get_name(e), "Master") || !snd_mixer_selem_has_playback_volume(e)) continue;
+            long lo = 0, hi = 0;
+            snd_mixer_selem_get_playback_volume_range(e, &lo, &hi);
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            snd_mixer_selem_set_playback_volume_all(e, lo + (hi - lo) * pct / 100);
+            if (snd_mixer_selem_has_playback_switch(e)) snd_mixer_selem_set_playback_switch_all(e, pct > 0);
+            res = pct;
+            break;
+        }
+        snd_mixer_detach(mx, nm);
+    }
+    snd_mixer_close(mx);
+    return res;
+}
+
 #else  // ohne ALSA
 
 bool midiStart() { infoMx = SDL_CreateMutex(); return false; }
 int audioJackPoll() { return -1; }
+int hwVolumeSet(int) { return -1; }
 void midiStop() {}
 
 #endif

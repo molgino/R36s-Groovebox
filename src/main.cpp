@@ -7,6 +7,10 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <linux/input.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include "engine.h"
 #include "input.h"
 #include "font.h"
@@ -62,8 +66,8 @@ static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1};   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80};   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
 static char setPath[600];
 static int bufOverride = 0;
@@ -119,6 +123,7 @@ static void loadSettings() {
         else if (!strcmp(line, "usb_mode")) cfg.usb = clampi(atoi(v), 0, 2);
         else if (!strcmp(line, "song")) cfg.song = clampi(atoi(v), 0, 31);
         else if (!strcmp(line, "usb_audio")) cfg.usbAudio = atoi(v) != 0;
+        else if (!strcmp(line, "hw_volume")) cfg.hwVol = clampi(atoi(v), 0, 100);
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
@@ -126,8 +131,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -330,6 +335,40 @@ static float uiLfoPh = 0, oscDrift = 0;
 static int batPct = -1; static bool batChg = false; static Uint32 batAt = 0;
 static char batPath[300] = "";
 
+// Lautstaerketasten (Kernel-Geraet "gpio-keys-vol", im Groovebox-OS nicht ueber SDL sichtbar)
+static int volKeyFd = -2;
+static void pollVolumeKeys() {
+    if (volKeyFd == -2) {
+        volKeyFd = -1;
+        struct stat st;
+        if (stat("/etc/groovebox-os", &st) != 0) return;   // ArkOS regelt die Lautstaerke selbst
+        for (int i = 0; i < 16 && volKeyFd < 0; i++) {
+            char p[32]; snprintf(p, sizeof p, "/dev/input/event%d", i);
+            int fd = open(p, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0) continue;
+            char nm[64] = "";
+            ioctl(fd, EVIOCGNAME(sizeof nm), nm);
+            if (strstr(nm, "vol")) { volKeyFd = fd; printf("Lautstaerketasten: %s (%s)\n", nm, p); }
+            else close(fd);
+        }
+        if (volKeyFd >= 0) hwVolumeSet(cfg.hwVol);   // gespeicherte Lautstaerke wiederherstellen
+    }
+    if (volKeyFd < 0) return;
+    struct input_event ev;
+    int step = 0;
+    while (read(volKeyFd, &ev, sizeof ev) == (ssize_t)sizeof ev)
+        if (ev.type == EV_KEY && ev.value != 0) {   // 1 = gedrueckt, 2 = gehalten (Wiederholung)
+            if (ev.code == KEY_VOLUMEUP) step += 5;
+            if (ev.code == KEY_VOLUMEDOWN) step -= 5;
+        }
+    if (step) {
+        cfg.hwVol = clampi(cfg.hwVol + step, 0, 100);
+        hwVolumeSet(cfg.hwVol);
+        toast("LAUTSTAERKE %d%%", cfg.hwVol);
+        saveSettings();
+    }
+}
+
 static void readBattery() {
     if (!batPath[0]) {
         DIR* d = opendir("/sys/class/power_supply");
@@ -400,6 +439,7 @@ static void animate() {
     oscDrift += dt;
     if (now - batAt > 10000 || batAt == 0) { batAt = now; readBattery(); }
     { static Uint32 jackAt = 0; if (now - jackAt > 500) { jackAt = now; audioJackPoll(); } }
+    pollVolumeKeys();
     {   // USB-Audio zum PC an/aus je nach Modus (Geraet erscheint erst nach dem Umschalten in den PC-Modus)
         static Uint32 uaAt = 0;
         if (now - uaAt > 1500) {
