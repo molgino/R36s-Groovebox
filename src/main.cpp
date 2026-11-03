@@ -328,6 +328,7 @@ static void animate() {
     }
     oscDrift += dt;
     if (now - batAt > 10000 || batAt == 0) { batAt = now; readBattery(); }
+    { static Uint32 jackAt = 0; if (now - jackAt > 500) { jackAt = now; audioJackPoll(); } }
 }
 
 // ---------------------------------------------------------------- Bildschirm

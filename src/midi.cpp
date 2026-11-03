@@ -460,9 +460,57 @@ void midiStop() {
     if (rtpData >= 0) close(rtpData);
 }
 
+// Kopfhoerer-Buchse: Codec-Pfad automatisch umschalten (Groovebox-OS/RK817: "Headphones Jack" -> "Playback Mux" HP/SPK)
+static int findEnumItem(snd_ctl_t* c, snd_ctl_elem_id_t* id, const char* name) {
+    snd_ctl_elem_info_t* inf; snd_ctl_elem_info_alloca(&inf);
+    snd_ctl_elem_info_set_id(inf, id);
+    if (snd_ctl_elem_info(c, inf) < 0) return -1;
+    int n = (int)snd_ctl_elem_info_get_items(inf);
+    for (int i = 0; i < n; i++) {
+        snd_ctl_elem_info_set_item(inf, i);
+        if (snd_ctl_elem_info(c, inf) >= 0 && !strcmp(snd_ctl_elem_info_get_item_name(inf), name)) return i;
+    }
+    return -1;
+}
+int audioJackPoll() {
+    static snd_ctl_t* ctl = nullptr;
+    static bool tried = false;
+    static int last = -1, hpItem = -1, spkItem = -1;
+    if (!tried) {
+        tried = true;
+        for (int card = 0; card < 4 && !ctl; card++) {
+            char nm[16]; snprintf(nm, sizeof nm, "hw:%d", card);
+            snd_ctl_t* c;
+            if (snd_ctl_open(&c, nm, 0) < 0) continue;
+            snd_ctl_elem_id_t* mux; snd_ctl_elem_id_alloca(&mux);
+            snd_ctl_elem_id_set_interface(mux, SND_CTL_ELEM_IFACE_MIXER);
+            snd_ctl_elem_id_set_name(mux, "Playback Mux");
+            hpItem = findEnumItem(c, mux, "HP"); spkItem = findEnumItem(c, mux, "SPK");
+            if (hpItem >= 0 && spkItem >= 0) ctl = c; else snd_ctl_close(c);
+        }
+    }
+    if (!ctl) return -1;
+    snd_ctl_elem_value_t* v; snd_ctl_elem_value_alloca(&v);
+    snd_ctl_elem_value_set_interface(v, SND_CTL_ELEM_IFACE_CARD);
+    snd_ctl_elem_value_set_name(v, "Headphones Jack");
+    if (snd_ctl_elem_read(ctl, v) < 0) return -1;
+    int hp = snd_ctl_elem_value_get_boolean(v, 0) ? 1 : 0;
+    if (hp != last) {
+        last = hp;
+        snd_ctl_elem_value_t* w; snd_ctl_elem_value_alloca(&w);
+        snd_ctl_elem_value_set_interface(w, SND_CTL_ELEM_IFACE_MIXER);
+        snd_ctl_elem_value_set_name(w, "Playback Mux");
+        snd_ctl_elem_value_set_enumerated(w, 0, hp ? hpItem : spkItem);
+        snd_ctl_elem_write(ctl, w);
+        printf("Audio-Pfad: %s\n", hp ? "Kopfhoerer" : "Lautsprecher");
+    }
+    return hp;
+}
+
 #else  // ohne ALSA
 
 bool midiStart() { infoMx = SDL_CreateMutex(); return false; }
+int audioJackPoll() { return -1; }
 void midiStop() {}
 
 #endif
