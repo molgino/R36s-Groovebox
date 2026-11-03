@@ -115,18 +115,20 @@ void drmOutPresent(SDL_Surface* s) {
     int w = g_mode.hdisplay, h = g_mode.vdisplay;
     SDL_LockSurface(s);
     if (g_off != 0 && s->w == w && s->h == h && s->format->BytesPerPixel == 4) {
-        // Das Display zeigt an Byte k den Byte k+off des Zeilenstroms (R,G,B je Pixel) -> vorab um -off rotieren
-        static uint8_t line[4096 * 3];
-        int L = w * 3, off = ((g_off % L) + L) % L;
+        // Das Display zeigt an Byte k den Byte k+off des Zeilenstroms (R,G,B je Pixel) -> vorab um -off rotieren.
+        // off = 3*N + r: Pixel um N verschieben, bei r=1/2 die Kanaele aus zwei Nachbarpixeln zusammensetzen.
+        int L = w * 3, o = ((g_off % L) + L) % L, N = o / 3, r = o % 3;
         for (int y = 0; y < h; y++) {
             const uint32_t* src = (const uint32_t*)((uint8_t*)s->pixels + (size_t)y * s->pitch);
-            for (int x = 0; x < w; x++) { uint32_t p = src[x]; line[3 * x] = (uint8_t)(p >> 16); line[3 * x + 1] = (uint8_t)(p >> 8); line[3 * x + 2] = (uint8_t)p; }
             uint32_t* dst = (uint32_t*)(b.map + (size_t)y * b.pitch);
-            int j = (L - off) % L;   // Quellbyte fuer Ausgabebyte 0
+            int q = (w - N) % w, qm = (q + w - 1) % w;
             for (int x = 0; x < w; x++) {
-                uint8_t c[3];
-                for (int k = 0; k < 3; k++) { c[k] = line[j]; if (++j == L) j = 0; }
-                dst[x] = 0xff000000u | ((uint32_t)c[0] << 16) | ((uint32_t)c[1] << 8) | c[2];
+                uint32_t a = src[qm], c = src[q], v;
+                if (r == 0) v = c;
+                else if (r == 1) v = ((a & 0xffu) << 16) | ((c >> 8) & 0xffffu);
+                else v = ((a & 0xffffu) << 8) | ((c >> 16) & 0xffu);
+                dst[x] = 0xff000000u | v;
+                qm = q; if (++q == w) q = 0;
             }
         }
     } else if (s->w == w && s->h == h && s->format->BytesPerPixel == 4) {

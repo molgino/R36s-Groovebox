@@ -148,8 +148,44 @@ static int devIndex() {
 
 // ---------------------------------------------------------------- Zeichnen
 
-static void setCol(Col c, Uint8 a = 255) { SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, a); }
+// Direkter Bildspeicher (Groovebox-OS/DRM): eigene, schnelle Grundfunktionen statt SDL-Software-Renderer
+static uint32_t* fbPix = nullptr;   // ARGB8888, SW x SH
+static int fbPitch = 0;             // in Pixeln
+static Col curCol = {0, 0, 0}; static Uint8 curA = 255;
+static inline void fbBlendSpan(uint32_t* p, int n, Col c, Uint8 a) {
+    if (a == 255) { uint32_t v = 0xff000000u | ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | c.b; for (int i = 0; i < n; i++) p[i] = v; return; }
+    if (a == 0) return;
+    uint32_t ia = 255 - a, sr = c.r * a, sg = c.g * a, sb = c.b * a;
+    for (int i = 0; i < n; i++) {
+        uint32_t d = p[i];
+        uint32_t r = (sr + ((d >> 16) & 255) * ia) * 257 >> 16, g = (sg + ((d >> 8) & 255) * ia) * 257 >> 16, b = (sb + (d & 255) * ia) * 257 >> 16;
+        p[i] = 0xff000000u | (r << 16) | (g << 8) | b;
+    }
+}
+static void fbFill(int x, int y, int w, int h, Col c, Uint8 a) {
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > SW) w = SW - x;
+    if (y + h > SH) h = SH - y;
+    if (w <= 0 || h <= 0) return;
+    for (int yy = y; yy < y + h; yy++) fbBlendSpan(fbPix + (size_t)yy * fbPitch + x, w, c, a);
+}
+static inline void fbPlot(int x, int y) { if ((unsigned)x < (unsigned)SW && (unsigned)y < (unsigned)SH) fbBlendSpan(fbPix + (size_t)y * fbPitch + x, 1, curCol, curA); }
+static void fbLine(int x1, int y1, int x2, int y2) {   // Bresenham
+    int dx = abs(x2 - x1), sx = x1 < x2 ? 1 : -1, dy = -abs(y2 - y1), sy = y1 < y2 ? 1 : -1, err = dx + dy;
+    for (;;) {
+        fbPlot(x1, y1);
+        if (x1 == x2 && y1 == y2) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x1 += sx; }
+        if (e2 <= dx) { err += dx; y1 += sy; }
+    }
+}
+static void setCol(Col c, Uint8 a = 255) { curCol = c; curA = a; if (!fbPix) SDL_SetRenderDrawColor(ren, c.r, c.g, c.b, a); }
+static void drawLine(int x1, int y1, int x2, int y2) { if (fbPix) fbLine(x1, y1, x2, y2); else SDL_RenderDrawLine(ren, x1, y1, x2, y2); }
+static void clearScreen(Col c) { if (fbPix) fbFill(0, 0, SW, SH, c, 255); else { setCol(c); SDL_RenderClear(ren); } }
 static void fill(int x, int y, int w, int h, Col c, Uint8 a = 255) {
+    if (fbPix) { fbFill(x, y, w, h, c, a); return; }
     setCol(c, a); SDL_Rect r = {x, y, w, h}; SDL_RenderFillRect(ren, &r);
 }
 static void makeFont() {
@@ -167,6 +203,32 @@ static void makeFont() {
 }
 static int textW(const char* s, int sc = 1) { return (int)strlen(s) * FONT_W * sc; }
 static void text(int x, int y, const char* s, Col c, int sc = 1) {
+    if (fbPix) {   // Glyphen direkt mischen
+        for (; *s; s++, x += FONT_W * sc) {
+            int ch = (unsigned char)*s;
+            if (ch < 32 || ch > 126) ch = '?';
+            if (x >= SW || x + FONT_W * sc <= 0) continue;
+            const uint8_t* g = FONT_DATA[ch - 32];
+            for (int gy = 0; gy < FONT_H; gy++) {
+                int py = y + gy * sc;
+                if (py + sc <= 0 || py >= SH) continue;
+                for (int gx = 0; gx < FONT_W; gx++) {
+                    unsigned av = g[gy * FONT_W + gx];
+                    if (!av) continue;
+                    av = av * textAlpha / 255;
+                    for (int k = 0; k < sc; k++) {
+                        int yy = py + k;
+                        if ((unsigned)yy >= (unsigned)SH) continue;
+                        int xx = x + gx * sc, n = sc;
+                        if (xx < 0) { n += xx; xx = 0; }
+                        if (xx + n > SW) n = SW - xx;
+                        if (n > 0) fbBlendSpan(fbPix + (size_t)yy * fbPitch + xx, n, c, (Uint8)av);
+                    }
+                }
+            }
+        }
+        return;
+    }
     SDL_SetTextureColorMod(fontTex, c.r, c.g, c.b);
     SDL_SetTextureAlphaMod(fontTex, textAlpha);
     for (; *s; s++, x += FONT_W * sc) {
@@ -190,7 +252,7 @@ static void arc(int cx, int cy, int r, float a0, float a1, Col c, int th) {
             pts[i].x = cx + (int)lroundf((r - k) * cosf(a));
             pts[i].y = cy + (int)lroundf((r - k) * sinf(a));
         }
-        SDL_RenderDrawLines(ren, pts, segs + 1);
+        for (int i = 0; i < segs; i++) drawLine(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
     }
 }
 static void knob(int cx, int cy, int r, float frac, bool bip, Col c) {
@@ -200,7 +262,7 @@ static void knob(int cx, int cy, int r, float frac, bool bip, Col c) {
     else arc(cx, cy, r, 135, av, c, 4);
     float a = av * 0.0174533f;
     setCol(c);
-    SDL_RenderDrawLine(ren, cx + (int)((r - 9) * cosf(a)), cy + (int)((r - 9) * sinf(a)),
+    drawLine(cx + (int)((r - 9) * cosf(a)), cy + (int)((r - 9) * sinf(a)),
                        cx + (int)((r - 4) * cosf(a)), cy + (int)((r - 4) * sinf(a)));
 }
 static void playIcon(int x, int y, bool playing) {
@@ -923,7 +985,7 @@ static void ring(int cx, int cy, int r, int th, Col c) {
 }
 static void line(int x1, int y1, int x2, int y2, Col c, int th = 1) {
     setCol(c);
-    for (int k = 0; k < th; k++) { SDL_RenderDrawLine(ren, x1 + k, y1, x2 + k, y2); SDL_RenderDrawLine(ren, x1, y1 + k, x2, y2 + k); }
+    for (int k = 0; k < th; k++) { drawLine(x1 + k, y1, x2 + k, y2); drawLine(x1, y1 + k, x2, y2 + k); }
 }
 
 // Symbol einer Engine im Quadrat (x, y, Groesse s)
@@ -1763,7 +1825,7 @@ static void drawHelp() {
         "  A lang halten  LOCK-MODUS: R-Stick/X/Y lockt, </> Step",
         "                 B Locks loeschen, A antippen = fertig",
         "  B              Spur vorhoeren",
-        "  Linker Stick   auf Regler zeigen (oben 1-4, unten 5-8)",
+        "  Linker Stick   Kachel waehlen (je Antippen 1 Schritt)",
         "  Rechter Stick  hoch/runter: Wert (nur Werte)",
         "  SEL+R-Stick    links/rechts: Seite  hoch/runter: DJ-Filter",
         "  START          Play / Stop",
@@ -1777,8 +1839,7 @@ static void drawDrive();
 static bool isGrooveboxOS();
 static void drawAll(bool help) {
     animate();
-    setCol(C_BG);
-    SDL_RenderClear(ren);
+    clearScreen(C_BG);
     drawHeader();
     if (page == PG_SYS) drawSettings();
     else { drawKnobs(); drawGrid(); drawSteps(); }
@@ -2273,8 +2334,8 @@ static void drawSettings() {
     hint(6, 452, "[^/v]WAEHLEN [</>]AENDERN [A]AUSFUEHREN [B]ZURUECK [SEL]MENUE", C_ACC, C_DIM);
 }
 
-// Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
-static void stickPointSlot(float lx, float ly) {
+// (frueher) Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
+[[maybe_unused]] static void stickPointSlot(float lx, float ly) {
     float mag = sqrtf(lx * lx + ly * ly);
     if (mag < 0.6f) return;
     static const float ang[8] = {150, 110, 70, 30, 210, 250, 290, 330};
@@ -2450,7 +2511,11 @@ static void handleInput(Uint32 now, float dt) {
         if (mixP) {
             int f = flick(I.ly, flLY, flLYt, now); if (f) mixRow = clampi(mixRow - f, 0, 3);
             int g = flick(I.lx, flLX, flLXt, now); if (g) track = (track + NTRACKS + g) % NTRACKS;
-        } else stickPointSlot(I.lx, I.ly);
+        } else {   // Linker Stick: pro Antippen genau eine Kachel weiter (halten = wiederholen)
+            int fx = flick(I.lx, flLX, flLXt, now), fy = flick(I.ly, flLY, flLYt, now);
+            if (fx) slot = (slot / 4) * 4 + clampi(slot % 4 + fx, 0, 3);
+            if (fy) slot = clampi(slot - fy * 4, slot % 4, 4 + slot % 4);
+        }
         // Rechter Stick: links/rechts = Seite, hoch/runter = Wert
         flRX = 0;   // Seite wechseln nur mit SELECT + rechtem Stick, L2/R2 oder dem Menue
         {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
@@ -2558,7 +2623,7 @@ static bool runLearn() {
             int left = stick ? 8 - (int)((SDL_GetTicks() - t0) / 1000) : 99;
             if (stick && left <= 0) done = true;
 
-            setCol(C_BG); SDL_RenderClear(ren);
+            clearScreen(C_BG);
             textC(SW / 2, 40, "TASTEN LERNEN", C_ACC, 2);
             textC(SW / 2, 150, "DRUECKE:", C_DIM);
             textC(SW / 2, 190, prompts[item], C_TEXT, 2);
@@ -2785,8 +2850,10 @@ int main(int argc, char** argv) {
     if (shot) {        // Screenshot (Software-Renderer) zum Testen
         eng.init(44100);
         eng.load(projPath);
-        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_RGBA32);
+        bool fbTest = getenv("GB_FB") != nullptr;   // Test der eigenen Zeichenfunktionen
+        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, fbTest ? SDL_PIXELFORMAT_ARGB8888 : SDL_PIXELFORMAT_RGBA32);
         ren = SDL_CreateSoftwareRenderer(surf);
+        if (fbTest) { fbPix = (uint32_t*)surf->pixels; fbPitch = surf->pitch / 4; }
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         makeFont();
         eng.start();
@@ -2845,6 +2912,12 @@ int main(int argc, char** argv) {
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
         lastPage = page;
+        if (getenv("GB_BENCH")) {   // Zeichenzeit messen: GB_BENCH=frames ./groovebox --shot x.bmp <seite>
+            int n = atoi(getenv("GB_BENCH")); Uint64 t0 = SDL_GetPerformanceCounter();
+            for (int i = 0; i < n; i++) { animTime += 0.016f; animate(); drawAll(false); }
+            double ms = (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency() / n;
+            printf("Seite %d: %.2f ms pro Bild\n", page, ms);
+        }
         if (shotPage == 20) { page = 0; drawAll(true); } else drawAll(false);
         SDL_RenderPresent(ren);
         SDL_SaveBMP(surf, shot);
@@ -2875,6 +2948,7 @@ int main(int argc, char** argv) {
         drmOutSetByteOffset(cfg.dispOff);
         drmSurf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_ARGB8888);
         ren = drmSurf ? SDL_CreateSoftwareRenderer(drmSurf) : nullptr;
+        if (drmSurf && !getenv("GB_SDLDRAW")) { fbPix = (uint32_t*)drmSurf->pixels; fbPitch = drmSurf->pitch / 4; }   // schnelle eigene Zeichenfunktionen
         if (!ren) { printf("Software-Renderer: %s\n", SDL_GetError()); return 1; }
     } else {
         SDL_Window* win = SDL_CreateWindow("R36S Groovebox", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, SW, SH,

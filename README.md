@@ -263,7 +263,7 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | A halten + X/Y | Parameter-Lock auf diesen Step (gelb), wie bisher |
 | A halten + B | alle Locks des Steps löschen |
 | B | Spur vorhören |
-| **Linker Stick** | **direkt auf einen Regler zeigen**: links oben = Regler 1 … rechts oben = 4, links unten = 5 … rechts unten = 8 |
+| **Linker Stick** | **Kachel wählen**: jedes Antippen springt genau ein Feld nach links/rechts/oben/unten, Halten wiederholt |
 | **Rechter Stick ↑/↓** | **Wert stufenlos ändern** |
 | **SELECT + rechter Stick ←/→** | **Seite wechseln** (der rechte Stick allein ändert nur Werte) |
 | X / Y | Wert + / − in Einzelschritten (halten = Wiederholung) |
