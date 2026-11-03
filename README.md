@@ -23,6 +23,9 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 | CHOP  | **Sample-Chopper**: SMPL, SLCS (2–64 Scheiben), SLIC (AUTO = Scheibe nach Step-Nummer, oder feste Scheibe, pro Step lockbar), TUNE, FINE, LEN (Anteil der Scheibe), REV, GAIN |
 | GRAN  | **Granulator**: SMPL, POS, SPRY (Streuung), SIZE (10–500 ms), DENS (2–128 Körner/s), PTCH, P.SPR (Tonhöhen-Streuung), GAIN |
 
+**Klangcharakter:** KICK, SNARE, HAT, CLAP und RIM sind an die klassischen analogen Drumcomputer angelehnt (Kick: Sinus mit schnellem Pitch-Sweep und Sättigung über BODY, Klick über CLCK; Snare: zwei verstimmte Töne mit eigenem Pitch-Abfall plus gefiltertes Rauschen, TONE = Helligkeit; Hihat: sechs Rechteck-Oszillatoren durch Bandpass + Hochpass; Clap: sägezahnförmige Einzelschläge vor der Fahne).
+SYNTH und WTBL nutzen beim Tiefpass (Filter 1, Typ LP) ein **24-dB-Filter** mit sanfter Sättigung; die Oszillatoren driften leicht wie bei analogen Geräten. Die anderen Filtertypen bleiben 12 dB.
+
 Die Engine wählst du pro Spur und Pattern: auf der TRG-Seite mit dem Regler ENGINE oder mit SELECT + X/Y.
 Beim Drehen erscheint der **Engine-Wähler** mit Symbolen für alle 13 Engines.
 

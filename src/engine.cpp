@@ -156,7 +156,7 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     fenv.on();
     switch (m) {
     case M_KICK: ph1 = 0; penv = 1; denv = 1; cenv = 1; aenv.v = 0; break;
-    case M_SNARE: ph1 = ph2 = 0; denv = 1; nenv = 1; break;
+    case M_SNARE: ph1 = ph2 = 0; denv = 1; nenv = 1; penv = 1; break;
     case M_HAT: denv = 1; break;
     case M_CLAP: clapLeft = P(P_S3) + 1; clapTimer = 0; clapTail = false; burst = 0; denv = 0; break;
     case M_FM:
@@ -275,12 +275,13 @@ void Voice::update(int n, float sr, float bpm) {
         pitchHz = 120.f * exp2f(P(P_S0) * (1.74f / 127.f)) * ratio;
         ddco = decayCo(0.03f * exp2f(P(P_S1) * (5.f / 127.f)), sr);
         nco = decayCo(0.03f * exp2f(P(P_S3) * (5.f / 127.f)), sr);
-        aux.set(1000.f * exp2f(P(P_S4) * (3.5f / 127.f)), 0.2f, sr);
+        aux.set(1500.f * exp2f(P(P_S4) * (3.2f / 127.f)), 0.15f, sr);   // TONE = Tiefpass des Rauschens
+        pco = decayCo(0.012f, sr);                                       // kurzer Pitch-Abfall der Fell-Oszillatoren
         break;
     case M_HAT:
         pitchHz = 200.f * exp2f(P(P_S0) * (1.6f / 127.f)) * ratio;
         ddco = decayCo(0.01f * exp2f(P(P_S1) * (7.5f / 127.f)), sr);
-        aux.set(3000.f * exp2f(P(P_S2) * (2.f / 127.f)), 0.3f, sr);
+        aux.set(5000.f * exp2f(P(P_S2) * (1.3f / 127.f)), 0.35f, sr);   // 808: Bandpass um 7-12 kHz
         break;
     case M_CLAP:
         aux.set(600.f * exp2f(P(P_S0) * (2.5f / 127.f)) * ratio, 0.55f, sr);
@@ -424,40 +425,58 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     const float inv = 1.f / sr;
     float units = fBase + fEnv * fenv.v;
     bool bypassF = (ftype == 0 && units >= 126.f && reso < 0.01f);
-    if (!bypassF) filt.set(16.f * exp2f(units * (10.3f / 127.f)), reso * 0.97f, sr);
+    lp24 = (machine == M_SYNTH || machine == M_WTBL) && ftype == 0;
+    if (!bypassF) {
+        float fcHz = 16.f * exp2f(units * (10.3f / 127.f));
+        // Synth/Wavetable-Tiefpass: zwei Stufen = 24 dB/Okt. (Resonanz in der zweiten), sonst 12 dB
+        if (lp24) { filt.set(fcHz, 0.3f, sr); filt2.set(fcHz, reso * 0.98f, sr); }
+        else filt.set(fcHz, reso * 0.97f, sr);
+    }
+    // analoge Drift: langsamer Zufallsweg je Oszillator (wenige Cent)
+    if (machine == M_SYNTH) {
+        drift1 += rng.next() * 0.35f - drift1 * 0.02f;
+        drift2 += rng.next() * 0.35f - drift2 * 0.02f;
+    }
     if (bwOn) { bwHp.set(bwLo, 0.2f, sr); bwLp.set(bwHi, 0.2f, sr); }
 
     // maschinenspezifische Konstanten
     float sweep = P(P_S2) / 127.f * 6.f, click = P(P_S4) / 127.f, body = P(P_S5) / 127.f;
     float snap = P(P_S2) / 127.f, metl = P(P_S3) / 127.f;
     float pw = 0.5f + (P(P_S6) - 64) / 140.f;
-    float detune = exp2f((P(P_S2) - 64) / 64.f * 0.5f / 12.f);
+    float detune = exp2f((P(P_S2) - 64) / 64.f * 0.5f / 12.f) * exp2f((drift2 - drift1) * 0.25f / 1200.f);
     float mix = P(P_S3) / 127.f, sub = P(P_S4) / 127.f, noise = P(P_S5) / 127.f;
     float fmNoise = P(P_S7) / 127.f;
     int w1 = P(P_S0) & 3, w2 = P(P_S1) & 3;
-    float dt = pitchHz * inv;
+    float dt = pitchHz * inv * (machine == M_SYNTH ? exp2f(drift1 * 0.25f / 1200.f) : 1.f);
     float bmax = 0.f;
 
     for (int i = 0; i < n; i++) {
         float s = 0.f;
         switch (machine) {
         case M_KICK: {
-            float f = pitchHz * (1.f + sweep * penv);
+            // 808/909: exponentieller Pitch-Abfall (SWEP bis 3 Oktaven), Sinus, Anschlag aus Puls + Rauschen
+            float f = pitchHz * exp2f(sweep * 0.5f * penv);
             penv *= pco;
             ph1 += f * inv; if (ph1 >= 1.f) ph1 -= 1.f;
             s = sin01(ph1) * denv;
-            if (body > 0) s = fastTanh(s * (1.f + body * 5.f));
-            s += rng.next() * cenv * click * 0.7f;
+            s = fastTanh(s * (1.15f + body * 5.f)) * (body > 0 ? 1.f : 1.05f);   // etwas Waerme, BODY = Drive (909)
+            float clk = (ph1 < 0.5f ? 1.f : -1.f) * 0.5f + rng.next() * 0.5f;
+            s += clk * cenv * click * 0.8f;
             denv *= ddco; cenv *= cco;
         } break;
         case M_SNARE: {
-            ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
-            ph2 += dt * 1.47f; if (ph2 >= 1.f) ph2 -= 1.f;
-            float tone = (sin01(ph1) + 0.6f * sin01(ph2)) * 0.6f * denv;
+            // 909: zwei Fell-Oszillatoren (~180/330 Hz) mit kurzem Pitch-Abfall, Rauschen tief- und hochpassgefiltert
+            float pd = 1.f + 0.6f * penv;
+            penv *= pco;
+            ph1 += dt * pd; if (ph1 >= 1.f) ph1 -= 1.f;
+            ph2 += dt * 1.83f * pd; if (ph2 >= 1.f) ph2 -= 1.f;
+            float tri1 = 1.f - 4.f * fabsf(ph1 - 0.5f);
+            float tone = (0.65f * sin01(ph1) + 0.25f * tri1 + 0.5f * sin01(ph2)) * 0.75f * denv;
             float lo, bp, hp;
             aux.proc(rng.next(), lo, bp, hp);
-            float nz = (hp * 0.7f + bp) * nenv * snap;
-            s = tone * (1.f - snap * 0.5f) + nz;
+            nzHp += (lo - nzHp) * 0.09f;          // Hochpass ~650 Hz
+            float nz = (lo - nzHp) * 1.6f * nenv * snap;
+            s = fastTanh((tone * (1.f - snap * 0.4f) + nz) * 1.2f);
             denv *= ddco; nenv *= nco;
         } break;
         case M_HAT: {
@@ -466,10 +485,11 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
                 hph[k] += dt * HAT_R[k]; if (hph[k] >= 1.f) hph[k] -= 1.f;
                 sum += hph[k] < 0.5f ? 1.f : -1.f;
             }
-            float src = sum * (1.f / 6.f) * metl + rng.next() * (1.f - metl);
+            float src = sum * (1.f / 6.f) * metl + rng.next() * (1.f - metl) * 0.7f;
             float lo, bp, hp;
             aux.proc(src, lo, bp, hp);
-            s = hp * denv * 1.4f;
+            hatHp += (bp - hatHp) * 0.45f;        // zusaetzlicher Hochpass ~5 kHz: luftiger, metallischer
+            s = (bp - hatHp) * denv * 3.6f;
             denv *= ddco;
         } break;
         case M_CLAP: {
@@ -481,11 +501,12 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
                 clapTimer--;
             }
             float env = burst > denv ? burst : denv;
-            burst *= bco;
+            burst = burst > 0.f ? burst - 1.f / (clapInterval > 1 ? clapInterval : 1) : 0.f;   // saegezahnfoermige Einzelschlaege (808)
+            if (burst < 0.f) burst = 0.f;
             if (clapTail) denv *= ddco;
             float lo, bp, hp;
             aux.proc(rng.next(), lo, bp, hp);
-            s = bp * env * 2.5f;
+            s = bp * env * 1.9f;
         } break;
         case M_SYNTH: {
             float dt2 = dt * detune;
@@ -496,7 +517,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             s = o1 * (1.f - mix) + o2 * mix;
             s += sub * (phs < 0.5f ? 0.8f : -0.8f);
             s += noise * rng.next();
-            s *= 0.5f;
+            s = fastTanh(s * 0.9f) * 0.95f;      // warme Saettigung vor dem Filter, lauter als vorher
         } break;
         case M_FM: {
             const uint8_t* mods = FM_MODS[fmAlgo];
@@ -525,7 +546,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         } break;
         case M_RIM: {
             ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
-            ph2 += dt * 2.53f; if (ph2 >= 1.f) ph2 -= 1.f;
+            ph2 += dt * 3.66f; if (ph2 >= 1.f) ph2 -= 1.f;   // 808: 455 / 1667 Hz
             float src = (ph1 < 0.5f ? 1.f : -1.f) + 0.7f * (ph2 < 0.5f ? 1.f : -1.f);
             float lo, bp, hp;
             aux.proc(src, lo, bp, hp);
@@ -616,7 +637,11 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         if (!bypassF) {
             float lo, bp, hp;
             filt.proc(s, lo, bp, hp);
-            s = ftype == 0 ? lo : (ftype == 1 ? bp : hp);
+            if (lp24) {
+                float lo2, bp2, hp2;
+                filt2.proc(lo, lo2, bp2, hp2);
+                s = fastTanh(lo2 * 1.3f) * 0.85f;   // Ausgangsstufe mit leichter Saettigung (Resonanz "zieht")
+            } else s = ftype == 0 ? lo : (ftype == 1 ? bp : hp);
         }
         if (bwOn) {   // Base-Width: Hochpass, dann Tiefpass
             float lo, bp, hp;

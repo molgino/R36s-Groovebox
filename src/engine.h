@@ -93,6 +93,10 @@ struct Voice {
     float grTimer = 0, grInterval = 1000, grLen = 2000, grPosF = 0, grSpray = 0, grPitch = 1, grPSpr = 0;
     ADSR aenv, fenv;
     SVF filt, aux;
+    SVF filt2;                 // zweite Stufe: 24-dB-Tiefpass fuer Synth/Wavetable
+    bool lp24 = false;
+    float drift1 = 0, drift2 = 0;   // analoge Tonhoehen-Drift (Cent)
+    float nzHp = 0, hatHp = 0;      // Hochpass-Zustaende (Snare-Rauschen, Hi-Hat)
     // 3 LFOs pro Stimme (Ziel = beliebiger Spurparameter)
     float lfPh[NLFO] = {0}, lfVal[NLFO] = {0}, lfSH[NLFO] = {0}, lfSHp[NLFO] = {0}, lfRun[NLFO] = {0}, lfFade[NLFO] = {1, 1, 1};
     float lfHeld[NLFO] = {0}, lfOff[NLFO] = {0};
