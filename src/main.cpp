@@ -638,6 +638,10 @@ static void drawHeader() {
         snprintf(b, sizeof b, "T%d", track + 1);
         text(310, 2, b, C_DIM);
     }
+    if (trackPage(page)) {   // Signalweg-Oberflaeche: Pfad statt Reiter
+        snprintf(b, sizeof b, "SPUR %d > %s", track + 1, PAGE_LONG[page]);
+        text(334, 4, b, C_TEXT);
+    } else
     {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
         int g = PG_GROUP[page], x = 334, right = 612;
         int list[NUI_PAGES], n = 0, cur = 0;
@@ -1813,79 +1817,52 @@ static void drawConfirm() {
     rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, "B = NEIN", C_TEXT);
 }
 
-static void drawKnobs() {
+static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
+    Col tc = TCOL[track];
+    const Voice& v = eng.v[track];
+    switch (gk) {
+    case 1: {
+        int base = page == PG_AMP ? P_AATK : P_FATK;
+        envGraph(gx, gy, gw, gh, pv(base), pv(base + 1), pv(base + 2), pv(base + 3), selRel,
+                 v.active ? (page == PG_AMP ? &v.aenv : &v.fenv) : nullptr, tc);
+    } break;
+    case 2:
+        filterGraph(gx, gy, gw, gh, pv(P_FREQ), pv(P_RESO), pv(P_FTYP), pv(P_FENV), selRel,
+                    v.active ? v.fBase + v.fEnv * v.fenv.v : -1.f, tc);
+        break;
+    case 12:
+        bwGraph(gx, gy, gw, gh, pv(P_FREQ), pv(P_RESO), pv(P_FTYP), pv(P_BASE), pv(P_WDTH), selRel, tc);
+        break;
+    case 3: {
+        int k = page - PG_LFO1;
+        lfoGraph(gx, gy, gw, gh, k, LFO_BASE[k], v.lfPh[k], v.active, tc);
+    } break;
+    case 4:
+        oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), pv(P_S4), selRel, tc);
+        break;
+    case 6: {
+        int rat[4] = {pv(P_S2), pv(P_S3), pv(P_S4), pv(P_S5)}, lvl[4] = {127, pv(P_X0), pv(P_X1), pv(P_X2)};
+        int selOp = -1;
+        if (page == PG_SRC) selOp = selRel == 0 ? 4 : (selRel == 1 ? 3 : (selRel >= 2 ? selRel - 2 : -1));
+        else selOp = selRel >= 0 && selRel < 3 ? selRel + 1 : (selRel == 3 ? 0 : -1);
+        fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, selOp, &v, tc);
+    } break;
+    case 7: seqGraph(gx, gy, gw, gh, selRel, tc); break;
+    case 13: arpGraph(gx, gy, gw, gh, tc); break;
+    case 8: drumGraph(gx, gy, gw, gh, curP().machine[track], tc); break;
+    case 9: wtGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1), tc); break;
+    case 10: chopGraph(gx, gy, gw, gh, tc); break;
+    case 11: granGraph(gx, gy, gw, gh, tc); break;
+    case 5:
+        sampleGraph(gx, gy, gw, gh, pv(P_S0), pv(P_S3), pv(P_S4), pv(P_S5) != 0, selRel, tc);
+        break;
+    }
+}
+
+static void drawOverlays() {
     char b[32], label[24];
     Col tc = TCOL[track];
     Uint32 now = SDL_GetTicks();
-    int ox = (int)slideOff;
-    if (page == PG_MIX) { drawMixer(ox); goto overlays; }
-    for (int row = 0; row < 2; row++) {
-        int y = 44 + row * 96;
-        int gk = graphKind(row);
-        if (gk) {
-            int gx = 4 + ox, gy = y + 2, gw = 632, gh = 62;
-            int selRel = (slot / 4 == row) ? slot % 4 : -1;
-            const Voice& v = eng.v[track];
-            switch (gk) {
-            case 1: {
-                int base = page == PG_AMP ? P_AATK : P_FATK;
-                envGraph(gx, gy, gw, gh, pv(base), pv(base + 1), pv(base + 2), pv(base + 3), selRel,
-                         v.active ? (page == PG_AMP ? &v.aenv : &v.fenv) : nullptr, tc);
-            } break;
-            case 2:
-                filterGraph(gx, gy, gw, gh, pv(P_FREQ), pv(P_RESO), pv(P_FTYP), pv(P_FENV), selRel,
-                            v.active ? v.fBase + v.fEnv * v.fenv.v : -1.f, tc);
-                break;
-            case 12:
-                bwGraph(gx, gy, gw, gh, pv(P_FREQ), pv(P_RESO), pv(P_FTYP), pv(P_BASE), pv(P_WDTH), selRel, tc);
-                break;
-            case 3: {
-                int k = page - PG_LFO1;
-                lfoGraph(gx, gy, gw, gh, k, LFO_BASE[k], v.lfPh[k], v.active, tc);
-            } break;
-            case 4:
-                oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), pv(P_S4), selRel, tc);
-                break;
-            case 6: {
-                int rat[4] = {pv(P_S2), pv(P_S3), pv(P_S4), pv(P_S5)}, lvl[4] = {127, pv(P_X0), pv(P_X1), pv(P_X2)};
-                int selOp = -1;
-                if (page == PG_SRC) selOp = selRel == 0 ? 4 : (selRel == 1 ? 3 : (selRel >= 2 ? selRel - 2 : -1));
-                else selOp = selRel >= 0 && selRel < 3 ? selRel + 1 : (selRel == 3 ? 0 : -1);
-                fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, selOp, &v, tc);
-            } break;
-            case 7: seqGraph(gx, gy, gw, gh, selRel, tc); break;
-            case 13: arpGraph(gx, gy, gw, gh, tc); break;
-            case 8: drumGraph(gx, gy, gw, gh, curP().machine[track], tc); break;
-            case 9: wtGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1), tc); break;
-            case 10: chopGraph(gx, gy, gw, gh, tc); break;
-            case 11: granGraph(gx, gy, gw, gh, tc); break;
-            case 5:
-                sampleGraph(gx, gy, gw, gh, pv(P_S0), pv(P_S3), pv(P_S4), pv(P_S5) != 0, selRel, tc);
-                break;
-            }
-            for (int k = row * 4; k < row * 4 + 4; k++) paramChip(k, (k % 4) * 160 + ox, y + 66, tc);
-            continue;
-        }
-        for (int k = row * 4; k < row * 4 + 4; k++) {
-            int x = (k % 4) * 160 + ox;
-            bool sel = k == slot;
-            ParamDef d; int val, baseVal; bool locked;
-            bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
-            int cx = x + 80, cy = y + 38;
-            if (ok && d.kind == K_ACT) {   // Schaltflaeche
-                if (sel) rrect(x + 4, y + 2, 152, 88, 10, C_SEL);
-                float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
-                rrect(cx - 54, cy - 18, 108, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
-                textC(cx, cy - 8, d.name, sel ? C_BG : C_TEXT);
-                textC(cx, y + 70, sel ? "A = START" : "", C_DIM);
-                continue;
-            }
-            Col kc = trackPage(page) ? tc : C_ACC;
-            if (ok && d.kind == K_GR) kc = C_TRIG;
-            tile(x, y, k, ok ? d : PDEF_NONE, val, baseVal, locked, label, sel, kc, now);
-        }
-    }
-overlays:
     // grosse Werteanzeige beim Drehen bzw. Meldung (die juengste gewinnt)
     bool showEdit = editAt && (now - editAt < 900 || editAt == 1) && editAt >= msgAt;
     bool showMsg = now < msgUntil && msgAt > editAt;
@@ -1949,6 +1926,45 @@ overlays:
         textC(320 - (int)slideOff, 120, PAGE_NAMES[page], C_PLAY, 4);
         textAlpha = 255;
     }
+}
+
+static void drawKnobs() {
+    char label[24];
+    Col tc = TCOL[track];
+    Uint32 now = SDL_GetTicks();
+    int ox = (int)slideOff;
+    if (page == PG_MIX) { drawMixer(ox); goto overlays; }
+    for (int row = 0; row < 2; row++) {
+        int y = 44 + row * 96;
+        int gk = graphKind(row);
+        if (gk) {
+            int gx = 4 + ox, gy = y + 2, gw = 632, gh = 62;
+            int selRel = (slot / 4 == row) ? slot % 4 : -1;
+            drawPageGraph(gk, gx, gy, gw, gh, selRel);
+            for (int k = row * 4; k < row * 4 + 4; k++) paramChip(k, (k % 4) * 160 + ox, y + 66, tc);
+            continue;
+        }
+        for (int k = row * 4; k < row * 4 + 4; k++) {
+            int x = (k % 4) * 160 + ox;
+            bool sel = k == slot;
+            ParamDef d; int val, baseVal; bool locked;
+            bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
+            int cx = x + 80, cy = y + 38;
+            if (ok && d.kind == K_ACT) {   // Schaltflaeche
+                if (sel) rrect(x + 4, y + 2, 152, 88, 10, C_SEL);
+                float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
+                rrect(cx - 54, cy - 18, 108, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
+                textC(cx, cy - 8, d.name, sel ? C_BG : C_TEXT);
+                textC(cx, y + 70, sel ? "A = START" : "", C_DIM);
+                continue;
+            }
+            Col kc = trackPage(page) ? tc : C_ACC;
+            if (ok && d.kind == K_GR) kc = C_TRIG;
+            tile(x, y, k, ok ? d : PDEF_NONE, val, baseVal, locked, label, sel, kc, now);
+        }
+    }
+overlays:
+    drawOverlays();
 }
 
 static Col offCol(int s) { return (s / 4) % 2 ? C_OFF2 : C_OFF; }
@@ -2096,6 +2112,185 @@ static void drawHelp() {
         text(48, 36 + i * 22, lines[i], i == 0 || i == 9 ? C_ACC : C_TEXT);
 }
 
+
+// ---------------------------------------------------------------- Oberflaeche B: Signalweg
+// Spurseiten als Signalweg (Bloecke) + Modulationsreihe, links alle Spuren, unten die Steps der Spur.
+static const int SIG_CHAIN[] = {PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS};
+static const int SIG_MOD[] = {PG_TRG, PG_SEQ, PG_ARP, PG_LFO1, PG_LFO2, PG_LFO3};
+static const int SIG_NCH = 6, SIG_NMOD = 6;
+static const char* sigName(int p) {
+    switch (p) {
+    case PG_SRC: return "QUELLE"; case PG_SRC2: return "QUELLE 2"; case PG_FLT: return "FILTER"; case PG_FLT2: return "BASE-W";
+    case PG_AMP: return "AMP"; case PG_INS: return "INSERT"; case PG_TRG: return "TRIG"; case PG_SEQ: return "SEQ";
+    case PG_ARP: return "ARP"; case PG_LFO1: return "LFO1"; case PG_LFO2: return "LFO2"; case PG_LFO3: return "LFO3";
+    }
+    return PAGE_NAMES[p];
+}
+static void sigSummary(int p, char* b, int n) {
+    const Pattern& P = curP();
+    const uint8_t* q = P.p[track];
+    char v[24];
+    switch (p) {
+    case PG_SRC: snprintf(b, n, "%s", MACHINE_NAMES[P.machine[track] % M_COUNT]); break;
+    case PG_SRC2: snprintf(b, n, "MEHR"); break;
+    case PG_FLT: knobText(COMMON_DEFS[P_FTYP], q[P_FTYP], v, sizeof v); snprintf(b, n, "%s %d", v, q[P_FREQ]); break;
+    case PG_FLT2: snprintf(b, n, "%s", q[P_BASE] > 0 || q[P_WDTH] < 127 ? "AN" : "AUS"); break;
+    case PG_AMP: snprintf(b, n, "VOL %d", q[P_VOL]); break;
+    case PG_INS: snprintf(b, n, "%s", q[P_ITYP] < INS_COUNT ? INS_NAMES[q[P_ITYP]] : "?"); break;
+    case PG_TRG: fmtParam(COMMON_DEFS[P_NOTE], q[P_NOTE], v, sizeof v); snprintf(b, n, "%s", v); break;
+    case PG_SEQ: snprintf(b, n, "%d STEPS", P.len[track]); break;
+    case PG_ARP: snprintf(b, n, "%s", ARP_MODES[q[P_AMOD] % 5]); break;
+    default: {
+        int k = p - PG_LFO1, dst = q[LFO_BASE[k] + 2];
+        if (dst > 0 && q[LFO_BASE[k] + 3] != 64) snprintf(b, n, ">%.5s", paramDef(P.machine[track], dst - 1).name);
+        else snprintf(b, n, "-");
+    }
+    }
+}
+// Seite in einer Reihe (Signalweg oder Modulation) weiterschalten; ausserhalb der Reihe -> erstes Element
+static void sigStep(const int* list, int n, int dir) {
+    int cur = -1;
+    for (int i = 0; i < n; i++) if (list[i] == page) cur = i;
+    if (cur < 0) { for (int i = 0; i < n; i++) if (pageAvail(list[i])) { page = list[i]; return; } return; }
+    for (int k = 0; k < n; k++) { cur = (cur + dir + n) % n; if (pageAvail(list[cur])) { page = list[cur]; return; } }
+}
+// kompakte Kachel: Name, Wert, Balken
+static void miniTile(int k, int x, int y, int w, int h, Col tc) {
+    char b[32], label[24];
+    ParamDef d; int val, baseVal; bool locked;
+    bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
+    bool sel = k == slot;
+    rrect(x, y, w, h, 6, sel ? C_SEL : C_PANEL);
+    if (sel) {
+        Col fc = dimC(locked ? C_LOCK : tc, 0.6f + 0.25f * sinf(animTime * 3.f));
+        rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); rrect(x, y, 2, h, 1, fc); rrect(x + w - 2, y, 2, h, 1, fc);
+    }
+    if (!ok || d.kind == K_NONE) return;
+    if (d.kind == K_ACT) { textC(x + w / 2, y + h / 2 - 8, d.name, sel ? C_ACC : C_TEXT); return; }
+    char nm[24];
+    snprintf(nm, sizeof nm, "%.*s", (w - 12) / FONT_W, label[0] ? label : d.name);
+    text(x + 7, y + 3, nm, sel ? (locked ? C_LOCK : tc) : C_DIM);
+    knobText(d, val, b, sizeof b, k);
+    int sc = textW(b, 2) <= w - 14 ? 2 : 1;
+    text(x + w - 7 - textW(b, sc), y + (sc == 2 ? 15 : 21), b, locked ? C_LOCK : C_TEXT, sc);
+    knobAnim[k] += (knobFrac(d, val) - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
+    int bw = (int)((w - 14) * knobAnim[k]);
+    fill(x + 7, y + h - 7, w - 14, 3, C_OFF2);
+    if (bw > 0) fill(x + 7, y + h - 7, bw, 3, locked ? C_LOCK : (sel ? tc : dimC(tc, 0.7f)));
+}
+static void drawSigB() {
+    const Pattern& P = curP();
+    char b[32];
+    Col tc = eng.mute[track] ? dimC(TCOL[track], 0.35f) : TCOL[track];
+    // --- links: alle Spuren
+    int len0 = P.len[track] < 1 ? 1 : P.len[track];
+    int base = (cursor / 16) * 16;
+    for (int t = 0; t < NTRACKS; t++) {
+        int y = 46 + t * 46, x = 2, w = 110, h = 43;
+        bool sel = t == track;
+        Col c = eng.mute[t] ? dimC(TCOL[t], 0.35f) : TCOL[t];
+        rrect(x, y, w, h, 5, sel ? C_SEL : C_PANEL);
+        if (sel) { rrect(x, y, w, 2, 1, c); rrect(x, y + h - 2, w, 2, 1, c); rrect(x, y, 2, h, 1, c); rrect(x + w - 2, y, 2, h, 1, c); }
+        drawIcon(P.machine[t] % M_COUNT, x + 5, y + 4, 14, mix(c, C_PLAY, flash[t] * 0.6f));
+        snprintf(b, sizeof b, "%d %.6s", t + 1, MACHINE_NAMES[P.machine[t] % M_COUNT]);
+        text(x + 22, y + 2, b, eng.mute[t] ? C_DIM : (sel ? c : C_TEXT));
+        if (eng.mute[t]) text(x + w - 14, y + 2, "M", C_TRIG);
+        else if (eng.solo[t]) text(x + w - 14, y + 2, "S", C_LOCK);
+        int len = P.len[t];
+        for (int s0 = 0; s0 < 16; s0++) {
+            int s = base + s0;
+            const Step& st = P.s[t][s];
+            bool on = s < len && st.on == 1, ph = eng.playing && eng.playedStep[t] == s;
+            Col sc = s >= len ? C_DARK : (on ? c : offCol(s));
+            if (ph) sc = mix(sc, C_PLAY, 0.5f);
+            fill(x + 6 + s0 * 6, y + 23, 5, 9, sc);
+        }
+        int mw = clampi((int)(sqrtf(meterV[t]) * (w - 12)), 0, w - 12);
+        fill(x + 6, y + 36, w - 12, 2, C_OFF);
+        if (mw) fill(x + 6, y + 36, mw, 2, meterV[t] > 0.9f ? C_TRIG : C_GREEN);
+    }
+    // --- Signalweg
+    int X0 = 118, W = 518;
+    snprintf(b, sizeof b, "SIGNALWEG  SPUR %d", track + 1);
+    text(X0, 44, b, C_DIM);
+    text(X0 + W - textW("L1/R1"), 44, "L1/R1", dimC(C_ACC, 0.8f));
+    int nb = 0, list[SIG_NCH];
+    for (int i = 0; i < SIG_NCH; i++) if (pageAvail(SIG_CHAIN[i])) list[nb++] = SIG_CHAIN[i];
+    int gap = 10, bw = (W - gap * (nb - 1)) / nb;
+    for (int i = 0; i < nb; i++) {
+        int p = list[i], x = X0 + i * (bw + gap), y = 62;
+        bool sel = p == page;
+        if (i) fill(x - gap, y + 20, gap, 2, tc);
+        rrect(x, y, bw, 42, 6, sel ? C_SEL : C_PANEL);
+        if (sel) { rrect(x, y, bw, 2, 1, tc); rrect(x, y + 40, bw, 2, 1, tc); rrect(x, y, 2, 42, 1, tc); rrect(x + bw - 2, y, 2, 42, 1, tc); }
+        text(x + 6, y + 3, sigName(p), sel ? tc : C_TEXT);
+        sigSummary(p, b, sizeof b);
+        char sb[16]; snprintf(sb, sizeof sb, "%.*s", (bw - 10) / FONT_W, b);
+        text(x + 6, y + 21, sb, C_DIM);
+    }
+    // --- Modulation / Sequenz
+    text(X0, 108, "MOD", C_DIM);
+    text(X0 + W - textW("L2/R2"), 108, "L2/R2", dimC(C_ACC, 0.8f));
+    int x = X0 + 34;
+    for (int i = 0; i < SIG_NMOD; i++) {
+        int p = SIG_MOD[i];
+        if (!pageAvail(p)) continue;
+        bool sel = p == page;
+        sigSummary(p, b, sizeof b);
+        char cb[32]; snprintf(cb, sizeof cb, "%s %s", sigName(p), b);
+        int cw = textW(cb) + 10;
+        if (x + cw > X0 + W - 46) break;
+        rrect(x, 106, cw, 20, 4, sel ? tc : C_PANEL);
+        text(x + 5, 108, cb, sel ? C_BG : C_TEXT);
+        x += cw + 5;
+    }
+    // --- Bedienfeld der gewaehlten Seite
+    int py = 132, ph = 254;
+    rrect(X0, py, W, ph, 6, C_PANEL);
+    fill(X0, py, W, 2, tc);
+    text(X0 + 8, py + 4, PAGE_LONG[page], tc);
+    int gk = graphKind(0), grow = 0;
+    if (!gk) { gk = graphKind(1); grow = 1; }
+    int ty = py + 24;
+    if (gk) {
+        int selRel = (slot / 4 == grow) ? slot % 4 : -1;
+        drawPageGraph(gk, X0 + 6, ty, W - 12, 92, selRel);
+        ty += 98;
+    }
+    int th = gk ? 62 : 100;
+    int tw = (W - 12 - 3 * 6) / 4;
+    for (int k = 0; k < 8; k++) miniTile(k, X0 + 6 + (k % 4) * (tw + 6), ty + (k / 4) * (th + 6), tw, th, tc);
+    // --- Steps der Spur
+    int sy = 392;
+    int npg = (len0 + 15) / 16;
+    snprintf(b, sizeof b, "%d/%d", cursor / 16 + 1, npg);
+    for (int s0 = 0; s0 < 16; s0++) {
+        int s = base + s0, sx = X0 + s0 * 32;
+        if (s >= len0) { rrect(sx, sy, 30, 40, 4, C_DARK); continue; }
+        const Step& st = P.s[track][s];
+        bool pl = eng.playing && eng.playedStep[track] == s;
+        bool shown = st.on == 1;
+        Col c = shown ? tc : offCol(s);
+        if (pl) c = mix(c, C_PLAY, shown ? 0.3f + flash[track] * 0.5f : 0.2f);
+        rrect(sx, sy, 30, 40, 4, c);
+        if (st.on == 2) { rrect(sx, sy, 30, 40, 4, tc); rrect(sx + 2, sy + 2, 26, 36, 3, offCol(s)); }
+        if (stepHasLock(st)) rrect(sx + 22, sy + 4, 5, 5, 2, st.on == 1 ? C_BG : C_LOCK);
+        char nb[6]; snprintf(nb, sizeof nb, "%d", s + 1);
+        textC(sx + 15, sy + 22, nb, shown ? C_BG : C_DIM);
+        if (s == cursor) {
+            Col cc = aHeld ? C_LOCK : C_TEXT;
+            rrect(sx - 2, sy - 3, 34, 2, 1, cc); rrect(sx - 2, sy + 41, 34, 2, 1, cc);
+        }
+    }
+    if (npg > 1) text(X0 - 40, sy + 12, b, C_DIM);
+    const char* h;
+    if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [A]OK";
+    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LOESCHEN [L1]KOPIE [R1]EINFUEGEN";
+    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
+    else h = "[^v]SPUR [L1/R1]BLOCK [L2/R2]MOD [L-ST]REGLER [R-ST]WERT [SEL]MENUE";
+    hint(6, 452, h, C_ACC, C_DIM);
+}
+
 static void drawSettings();
 static void drawSong();
 static void drawDrive();
@@ -2106,6 +2301,7 @@ static void drawAll(bool help) {
     drawHeader();
     if (page == PG_SYS) drawSettings();
     else if (page == PG_SONG) drawSong();
+    else if (trackPage(page)) { drawSigB(); drawOverlays(); }
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
     if (menuOpen) drawMenu();
@@ -3141,14 +3337,20 @@ static void handleInput(Uint32 now, float dt) {
         if (!aHeld) {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             int dl = (I.repeat(BT_R1, now) ? 1 : 0) - (I.repeat(BT_L1, now) ? 1 : 0);
-            if (dl) {
+            if (dl && trackPage(page)) sigStep(SIG_CHAIN, SIG_NCH, dl);   // Signalweg: Block
+            else if (dl) {
                 if (mixP) mixRow = (mixRow + 4 + dl) % 4;
                 else if (trackPage(page) && cl > 16) cursor = ((cursor + dl * 16) % cl + cl) % cl;
                 else slot = (slot + 8 + dl) % 8;
             }
         }
-        if (I.pressed(BT_L2)) gotoPage(-1);
-        if (I.pressed(BT_R2)) gotoPage(1);
+        if (trackPage(page)) {   // Signalweg: Modulationsreihe
+            if (I.pressed(BT_L2)) sigStep(SIG_MOD, SIG_NMOD, -1);
+            if (I.pressed(BT_R2)) sigStep(SIG_MOD, SIG_NMOD, 1);
+        } else {
+            if (I.pressed(BT_L2)) gotoPage(-1);
+            if (I.pressed(BT_R2)) gotoPage(1);
+        }
         if (I.pressed(BT_START)) {
             lockA();
             if (eng.playing) eng.stop(); else eng.start();

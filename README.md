@@ -5,6 +5,10 @@ Neo-Noir-Optik in Neon-Magenta und Cyan; beim Start erscheint ein Splashscreen m
 8 Spuren, 16 Patterns mit bis zu 128 Steps pro Spur, Parameter-Locks, Sample-Spuren, USB-Audio, USB-MIDI, Ping-Pong-Delay, Reverb und ein DJ-Filter.
 Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt EmulationStation.
 
+## Testversion B: Signalweg (Branch `ui-signalweg`)
+
+Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke QUELLE → FILTER → BASE-W → AMP → INSERT (L1/R1), darunter die Modulationsreihe TRIG · SEQ · ARP · LFO1–3 (L2/R2). Der gewählte Block zeigt seine Grafik und 8 Regler, unten liegen die 16 Steps der Spur. Mixer, Effekte, Song und Projekt erreichst du über das SELECT-Menü.
+
 ## Klangerzeugung
 
 | Maschine | Regler auf der SRC-Seite |
@@ -330,8 +334,8 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | **SELECT kurz antippen** | **Seitenmenü**: alle Seiten nach Gruppen (SPUR / MIX & FX / PROJEKT), Steuerkreuz wählt, A öffnet |
 | SELECT halten | Hilfe-Einblendung |
 | SELECT + rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass. Die Richtung rastet beim Auslenken ein, schräg drücken wechselt nicht aus Versehen |
-| L1/R1 | auf Spurseiten: Step-Seite ±16, sonst Regler |
-| L2/R2 | Seite (alternativ zu SELECT + rechtem Stick oder SELECT-Menü) |
+| L1/R1 | auf Spurseiten: **Block im Signalweg** (QUELLE → FILTER → BASE-W → AMP → INSERT), sonst Regler |
+| L2/R2 | auf Spurseiten: **Modulation/Sequenz** (TRIG, SEQ, ARP, LFO1–3), sonst Seite |
 | START | Play / Stop |
 | SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
 | SELECT + ↑ | Aufnahme an/aus (für MIDI-Eingabe) |
