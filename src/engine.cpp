@@ -239,7 +239,17 @@ void Voice::update(int n, float sr, float bpm) {
     lfoUpdate(n, sr);
     aenv.set(envT(P(P_AATK)), envT(P(P_ADEC)), P(P_ASUS) / 127.f, envT(P(P_AREL)), sr);
     fenv.set(envT(P(P_FATK)), envT(P(P_FDEC)), P(P_FSUS) / 127.f, envT(P(P_FREL)), sr);
-    fBase = (float)P(P_FREQ);
+    // Filter 1: Key-Tracking (100 % = eine Oktave pro Oktave) und Velocity
+    fBase = (float)P(P_FREQ) + P(P_KEYT) / 100.f * (note - 60.f) * (127.f / 10.3f / 12.f)
+            + (P(P_VELF) - 64) / 64.f * (vel - 0.5f) * 80.f;
+    // Filter 2: Base-Width (BASE = Hochpass, Tiefpass = BASE + WDTH Oktaven)
+    {
+        int bs = P(P_BASE), wd = P(P_WDTH);
+        bwOn = bs > 0 || wd < 127;
+        bwLo = 20.f * exp2f(bs * (10.f / 127.f));
+        bwHi = bwLo * exp2f(wd * (10.f / 127.f));
+        if (bwHi > 20000.f) bwHi = 20000.f;
+    }
     fEnv = (P(P_FENV) - 64) * 2.f;
     reso = clampf(P(P_RESO) / 127.f, 0.f, 1.f);
     ftype = P(P_FTYP);
@@ -415,6 +425,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     float units = fBase + fEnv * fenv.v;
     bool bypassF = (ftype == 0 && units >= 126.f && reso < 0.01f);
     if (!bypassF) filt.set(16.f * exp2f(units * (10.3f / 127.f)), reso * 0.97f, sr);
+    if (bwOn) { bwHp.set(bwLo, 0.2f, sr); bwLp.set(bwHi, 0.2f, sr); }
 
     // maschinenspezifische Konstanten
     float sweep = P(P_S2) / 127.f * 6.f, click = P(P_S4) / 127.f, body = P(P_S5) / 127.f;
@@ -606,6 +617,11 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             float lo, bp, hp;
             filt.proc(s, lo, bp, hp);
             s = ftype == 0 ? lo : (ftype == 1 ? bp : hp);
+        }
+        if (bwOn) {   // Base-Width: Hochpass, dann Tiefpass
+            float lo, bp, hp;
+            bwHp.proc(s, lo, bp, hp); s = hp;
+            bwLp.proc(s, lo, bp, hp); s = lo;
         }
         s *= aenv.tick();
         if (drive > 0.f) s = fastTanh(s * (1.f + drive * 6.f)) * (1.f - drive * 0.3f);
@@ -895,7 +911,7 @@ void Engine::initPattern(Pattern& p) {
 void Engine::defaultProject() {
     memset(&proj, 0, sizeof(proj));
     memcpy(proj.magic, "GBX1", 4);
-    proj.version = 7;
+    proj.version = 8;
     proj.bpm = 120;
     for (int i = 0; i < 8; i++) proj.mst[i] = MST_DEFS[i].def;
     for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
@@ -1339,50 +1355,43 @@ bool Engine::load(const char* path) {
     long oldNp = ver <= 2 ? 40 : (ver == 3 ? 48 : 56);
     long oldPat = 16 + 8 * oldNp + NTRACKS * 16 * (1 + oldNp);
     long expect = 20 + NPATTERNS * oldPat + (ver >= 2 ? 16 : 0);
-    // v5: 72 Parameter, 128 Steps, speed-Feld
-    const long V5NP = 72, V5PAT = 24 + 8 * V5NP + NTRACKS * 128 * (1 + V5NP), V5SIZE = 20 + NPATTERNS * V5PAT + 16;
-    if (ok && (ver == 7 || ver == 6) && size == (long)sizeof(Project)) {
+    // v5..v7: 72 bzw. 80 Parameter, 128 Steps, speed-Feld
+    long nNp = ver == 5 ? 72 : 80;
+    long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nSize = 20 + NPATTERNS * nPat + 16;
+    if (ok && ver == 8 && size == (long)sizeof(Project)) {
         memcpy(&proj, buf, sizeof(Project));
-        if (ver == 6) {   // Retrig-Fade (Index 5) -> Mikrotiming
-            for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {
-                proj.pat[pi].p[t][P_MTIM] = 23;
-                for (int st = 0; st < NSTEPS; st++) proj.pat[pi].s[t][st].lock[P_MTIM] = NO_LOCK;
-            }
-            proj.version = 7;
-            printf("Projekt von Version 6 auf 7 umgestellt\n");
-        }
-    } else if (ok && ver == 5 && size == V5SIZE) {
+    } else if (ok && ver >= 5 && ver <= 7 && size == nSize) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
         memcpy(np, buf, 20);
-        np->version = 7;
+        np->version = 8;
         for (int pi = 0; pi < NPATTERNS; pi++) {
-            const uint8_t* q = buf + 20 + pi * V5PAT;
+            const uint8_t* q = buf + 20 + pi * nPat;
             Pattern& P = np->pat[pi];
             memcpy(P.machine, q, 8); memcpy(P.len, q + 8, 8); memcpy(P.speed, q + 16, 8);
             for (int t = 0; t < NTRACKS; t++) {
                 for (int i = 0; i < NPARAMS; i++) P.p[t][i] = paramDef(P.machine[t] % M_COUNT, i).def;
-                memcpy(P.p[t], q + 24 + t * V5NP, V5NP);
-                P.p[t][P_MTIM] = 23;
+                memcpy(P.p[t], q + 24 + t * nNp, nNp);
+                if (ver <= 6) P.p[t][P_MTIM] = 23;   // bis v6 Retrig-Fade
                 for (int st = 0; st < NSTEPS; st++) {
-                    const uint8_t* sp = q + 24 + 8 * V5NP + (t * 128 + st) * (1 + V5NP);
+                    const uint8_t* sp = q + 24 + 8 * nNp + (t * 128 + st) * (1 + nNp);
                     P.s[t][st].on = sp[0];
                     memset(P.s[t][st].lock, NO_LOCK, NPARAMS);
-                    memcpy(P.s[t][st].lock, sp + 1, V5NP);
-                    P.s[t][st].lock[P_MTIM] = NO_LOCK;
+                    memcpy(P.s[t][st].lock, sp + 1, nNp);
+                    if (ver <= 6) P.s[t][st].lock[P_MTIM] = NO_LOCK;
                 }
             }
         }
-        memcpy(np->cmp, buf + 20 + NPATTERNS * V5PAT, 8);
-        memcpy(np->fx, buf + 20 + NPATTERNS * V5PAT + 8, 8);
+        memcpy(np->cmp, buf + 20 + NPATTERNS * nPat, 8);
+        memcpy(np->fx, buf + 20 + NPATTERNS * nPat + 8, 8);
         memcpy(&proj, np, sizeof(Project));
         free(np);
-        printf("Projekt von Version 5 auf 7 umgestellt\n");
+        printf("Projekt von Version %u auf 8 umgestellt\n", ver);
     } else if (ok && ver >= 1 && ver <= 4 && size == expect) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
         memcpy(np->magic, "GBX1", 4);
-        np->version = 7;
+        np->version = 8;
         memcpy(&np->bpm, buf + 8, 2);
         memcpy(np->mst, buf + 10, 8);
         int scaleFromV3 = 0;
@@ -1426,7 +1435,7 @@ bool Engine::load(const char* path) {
         if (ver <= 3) np->mst[MS_SCALE] = (uint8_t)scaleFromV3;
         memcpy(&proj, np, sizeof(Project));
         free(np);
-        printf("Projekt von Version %u auf 7 umgestellt\n", ver);
+        printf("Projekt von Version %u auf 8 umgestellt\n", ver);
     } else {
         ok = false;
     }

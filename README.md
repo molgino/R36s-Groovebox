@@ -37,6 +37,8 @@ Jede Spur hat diese Seiten:
   * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten
   * bei SMPL die Sample-Wellenform mit Start, Ende und Abspielposition
 * **FLT**: Multimode-Filter LP/BP/HP mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve.
+* **FL2**: Base-Width-Filter hinter dem ersten Filter (wie bei Elektron): **BASE** ist die untere Kante (Hochpass), **WDTH** die Breite des durchgelassenen Bandes (Tiefpass darüber). BASE 0 / WDTH 127 = aus. Dazu **KEYT** (Keytracking: Cutoff von Filter 1 folgt der Tonhöhe) und **VELF** (Anschlagstärke → Cutoff). Die Grafik zeigt Filter 1 (grau) und die Gesamtkurve mit dem Band.
+* **Symbole statt Balken**: Jede Kachel zeigt ein Symbol, das sich mit dem Wert verändert – Tastatur bei NOTE, Torte bei PROB, Hüllkurvenbogen bei Attack/Decay, Lautsprecher bei Lautstärke, Echos bei Delay, Ringe bei Reverb, Würfel bei CHNG usw.
 * **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
 * **LF1 / LF2 / LF3**: drei LFOs pro Spur (siehe unten)
 * **INS**: Insert-Effekt der Spur. Zuerst unter TYPE den Effekt wählen, dann MIX aufdrehen:

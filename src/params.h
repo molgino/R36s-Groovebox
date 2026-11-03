@@ -5,14 +5,14 @@
 #include <math.h>
 
 // Speicher-Seiten je Spur (je 8 Parameter): 0 TRG, 1 SRC, 2 FLT, 3 AMP, 4 LFO1, 5 INS, 6 SRC2, 7 LFO2, 8 LFO3, 9 SEQ
-enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 10, NPARAMS = NPAGES * 8, NLFO = 3 };
+enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 11, NPARAMS = NPAGES * 8, NLFO = 3 };
 // Oberflaechen-Seiten (Reihenfolge = Navigation). Spurseiten zuerst.
-enum UiPage { PG_TRG, PG_SEQ, PG_SRC, PG_SRC2, PG_FLT, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_MST, PG_SYS, NUI_PAGES };
+enum UiPage { PG_TRG, PG_SEQ, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_MST, PG_SYS, NUI_PAGES };
 enum { PG_LFO = PG_LFO1 };
 enum { PAGE_INS = PG_INS, PAGE_FX = PG_FX, PAGE_CMP = PG_CMP, PAGE_MST = PG_MST, PAGE_SYS = PG_SYS, PAGE_MIX = PG_MIX, PAGE_PRJ = PG_PRJ,
        FIRST_GLOBAL_PAGE = PG_MIX };
-static const int PG_STORE[NUI_PAGES] = {0, 9, 1, 6, 2, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
-static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2};
+static const int PG_STORE[NUI_PAGES] = {0, 9, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
+static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2};
 static const char* const GROUP_NAMES[3] = {"SPUR", "MIX & FX", "PROJEKT"};
 enum { NO_LOCK = 255 };
 
@@ -25,8 +25,8 @@ static const char* const MACHINE_LONG[M_COUNT] = {"Bassdrum", "Snare", "Hi-Hat",
 static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_TOM, M_RIM, M_SHKR, M_SYNTH, M_FM, M_WTBL, M_SAMPLE, M_CHOP, M_GRAN};
 inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
 inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "SRC", "SR2", "FLT", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SET"};
-static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "KLANG", "KLANG 2", "FILTER", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SET"};
+static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "KLANG", "KLANG 2", "FILTER", "FILTER 2 (BASE-WIDTH)", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
                                                  "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "MASTER", "EINSTELLUNGEN"};
 
 enum Kind {
@@ -49,7 +49,8 @@ enum {
     P_ITYP = 40, P_IP1, P_IP2, P_IP3, P_IMIX, P_CRSH, P_SRR, P_DRIV,
     P_X0 = 48, P_X1, P_X2, P_X3, P_X4, P_X5, P_X6, P_X7,      // SRC2 (maschinenabhaengig)
     P_L2 = 56, P_L3 = 64,                                        // LFO2, LFO3
-    P_DIR = 72, P_QLEN, P_QSPD, P_PULS, P_EROT, P_DENS, P_CHNG, P_RANGE   // SEQ: Richtung, Laenge, Tempo, Euklid, Generator
+    P_DIR = 72, P_QLEN, P_QSPD, P_PULS, P_EROT, P_DENS, P_CHNG, P_RANGE,  // SEQ: Richtung, Laenge, Tempo, Euklid, Generator
+    P_BASE = 80, P_WDTH, P_KEYT, P_VELF                                    // FLT2: Base-Width-Filter, Key-/Velocity-Tracking
 };
 // Master-Seite
 enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV, MS_SCALE };
@@ -104,6 +105,9 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     // SEQ (LEN/SPD zeigen auf Pattern.len/speed)
     {"DIR", K_DIR, 0, 5}, {"LEN", K_TLEN, 16, 128}, {"SPD", K_TSPD, 4, 6}, {"PULS", K_NUM, 0, 64},
     {"ROT", K_NUM, 0, 127}, {"DENS", K_PCT, 0, 100}, {"CHNG", K_PCT, 0, 100}, {"RANGE", K_RANGE, 0, 48},
+    // FLT2: Base-Width-Filter (Hochpass BASE, Tiefpass BASE+WDTH), Key-Tracking und Velocity fuer Filter 1
+    {"BASE", K_NUM, 0, 127}, {"WDTH", K_NUM, 127, 127}, {"KEYT", K_PCT, 0, 100}, {"VELF", K_BIP, 64, 127},
+    PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
 };
 // Tonskalen pro Spur: Wert 0 = chromatisch, sonst 1 + Skala*12 + Grundton
 enum { NSCALES = 10 };

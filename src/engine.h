@@ -104,6 +104,8 @@ struct Voice {
     float pitchHz = 100, gainL = 0, gainR = 0, sendD = 0, sendR = 0, drive = 0, crushQ = 0;
     int srrN = 1, ftype = 0;
     float fBase = 127, fEnv = 0, reso = 0;
+    SVF bwHp, bwLp;              // Base-Width-Filter
+    float bwLo = 20, bwHi = 20000; bool bwOn = false;
     // Insert-Effekt
     float ib[2048];
     int iw = 0;
