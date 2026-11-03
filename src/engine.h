@@ -144,6 +144,7 @@ public:
     double clock = 0;
     volatile bool fill = false;        // FILL-Modus fuer Trig-Bedingungen
     volatile int loopCount[NTRACKS] = {0};
+    uint32_t tmReg[NTRACKS] = {0};                    // Turing-Register (generativ)
     bool mute[NTRACKS] = {false};
     volatile float dj = 0;     // -1..1 DJ-Filter (rechter Stick)
     bool solo[NTRACKS] = {false};
@@ -197,6 +198,11 @@ private:
     long globalTick = 0, patTick = 0;
     int trackTick[NTRACKS] = {0};
     bool lastCond[NTRACKS] = {false};
+    int dirSt[NTRACKS] = {1, 1, 1, 1, 1, 1, 1, 1};   // Ping-Pong-Richtung
+    long stepCnt[NTRACKS] = {0};                      // gespielte Steps seit Start (fuer Durchlaeufe)
+    uint8_t genLk[NTRACKS][NPARAMS];
+    int seqP(int t, int i);                           // SEQ-Parameter inkl. LFO-Modulation
+    void resetSeq(int t);
     double stepStartT[NTRACKS] = {0}, stepLenT[NTRACKS] = {1};
     int tickCount = 0; double tickHist[25]; int tickHistN = 0;
     float dSm = 0, dhpL = 0, dhpR = 0;   // Delay: geglaettete Zeit, Hochpass in der Schleife

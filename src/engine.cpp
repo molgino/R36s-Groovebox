@@ -621,7 +621,7 @@ void Engine::midiIn(uint8_t st, uint8_t d1, uint8_t d2) {
     if (st == 0xFA || st == 0xFB) {
         if (clockMode != 2) return;
         if (st == 0xFA) {
-            for (int t = 0; t < NTRACKS; t++) { trackPos[t] = 0; trackTick[t] = 0; loopCount[t] = 0; }
+            for (int t = 0; t < NTRACKS; t++) resetSeq(t);
             patTick = 0; globalTick = 0; tickCount = 0;
         }
         playing = true;
@@ -691,7 +691,7 @@ void Engine::initPattern(Pattern& p) {
 void Engine::defaultProject() {
     memset(&proj, 0, sizeof(proj));
     memcpy(proj.magic, "GBX1", 4);
-    proj.version = 5;
+    proj.version = 6;
     proj.bpm = 120;
     for (int i = 0; i < 8; i++) proj.mst[i] = MST_DEFS[i].def;
     for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
@@ -711,8 +711,8 @@ void Engine::defaultProject() {
 }
 
 void Engine::start() {
-    for (int t = 0; t < NTRACKS; t++) { trackPos[t] = 0; skipStep[t] = -1; trackTick[t] = 0; loopCount[t] = 0; lastCond[t] = false; }
     if (nextPat >= 0) { curPat = nextPat; nextPat = -1; }
+    for (int t = 0; t < NTRACKS; t++) { resetSeq(t); skipStep[t] = -1; }
     patTick = 0; globalTick = 0;
     tickCount = 0;
     nextTickAt = clock;
@@ -789,24 +789,89 @@ bool Engine::condOk(int t, int c) {
     return r;
 }
 
+int Engine::seqP(int t, int i) {
+    int r = proj.pat[curPat].p[t][i];
+    const Voice& vo = v[t];
+    for (int k = 0; k < NLFO; k++)
+        if (vo.lfDst[k] == i) { r += (int)vo.lfOff[k]; if (r < 0) r = 0; if (r > vo.lfMax[k]) r = vo.lfMax[k]; }
+    return r;
+}
+
+void Engine::resetSeq(int t) {
+    trackPos[t] = 0; trackTick[t] = 0; loopCount[t] = 0; lastCond[t] = false; dirSt[t] = 1; stepCnt[t] = 0;
+    int dens = proj.pat[curPat].p[t][P_DENS];
+    tmReg[t] = 0;
+    for (int b = 0; b < 32; b++) if (rng.uni() * 100.f < dens) tmReg[t] |= 1u << b;
+}
+
+static bool euclidHit(int s, int k, int n, int rot) {
+    if (k <= 0 || n <= 0) return false;
+    if (k > n) k = n;
+    int pos = ((s - rot) % n + n) % n;
+    return (pos * k) % n < k;
+}
+
 void Engine::stepTrack(int t) {
     Pattern& P = proj.pat[curPat];
     int len = P.len[t] < 1 ? 1 : (P.len[t] > NSTEPS ? NSTEPS : P.len[t]);
+    int dir = P.p[t][P_DIR] % 6;
     int s = trackPos[t] % len;
+    if (stepCnt[t] == 0 && dir == 1) s = len - 1;      // rueckwaerts beginnt am Ende
     playedStep[t] = s;
     stepStartT[t] = clock;
     stepLenT[t] = trackStepSamples(t);
     Step& st = P.s[t][s];
     bool skip = skipStep[t] == s;
     if (skip) skipStep[t] = -1;
-    if (st.on && !skip) {
+
+    // Generator: Turing-Register weiterschieben (CHNG = Mutation, DENS = Dichte neuer Bits)
+    int puls = seqP(t, P_PULS), rot = seqP(t, P_EROT), dens = seqP(t, P_DENS), chng = seqP(t, P_CHNG), range = seqP(t, P_RANGE);
+    int L = len < 32 ? len : 32;
+    uint32_t mask = L >= 32 ? 0xFFFFFFFFu : ((1u << L) - 1u);
+    uint32_t r0 = tmReg[t] & mask;                       // Schleife = Spurlaenge (max. 32)
+    uint32_t bit = r0 & 1u, top = bit;
+    if (chng > 0 && rng.uni() * 100.f < chng) top = rng.uni() * 100.f < dens ? 1u : 0u;
+    tmReg[t] = ((r0 >> 1) | (top << (L - 1))) & mask;
+    bool on = st.on;
+    if (puls > 0 || dens > 0) on = (puls > 0 && euclidHit(s, puls, len, rot)) || (dens > 0 && bit);
+
+    if (on && !skip) {
         int cond = st.lock[P_COND] != NO_LOCK ? st.lock[P_COND] : P.p[t][P_COND];
         bool ok = condOk(t, cond);
         int prob = st.lock[P_PROB] != NO_LOCK ? st.lock[P_PROB] : P.p[t][P_PROB];
-        if (ok && audible(t) && (prob >= 100 || rng.uni() * 100.f < prob)) trigger(t, st.lock, 1.f, true);
+        if (ok && audible(t) && (prob >= 100 || rng.uni() * 100.f < prob)) {
+            const uint8_t* lk = st.lock;
+            if (range > 0) {   // generierte Melodie aus dem Register, in die Skala eingerastet
+                memcpy(genLk[t], st.lock, NPARAMS);
+                int baseN = st.lock[P_NOTE] != NO_LOCK ? st.lock[P_NOTE] : P.p[t][P_NOTE];
+                uint32_t win = (r0 | (r0 << L)) >> 1 & 0xFF;   // 8-Bit-Fenster (zyklisch)
+                int nn = baseN + (int)(win * range / 255);
+                genLk[t][P_NOTE] = (uint8_t)quantizeNote(nn > 127 ? 127 : nn, proj.mst[MS_SCALE]);
+                lk = genLk[t];
+            }
+            trigger(t, lk, 1.f, true);
+        }
     }
-    trackPos[t] = (s + 1) % len;
-    if (trackPos[t] == 0) loopCount[t] = loopCount[t] + 1;
+    // naechste Position je nach Richtung
+    int next = s;
+    switch (dir) {
+    case 0: next = (s + 1) % len; break;
+    case 1: next = (s - 1 + len) % len; break;
+    case 2: {   // PING: Enden nicht doppelt
+        int d = dirSt[t];
+        if (len > 1 && (s + d < 0 || s + d >= len)) d = -d;
+        dirSt[t] = d; next = len > 1 ? s + d : 0;
+    } break;
+    case 3: {   // PEND: Enden doppelt
+        int d = dirSt[t];
+        if (s + d < 0 || s + d >= len) { dirSt[t] = -d; next = s; } else next = s + d;
+    } break;
+    case 4: next = (int)(rng.uni() * len) % len; break;
+    default: next = (s + (rng.uni() < 0.5f ? -1 : 1) + len) % len; break;
+    }
+    trackPos[t] = next;
+    stepCnt[t]++;
+    if (stepCnt[t] % len == 0) loopCount[t] = loopCount[t] + 1;
 }
 
 // ein Tick (12 pro 16tel): Spuren mit eigener Geschwindigkeit, Pattern-Ende = laengste Spur
@@ -815,7 +880,7 @@ void Engine::doTick() {
     if (patTick == 0 && nextPat >= 0) {
         curPat = nextPat; nextPat = -1;
         P = &proj.pat[curPat];
-        for (int t = 0; t < NTRACKS; t++) { trackPos[t] = 0; trackTick[t] = 0; loopCount[t] = 0; lastCond[t] = false; }
+        for (int t = 0; t < NTRACKS; t++) resetSeq(t);
     }
     for (int t = 0; t < NTRACKS; t++) {
         int tps = SPEED_TPS[P->speed[t] % 7];
@@ -1023,13 +1088,40 @@ bool Engine::load(const char* path) {
     long oldNp = ver <= 2 ? 40 : (ver == 3 ? 48 : 56);
     long oldPat = 16 + 8 * oldNp + NTRACKS * 16 * (1 + oldNp);
     long expect = 20 + NPATTERNS * oldPat + (ver >= 2 ? 16 : 0);
-    if (ok && ver == 5 && size == (long)sizeof(Project)) {
+    // v5: 72 Parameter, 128 Steps, speed-Feld
+    const long V5NP = 72, V5PAT = 24 + 8 * V5NP + NTRACKS * 128 * (1 + V5NP), V5SIZE = 20 + NPATTERNS * V5PAT + 16;
+    if (ok && ver == 6 && size == (long)sizeof(Project)) {
         memcpy(&proj, buf, sizeof(Project));
+    } else if (ok && ver == 5 && size == V5SIZE) {
+        Project* np = (Project*)malloc(sizeof(Project));
+        memset(np, 0, sizeof(Project));
+        memcpy(np, buf, 20);
+        np->version = 6;
+        for (int pi = 0; pi < NPATTERNS; pi++) {
+            const uint8_t* q = buf + 20 + pi * V5PAT;
+            Pattern& P = np->pat[pi];
+            memcpy(P.machine, q, 8); memcpy(P.len, q + 8, 8); memcpy(P.speed, q + 16, 8);
+            for (int t = 0; t < NTRACKS; t++) {
+                for (int i = 0; i < NPARAMS; i++) P.p[t][i] = paramDef(P.machine[t] % M_COUNT, i).def;
+                memcpy(P.p[t], q + 24 + t * V5NP, V5NP);
+                for (int st = 0; st < NSTEPS; st++) {
+                    const uint8_t* sp = q + 24 + 8 * V5NP + (t * 128 + st) * (1 + V5NP);
+                    P.s[t][st].on = sp[0];
+                    memset(P.s[t][st].lock, NO_LOCK, NPARAMS);
+                    memcpy(P.s[t][st].lock, sp + 1, V5NP);
+                }
+            }
+        }
+        memcpy(np->cmp, buf + 20 + NPATTERNS * V5PAT, 8);
+        memcpy(np->fx, buf + 20 + NPATTERNS * V5PAT + 8, 8);
+        memcpy(&proj, np, sizeof(Project));
+        free(np);
+        printf("Projekt von Version 5 auf 6 umgestellt\n");
     } else if (ok && ver >= 1 && ver <= 4 && size == expect) {
         Project* np = (Project*)malloc(sizeof(Project));
         memset(np, 0, sizeof(Project));
         memcpy(np->magic, "GBX1", 4);
-        np->version = 5;
+        np->version = 6;
         memcpy(&np->bpm, buf + 8, 2);
         memcpy(np->mst, buf + 10, 8);
         int scaleFromV3 = 0;
@@ -1073,7 +1165,7 @@ bool Engine::load(const char* path) {
         if (ver <= 3) np->mst[MS_SCALE] = (uint8_t)scaleFromV3;
         memcpy(&proj, np, sizeof(Project));
         free(np);
-        printf("Projekt von Version %u auf 5 umgestellt\n", ver);
+        printf("Projekt von Version %u auf 6 umgestellt\n", ver);
     } else {
         ok = false;
     }

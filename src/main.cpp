@@ -402,10 +402,10 @@ static void drawHeader() {
         int g = PG_GROUP[page], x = 334;
         for (int p = 0; p < NUI_PAGES; p++) {
             if (PG_GROUP[p] != g || !pageAvail(p)) continue;
-            int w = textW(PAGE_NAMES[p]) + 8;
-            if (p == page) { rrect(x, 3, w, 18, 4, C_ACC); text(x + 4, 4, PAGE_NAMES[p], C_BG); }
-            else text(x + 4, 4, PAGE_NAMES[p], C_DIM);
-            x += w + 2;
+            int w = textW(PAGE_NAMES[p]) + 4;
+            if (p == page) { rrect(x, 3, w, 18, 4, C_ACC); text(x + 2, 4, PAGE_NAMES[p], C_BG); }
+            else text(x + 2, 4, PAGE_NAMES[p], C_DIM);
+            x += w + 1;
         }
     }
     if (aHeld) {
@@ -486,6 +486,8 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         d = paramDef(P.machine[track], idx);
         val = P.p[track][idx];
         if (d.kind == K_MACH) val = P.machine[track];
+        else if (d.kind == K_TLEN) val = P.len[track];
+        else if (d.kind == K_TSPD) val = P.speed[track] % 7;
         else if (aHeld && holdS().lock[idx] != NO_LOCK) { val = holdS().lock[idx]; locked = true; }
         if (page == PAGE_INS && k >= 1 && k <= 4) {
             int ty = (aHeld && holdS().lock[P_ITYP] != NO_LOCK) ? holdS().lock[P_ITYP] : P.p[track][P_ITYP];
@@ -502,7 +504,7 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
             snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
         }
     }
-    baseVal = (trackPage(page) && d.kind != K_MACH) ? P.p[track][sp() * 8 + k] : val;
+    baseVal = (trackPage(page) && d.kind != K_MACH && d.kind != K_TLEN && d.kind != K_TSPD) ? P.p[track][sp() * 8 + k] : val;
     return d.kind != K_NONE;
 }
 
@@ -800,6 +802,54 @@ static void sampleGraph(int gx, int gy, int gw, int gh, int idx, int st, int en,
     text(gx + gw - 10 - textW(b), gy + 4, b, dimC(c, 0.8f));
 }
 
+static bool euclidHitUi(int s, int k, int n, int rot) {
+    if (k <= 0 || n <= 0) return false;
+    if (k > n) k = n;
+    int pos = ((s - rot) % n + n) % n;
+    return (pos * k) % n < k;
+}
+
+// SEQ: Euklid-Kreis mit Playhead, Richtung, Turing-Register
+static void seqGraph(int gx, int gy, int gw, int gh, int sel, Col c) {
+    graphBox(gx, gy, gw, gh);
+    const Pattern& P = curP();
+    int len = P.len[track] < 1 ? 1 : P.len[track];
+    int dir = P.p[track][P_DIR] % 6, puls = pv(P_PULS), rot = pv(P_EROT), dens = pv(P_DENS), chng = pv(P_CHNG), range = pv(P_RANGE);
+    int cx = gx + 42, cy = gy + gh / 2, r = 24;
+    int ps = eng.playing ? eng.playedStep[track] : -1;
+    for (int i = 0; i < len; i++) {
+        float a = (i / (float)len) * 6.2831853f - 1.5707963f;
+        int x = cx + (int)(r * cosf(a)), y = cy + (int)(r * sinf(a));
+        bool hit = puls > 0 ? euclidHitUi(i, puls, len, rot) : P.s[track][i].on;
+        if (i == ps) { glowDot(x, y, c); continue; }
+        if (hit) rrect(x - 3, y - 3, 7, 7, 3, c);
+        else rrect(x - 1, y - 1, 3, 3, 1, C_DIM);
+    }
+    if (puls > 0) {   // Rotationsmarke
+        float a = ((rot % len) / (float)len) * 6.2831853f - 1.5707963f;
+        fill(cx + (int)((r + 6) * cosf(a)) - 1, cy + (int)((r + 6) * sinf(a)) - 1, 3, 3, sel == 0 + 4 ? C_PLAY : C_TEXT);
+    }
+    static const char* dn[6] = {"VORWAERTS >>", "<< RUECKWAERTS", "PING <->", "PENDEL <=>", "ZUFALL ?", "BETRUNKEN ~"};
+    char b[48];
+    text(gx + 84, gy + 6, dn[dir], sel == 0 ? C_PLAY : c);
+    if (puls > 0) snprintf(b, sizeof b, "EUKLID E(%d,%d) ROT %d", puls > len ? len : puls, len, rot % len);
+    else snprintf(b, sizeof b, "%d STEPS  %s", len, SPEED_NAMES[P.speed[track] % 7]);
+    text(gx + 84, gy + 24, b, puls > 0 ? c : C_DIM);
+    if (dens > 0 || range > 0) snprintf(b, sizeof b, "GEN %d%%  MUT %d%%  MEL +%d", dens, chng, range);
+    else snprintf(b, sizeof b, "GENERATOR AUS");
+    text(gx + 84, gy + 42, b, dens > 0 || range > 0 ? c : C_DIM);
+    // Turing-Register: naechste 16 Bits (links = naechster Step), Balken = erzeugte Tonhoehe
+    uint32_t reg = eng.tmReg[track];
+    int rx = gx + 380;
+    for (int i = 0; i < 16; i++) {
+        bool on = (reg >> i) & 1;
+        int x = rx + i * 15;
+        if (range > 0) { int h = (int)(((reg >> i) & 0xFF) / 255.f * 26); fill(x, gy + 34 - h, 11, h, dimC(c, 0.5f)); }
+        rrect(x, gy + 38, 11, 11, 3, on && dens > 0 ? c : C_OFF2);
+    }
+    text(rx, gy + gh - 14, "REGISTER", C_DIM);
+}
+
 // Wert-Chip unter einer Grafik
 static void paramChip(int k, int x, int y, Col tc) {
     char b[32], label[24];
@@ -833,6 +883,7 @@ static int graphKind(int row) {
         if (m == M_FM) return 6;                          // FM: Algorithmus-Diagramm
     }
     if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_FM) return 6;
+    if (page == PG_SEQ && row == 0) return 7;
     return 0;
 }
 static int pv(int idx) {   // Wert (inkl. Lock beim Halten) eines Spurparameters
@@ -956,6 +1007,7 @@ static void drawKnobs() {
                 else selOp = selRel >= 0 && selRel < 3 ? selRel + 1 : (selRel == 3 ? 0 : -1);
                 fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, selOp, &v, tc);
             } break;
+            case 7: seqGraph(gx, gy, gw, gh, selRel, tc); break;
             case 5:
                 sampleGraph(gx, gy, gw, gh, pv(P_S0), pv(P_S3), pv(P_S4), pv(P_S5) != 0, selRel, tc);
                 break;
@@ -1075,6 +1127,7 @@ static void drawGrid() {
         snprintf(b, sizeof b, "%d %s", t + 1, MACHINE_NAMES[P.machine[t]]);
         text(12, y - 2, b, eng.mute[t] ? C_DIM : (t == track ? TCOL[t] : C_TEXT));
         if (eng.mute[t]) { fill(12, y + 5, textW(b), 1, C_DIM); text(68, y - 2, "M", C_TRIG); }
+        else if (P.p[t][P_PULS] > 0 || P.p[t][P_DENS] > 0) { rrect(70, y, 10, 13, 3, C_LOCK); text(71, y - 2, P.p[t][P_PULS] > 0 ? "E" : "G", C_BG); }
         int mw = clampi((int)(sqrtf(meterV[t]) * 62), 0, 62);
         fill(12, y + 13, 62, 2, C_OFF);
         if (mw) fill(12, y + 13, mw, 2, tc);
@@ -1086,7 +1139,9 @@ static void drawGrid() {
             if (s >= len) continue;
             const Step& st = P.s[t][s];
             bool ph = eng.playing && eng.playedStep[t] == s;
-            Col c = st.on ? tc : offCol(s);
+            int pul = P.p[t][P_PULS];
+            bool shown = pul > 0 ? euclidHitUi(s, pul, len, P.p[t][P_EROT]) : st.on;
+            Col c = shown ? (pul > 0 ? mix(tc, C_PLAY, 0.15f) : tc) : offCol(s);
             int grow = 0;
             if (ph) { c = st.on ? mix(tc, C_PLAY, 0.25f + flash[t] * 0.6f) : mix(c, C_PLAY, 0.18f); if (st.on) grow = (int)(flash[t] * 3); }
             rrect(x - grow, y + 1 - grow / 2, 31 + 2 * grow, 12 + grow, 3, c);
@@ -1132,9 +1187,11 @@ static void drawSteps() {
         if (s >= len) { rrect(x, y, 36, 40, 6, C_DARK); continue; }
         const Step& st = P.s[track][s];
         bool ph = eng.playing && eng.playedStep[track] == s;
-        Col c = st.on ? tc : offCol(s);
+        int pul = P.p[track][P_PULS];
+        bool shown = pul > 0 ? euclidHitUi(s, pul, len, P.p[track][P_EROT]) : st.on;
+        Col c = shown ? (pul > 0 ? mix(tc, C_PLAY, 0.15f) : tc) : offCol(s);
         int lift = 0;
-        if (ph && st.on) { c = mix(tc, C_PLAY, 0.2f + flash[track] * 0.6f); lift = (int)(flash[track] * 3); }
+        if (ph && shown) { c = mix(tc, C_PLAY, 0.2f + flash[track] * 0.6f); lift = (int)(flash[track] * 3); }
         rrect(x, y - lift, 36, 40, 6, c);
         if (ph) rrect(x + 6, y + 3 - lift, 24, 4, 2, st.on ? C_BG : C_PLAY);
         if (st.on && stepHasLock(st)) rrect(x + 27, y + 9 - lift, 5, 5, 2, C_BG);
@@ -1252,13 +1309,17 @@ static void editValue(int delta) {
         int ty = P.p[track][P_ITYP];
         if (ty <= 0 || ty >= INS_COUNT || (slot <= 3 && INS_PNAMES[ty][slot - 1][0] == '-')) return;
     }
+    if (d.kind == K_TLEN) { P.len[track] = (uint8_t)clampi(P.len[track] + delta, 1, NSTEPS); return; }
+    if (d.kind == K_TSPD) { P.speed[track] = (uint8_t)clampi(P.speed[track] + (delta > 0 ? 1 : -1), 0, 6); return; }
     if (d.kind == K_LDEST) {   // Ziel: naechster gueltiger Parameter
         int cur = aHeld && holdS().lock[idx] != NO_LOCK ? holdS().lock[idx] : P.p[track][idx];
         int dir = delta > 0 ? 1 : -1;
         for (int i = 0; i < abs(delta); i++) {
             int nv = cur;
             do { nv += dir; } while (nv > 0 && nv <= NPARAMS && (paramDef(P.machine[track], nv - 1).kind == K_NONE ||
-                                                               paramDef(P.machine[track], nv - 1).kind == K_MACH));
+                                                               paramDef(P.machine[track], nv - 1).kind == K_MACH ||
+                                                               paramDef(P.machine[track], nv - 1).kind == K_TLEN ||
+                                                               paramDef(P.machine[track], nv - 1).kind == K_TSPD));
             if (nv < 0 || nv > NPARAMS) break;
             cur = nv;
         }
@@ -2056,6 +2117,13 @@ int main(int argc, char** argv) {
         if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
         if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.mute[3] = true; for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
         if (page == PG_PRJ) { slot = 2; }
+        if (page == PG_SEQ) {
+            track = 4; slot = 3; Pattern& Pp = curP();
+            Pp.p[4][P_PULS] = 5; Pp.p[4][P_EROT] = 2; Pp.p[4][P_DENS] = 60; Pp.p[4][P_CHNG] = 10; Pp.p[4][P_RANGE] = 12; Pp.p[4][P_DIR] = 2;
+            Pp.p[2][P_DENS] = 40;
+            lockA(); eng.start(); unlockA();
+            for (int k2 = 0; k2 < 4; k2++) { eng.render(tmp, 22050 / 2); animate(); }
+        }
         if (page == PG_LFO1) {
             track = 4; slot = 2;
             Pattern& Pp = curP(); Pp.p[4][P_L1 + LF_DEST] = P_FREQ + 1; Pp.p[4][P_L1 + LF_DEPTH] = 110; Pp.p[4][P_L1 + LF_WAVE] = LW_EXPDN; Pp.p[4][P_L1 + LF_SYNC] = 6; Pp.p[4][P_L1 + LF_MODE] = LM_TRIG;

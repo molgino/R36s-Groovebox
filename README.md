@@ -22,6 +22,7 @@ Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regle
 Jede Spur hat diese Seiten:
 
 * **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), RFAD, ENGINE, **COND** (Trig-Bedingung, siehe unten)
+* **SEQ**: Laufrichtung, Länge, Tempo-Faktor, Euklid und Generator (siehe unten)
 * **SRC** (und **SRC2** bei FM): Regler der Engine (siehe Tabelle). Grafisch dargestellt werden:
   * bei SYNTH die tatsächlich klingende, gemischte Wellenform
   * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten
@@ -64,6 +65,25 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 * Das Steuerkreuz läuft durch alle Steps. **L1/R1 springt eine Seite** (16 Steps) weiter.
 * **Tempo-Faktor pro Spur** (SET → „Tempo-Faktor Spur“): 1/8×, 1/4×, 1/2×, 3/4×, 1×, 3/2× und 2×.
 * Ein Pattern-Wechsel greift, wenn die längste Spur durchgelaufen ist.
+
+## Sequencer-Werkzeuge (SEQ-Seite)
+
+| Regler | Funktion |
+|---|---|
+| DIR | Laufrichtung: **FWD** (vorwärts), **REV** (rückwärts), **PING** (hin und her), **PEND** (hin und her, Enden doppelt), **RND** (zufälliger Step), **DRNK** (Zufallsschritt ±1, „betrunken“) |
+| LEN | Spurlänge 1–128 |
+| SPD | Tempo-Faktor 1/8× … 2× |
+| PULS | **Euklid**: Anzahl Schläge, gleichmäßig über die Spurlänge verteilt (0 = aus, dann gelten die gesetzten Trigs) |
+| ROT | Rotation des euklidischen Musters |
+| DENS | **Generator** (Turing-Machine-Prinzip): Dichte der erzeugten Trigs (0 = aus) |
+| CHNG | Mutation: 0 % = die erzeugte Schleife (Länge = Spurlänge, max. 32) wiederholt sich exakt, 100 % = jedes Mal neu |
+| RANGE | Melodie-Generator: zufällige, aber wiederkehrende Tonhöhen über bis zu 48 Halbtöne, eingerastet in die globale Skala. Wirkt auf alle Trigs der Spur, auch auf euklidische und gesetzte. |
+
+* Ist PULS oder DENS aktiv, kommen die Trigs aus dem Generator. Euklid und Generator werden dabei verodert.
+* Locks auf den Steps, COND und PROB wirken weiter.
+* Im Raster kennzeichnet ein gelbes **E** bzw. **G** Spuren mit Euklid bzw. Generator.
+* Die Grafik zeigt den Euklid-Kreis mit wanderndem Playhead, die Richtung und das Schieberegister mit den erzeugten Tonhöhen.
+* Alle SEQ-Regler außer LEN und SPD sind auch **LFO-Ziele**. Ein langsamer LFO auf PULS oder DENS lässt einen Beat „atmen“.
 
 ## Trig-Bedingungen (COND, Digitone-II-Stil)
 

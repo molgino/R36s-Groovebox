@@ -5,12 +5,12 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 
 ## Aufbau
 - `src/engine.*` Sequencer + 7 Engines (KICK SNARE HAT CLAP SYNTH FM SMPL), Insert-FX, Delay/Reverb, Kompressor mit Sidechain
-- `src/params.h` alle Parameter. Speicherseiten je Spur (TRG SRC FLT AMP LFO1 INS SRC2 LFO2 LFO3, je 8 = 72 Parameter; `LFO_BASE`, `LF_*`) und UI-Seiten `PG_*` (TRG SRC SR2 FLT AMP LF1 LF2 LF3 INS | MIX FX CMP | PRJ MST SET); SET (=PG_SYS) ist eine Listen-Seite (`SetItem`, `drawSettings`), Mapping `PG_STORE`; FM = 4 OP/8 Algorithmen (`FM_MODS/FM_CARRIERS/FM_LAYOUT`); globale Skala `mst[MS_SCALE]`
+- `src/params.h` alle Parameter. Speicherseiten je Spur (TRG SRC FLT AMP LFO1 INS SRC2 LFO2 LFO3 SEQ, je 8 = 80 Parameter; `LFO_BASE`, `LF_*`) und UI-Seiten `PG_*` (TRG SEQ SRC SR2 FLT AMP LF1 LF2 LF3 INS | MIX FX CMP | PRJ MST SET); SET (=PG_SYS) ist eine Listen-Seite (`SetItem`, `drawSettings`), Mapping `PG_STORE`; FM = 4 OP/8 Algorithmen (`FM_MODS/FM_CARRIERS/FM_LAYOUT`); globale Skala `mst[MS_SCALE]`
 - `src/main.cpp` UI (640x480, Grafiken/Animationen), Bedienung, Einstellungen, PC-Modus-Steuerung
 - `src/midi.cpp` ALSA-Seq + rawmidi + USB-Seriell + RTP-MIDI (Port 5004/5005); `src/dhcpd.cpp` Mini-DHCP (`groovebox --dhcpd usb0`)
 - `arkos/` Ports-Skripte, `arkos/groovebox/pc-modus.sh` (USB-Gadget: RNDIS + DHCP + SSH), `dtb-otg/` gepatchte DTBs
-- Projektformat v5 (`Project` in engine.h: 72 Parameter, 128 Steps, `speed` pro Spur) mit Migration v1–v4 in `Engine::load` (`remapLegacy`) – bei Strukturänderungen Version erhöhen + migrieren
-- Sequencer: 12 Ticks pro 16tel (`doTick`/`stepTrack`), Tempo-Faktor `SPEED_TPS`, Trig-Bedingungen `P_COND` (`condOk`, Schleifenzähler `loopCount`), FILL `eng.fill`
+- Projektformat v6 (`Project` in engine.h: 80 Parameter, 128 Steps, `speed` pro Spur) mit Migration v1–v5 in `Engine::load` (`remapLegacy`, v5-Zweig) – bei Strukturänderungen Version erhöhen + migrieren
+- Sequencer: 12 Ticks pro 16tel (`doTick`/`stepTrack`), Tempo-Faktor `SPEED_TPS`, Trig-Bedingungen `P_COND` (`condOk`, Durchläufe `loopCount` über `stepCnt`), FILL `eng.fill`; SEQ-Seite: Richtung `P_DIR`, Euklid `P_PULS/P_EROT`, Turing-Generator `P_DENS/P_CHNG/P_RANGE` (`tmReg`), LEN/SPD zeigen auf `Pattern.len/speed`
 - Projekte `projects/songNN.gbx` (32 Plätze, aktiver Platz in settings.cfg `song`), Presets `presets/<ENGINE>/NN.gbp`
 
 ## Bauen

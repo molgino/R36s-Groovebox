@@ -4,29 +4,29 @@
 #include <stdio.h>
 #include <math.h>
 
-// Speicher-Seiten je Spur (je 8 Parameter): 0 TRG, 1 SRC, 2 FLT, 3 AMP, 4 LFO1, 5 INS, 6 SRC2, 7 LFO2, 8 LFO3
-enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 9, NPARAMS = NPAGES * 8, NLFO = 3 };
+// Speicher-Seiten je Spur (je 8 Parameter): 0 TRG, 1 SRC, 2 FLT, 3 AMP, 4 LFO1, 5 INS, 6 SRC2, 7 LFO2, 8 LFO3, 9 SEQ
+enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 10, NPARAMS = NPAGES * 8, NLFO = 3 };
 // Oberflaechen-Seiten (Reihenfolge = Navigation). Spurseiten zuerst.
-enum UiPage { PG_TRG, PG_SRC, PG_SRC2, PG_FLT, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_MST, PG_SYS, NUI_PAGES };
+enum UiPage { PG_TRG, PG_SEQ, PG_SRC, PG_SRC2, PG_FLT, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_MST, PG_SYS, NUI_PAGES };
 enum { PG_LFO = PG_LFO1 };
 enum { PAGE_INS = PG_INS, PAGE_FX = PG_FX, PAGE_CMP = PG_CMP, PAGE_MST = PG_MST, PAGE_SYS = PG_SYS, PAGE_MIX = PG_MIX, PAGE_PRJ = PG_PRJ,
        FIRST_GLOBAL_PAGE = PG_MIX };
-static const int PG_STORE[NUI_PAGES] = {0, 1, 6, 2, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
-static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2};
+static const int PG_STORE[NUI_PAGES] = {0, 9, 1, 6, 2, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
+static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2};
 static const char* const GROUP_NAMES[3] = {"SPUR", "MIX & FX", "PROJEKT"};
 enum { NO_LOCK = 255 };
 
 enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_COUNT };
 static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL"};
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SRC", "SR2", "FLT", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SET"};
-static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "KLANG", "KLANG 2", "FILTER", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "SRC", "SR2", "FLT", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "MST", "SET"};
+static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "KLANG", "KLANG 2", "FILTER", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
                                                  "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "MASTER", "EINSTELLUNGEN"};
 
 enum Kind {
     K_NONE, K_NUM, K_BIP, K_NOTE, K_PCT, K_LEN, K_WAVE, K_FTYPE, K_LDST, K_LWAV,
     K_TRG, K_RTRG, K_RATIO, K_DTIM, K_BPM, K_SWNG, K_CNT,
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
-    K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK,
+    K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK, K_DIR, K_TLEN, K_TSPD, K_RANGE,
     K_SCALE, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR
 };
 
@@ -41,7 +41,8 @@ enum {
     P_L1 = 32,                                                   // LFO1 (Seite 4)
     P_ITYP = 40, P_IP1, P_IP2, P_IP3, P_IMIX, P_CRSH, P_SRR, P_DRIV,
     P_X0 = 48, P_X1, P_X2, P_X3, P_X4, P_X5, P_X6, P_X7,      // SRC2 (maschinenabhaengig)
-    P_L2 = 56, P_L3 = 64                                         // LFO2, LFO3
+    P_L2 = 56, P_L3 = 64,                                        // LFO2, LFO3
+    P_DIR = 72, P_QLEN, P_QSPD, P_PULS, P_EROT, P_DENS, P_CHNG, P_RANGE   // SEQ: Richtung, Laenge, Tempo, Euklid, Generator
 };
 // Master-Seite
 enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV, MS_SCALE };
@@ -93,6 +94,9 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     {"WAVE", K_LWAV, 0, LW_COUNT - 1}, {"MODE", K_LMODE, 0, 4}, {"PHASE", K_NUM, 0, 127}, {"FADE", K_BIP, 64, 127},
     {"RATE", K_NUM, 64, 127}, {"SYNC", K_LSYNC, 0, 11}, {"DEST", K_LDEST, 0, NPARAMS}, {"DEPTH", K_BIP, 64, 127},
     {"WAVE", K_LWAV, 0, LW_COUNT - 1}, {"MODE", K_LMODE, 0, 4}, {"PHASE", K_NUM, 0, 127}, {"FADE", K_BIP, 64, 127},
+    // SEQ (LEN/SPD zeigen auf Pattern.len/speed)
+    {"DIR", K_DIR, 0, 5}, {"LEN", K_TLEN, 16, 128}, {"SPD", K_TSPD, 4, 6}, {"PULS", K_NUM, 0, 64},
+    {"ROT", K_NUM, 0, 127}, {"DENS", K_PCT, 0, 100}, {"CHNG", K_PCT, 0, 100}, {"RANGE", K_RANGE, 0, 48},
 };
 // Tonskalen pro Spur: Wert 0 = chromatisch, sonst 1 + Skala*12 + Grundton
 enum { NSCALES = 10 };
@@ -245,6 +249,10 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_LSYNC: snprintf(buf, n, "%s", lsync[v % 12]); break;
     case K_LMODE: snprintf(buf, n, "%s", lmode[v % 5]); break;
     case K_LDEST: if (v) snprintf(buf, n, "P%d", v - 1); else snprintf(buf, n, "---"); break;
+    case K_DIR: { static const char* dn[6] = {"FWD", "REV", "PING", "PEND", "RND", "DRNK"}; snprintf(buf, n, "%s", dn[v % 6]); } break;
+    case K_TLEN: snprintf(buf, n, "%d", v); break;
+    case K_TSPD: snprintf(buf, n, "%s", SPEED_NAMES[v % 7]); break;
+    case K_RANGE: if (v) snprintf(buf, n, "+%d", v); else snprintf(buf, n, "AUS"); break;
     case K_FBK: snprintf(buf, n, "%d%%", v * 120 / 127); break;
     case K_COND:
         if (v <= 0) snprintf(buf, n, "---");
