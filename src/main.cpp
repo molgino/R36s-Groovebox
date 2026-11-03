@@ -59,8 +59,8 @@ static char basePath[512] = "./", cfgPath[600], projPath[600];
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277};   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
 static char setPath[600];
 static int bufOverride = 0;
@@ -115,14 +115,15 @@ static void loadSettings() {
         else if (!strcmp(line, "midi_channels")) cfg.chm = atoi(v) != 0;
         else if (!strcmp(line, "usb_mode")) cfg.usb = clampi(atoi(v), 0, 2);
         else if (!strcmp(line, "song")) cfg.song = clampi(atoi(v), 0, 31);
+        else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
 }
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -2043,7 +2044,7 @@ enum SetItem {
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_IP, SI_WEB, SI_DRIVE,
-    SI_H_SYS, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
+    SI_H_SYS, SI_DISP, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
 static float setScroll = 0;
@@ -2095,6 +2096,10 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else snprintf(v, vn, "erst PC-Modus an");
         break;
     case SI_H_SYS: snprintf(l, ln, "SYSTEM"); break;
+    case SI_DISP: snprintf(l, ln, "Bild-Versatz (Lage + Farben)");
+        if (drmOutActive()) snprintf(v, vn, "%d (%d Px + %d)", cfg.dispOff, cfg.dispOff / 3, ((cfg.dispOff % 3) + 3) % 3);
+        else snprintf(v, vn, "nur Groovebox-OS");
+        break;
     case SI_LEARN: snprintf(l, ln, "Tasten neu lernen"); break;
     case SI_INFO: snprintf(l, ln, "Info");
         snprintf(v, vn, "%s  %d Samples  %s", versionStr[0] ? versionStr : "dev", sampleCount(), midiBackend());
@@ -2136,6 +2141,7 @@ static void setChange(int i, int d) {
     case SI_CLK: cfg.clk = (cfg.clk + (d > 0 ? 1 : 2)) % 3; applyMidiSettings(); saveSettings(); break;
     case SI_MCH: cfg.chm = !cfg.chm; applyMidiSettings(); saveSettings(); break;
     case SI_USB: usbMode = clampi(usbMode + (d > 0 ? 1 : -1), 0, 2); usbApplyAt = SDL_GetTicks() + 1200; break;
+    case SI_DISP: cfg.dispOff = clampi(cfg.dispOff + d, -1920, 1920); drmOutSetByteOffset(cfg.dispOff); saveSettings(); break;
     default: break;
     }
 }
@@ -2223,7 +2229,7 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
     if (fabsf(I.rx) > fabsf(I.ry)) dx += flick(I.rx, flRX, flRXt, now); else flRX = 0;
     if (dx && !setIsAction(setSel)) setChange(setSel, dx);
     float ry = fabsf(I.ry) > fabsf(I.rx) ? I.ry : 0.f;   // rechter Stick: stufenlos (Tempo etc.)
-    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_LEN || setSel == SI_LENALL)) {
+    if (fabsf(ry) > 0.25f && !setIsAction(setSel) && (setSel == SI_BPM || setSel == SI_VOL || setSel == SI_DISP || setSel == SI_LEN || setSel == SI_LENALL)) {
         stickAcc += (ry > 0 ? 1.f : -1.f) * (30.f * (fabsf(ry) - 0.25f) + 2.f) * dt;
         int d = (int)stickAcc;
         if (d) { stickAcc -= d; setChange(setSel, d); }
@@ -2866,6 +2872,7 @@ int main(int argc, char** argv) {
 
     printf("SDL-Videotreiber: %s\n", SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "-");
     if (useDrm) {
+        drmOutSetByteOffset(cfg.dispOff);
         drmSurf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_ARGB8888);
         ren = drmSurf ? SDL_CreateSoftwareRenderer(drmSurf) : nullptr;
         if (!ren) { printf("Software-Renderer: %s\n", SDL_GetError()); return 1; }
@@ -2885,6 +2892,7 @@ int main(int argc, char** argv) {
     if (learn || (!in.haveMap && in.joy && !in.gc)) runLearn();
 
     loadSettings();
+    drmOutSetByteOffset(cfg.dispOff);
     if (!projFromArg) {   // Projektplatz aus den Einstellungen; altes project1.gbx wird zu song01.gbx
         char old[700], s1[700];
         snprintf(old, sizeof old, "%sprojects/project1.gbx", basePath);

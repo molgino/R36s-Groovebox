@@ -5,3 +5,5 @@ bool drmOutOpen();                  // erste angeschlossene Anzeige uebernehmen
 bool drmOutActive();
 void drmOutPresent(SDL_Surface* s); // Surface (ARGB8888) anzeigen
 void drmOutClose();
+// Ausgleich fuer Displays, die den Datenstrom um einige Bytes versetzt lesen (Bild verschoben + Farben rotiert)
+void drmOutSetByteOffset(int bytes);

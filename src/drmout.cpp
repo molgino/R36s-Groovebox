@@ -21,6 +21,8 @@ static DumbBuf g_buf[2];
 static int g_back = 1;
 static bool g_flipPending = false;
 static drmModeCrtc* g_saved = nullptr;
+static int g_off = 0;   // Byte-Versatz im RGB-Datenstrom einer Zeile (siehe drmOutSetByteOffset)
+void drmOutSetByteOffset(int bytes) { g_off = bytes; }
 
 static bool makeBuf(DumbBuf& b, int w, int h) {
     struct drm_mode_create_dumb c;
@@ -112,7 +114,22 @@ void drmOutPresent(SDL_Surface* s) {
     DumbBuf& b = g_buf[g_back];
     int w = g_mode.hdisplay, h = g_mode.vdisplay;
     SDL_LockSurface(s);
-    if (s->w == w && s->h == h && s->format->BytesPerPixel == 4) {
+    if (g_off != 0 && s->w == w && s->h == h && s->format->BytesPerPixel == 4) {
+        // Das Display zeigt an Byte k den Byte k+off des Zeilenstroms (R,G,B je Pixel) -> vorab um -off rotieren
+        static uint8_t line[4096 * 3];
+        int L = w * 3, off = ((g_off % L) + L) % L;
+        for (int y = 0; y < h; y++) {
+            const uint32_t* src = (const uint32_t*)((uint8_t*)s->pixels + (size_t)y * s->pitch);
+            for (int x = 0; x < w; x++) { uint32_t p = src[x]; line[3 * x] = (uint8_t)(p >> 16); line[3 * x + 1] = (uint8_t)(p >> 8); line[3 * x + 2] = (uint8_t)p; }
+            uint32_t* dst = (uint32_t*)(b.map + (size_t)y * b.pitch);
+            int j = (L - off) % L;   // Quellbyte fuer Ausgabebyte 0
+            for (int x = 0; x < w; x++) {
+                uint8_t c[3];
+                for (int k = 0; k < 3; k++) { c[k] = line[j]; if (++j == L) j = 0; }
+                dst[x] = 0xff000000u | ((uint32_t)c[0] << 16) | ((uint32_t)c[1] << 8) | c[2];
+            }
+        }
+    } else if (s->w == w && s->h == h && s->format->BytesPerPixel == 4) {
         for (int y = 0; y < h; y++) memcpy(b.map + (size_t)y * b.pitch, (uint8_t*)s->pixels + (size_t)y * s->pitch, (size_t)w * 4);
     } else {   // Groesse weicht ab: nach naechstem Nachbarn skalieren
         for (int y = 0; y < h; y++) {
@@ -140,6 +157,7 @@ void drmOutClose() {
 }
 
 #else
+void drmOutSetByteOffset(int) {}
 bool drmOutOpen() { return false; }
 bool drmOutActive() { return false; }
 void drmOutPresent(SDL_Surface*) {}
