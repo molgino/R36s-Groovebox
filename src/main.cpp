@@ -2093,8 +2093,8 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
     if (fabsf(v) < 0.35f) { state = 0; return 0; }
     if (fabsf(v) < 0.65f) return 0;
     int d = v > 0 ? 1 : -1;
-    if (state != d) { state = d; t = now + 420; return d; }
-    if (now >= t) { t = now + 220; return d; }
+    if (state != d) { state = d; t = now + 320; return d; }
+    if (now >= t) { t = now + 110; return d; }
     return 0;
 }
 
@@ -2158,7 +2158,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         break;
     case SI_H_SYS: snprintf(l, ln, "SYSTEM"); break;
     case SI_DISP: snprintf(l, ln, "Bild-Versatz (Lage + Farben)");
-        if (drmOutActive()) snprintf(v, vn, "%d (%d Px + %d)", cfg.dispOff, cfg.dispOff / 3, ((cfg.dispOff % 3) + 3) % 3);
+        if (drmOutActive()) snprintf(v, vn, "%d Px (%d)", cfg.dispOff / 3, cfg.dispOff);
         else snprintf(v, vn, "nur Groovebox-OS");
         break;
     case SI_LEARN: snprintf(l, ln, "Tasten neu lernen"); break;
@@ -2202,7 +2202,7 @@ static void setChange(int i, int d) {
     case SI_CLK: cfg.clk = (cfg.clk + (d > 0 ? 1 : 2)) % 3; applyMidiSettings(); saveSettings(); break;
     case SI_MCH: cfg.chm = !cfg.chm; applyMidiSettings(); saveSettings(); break;
     case SI_USB: usbMode = clampi(usbMode + (d > 0 ? 1 : -1), 0, 2); usbApplyAt = SDL_GetTicks() + 1200; break;
-    case SI_DISP: cfg.dispOff = clampi(cfg.dispOff + d, -1920, 1920); drmOutSetByteOffset(cfg.dispOff); saveSettings(); break;
+    case SI_DISP: cfg.dispOff = clampi(cfg.dispOff + (d > 0 ? 3 : -3), -1920, 1920);   // 1 Pixel je Schritt, Farbanteil bleibt drmOutSetByteOffset(cfg.dispOff); saveSettings(); break;
     default: break;
     }
 }
@@ -3039,8 +3039,23 @@ int main(int argc, char** argv) {
             if (memcmp(&lastSaved, &eng.proj, sizeof(Project))) saveProject();
         }
         bool help = in.down[BT_SELECT] && !funcUsed && in.heldMs(BT_SELECT, now) > 700;
+        Uint64 tq0 = SDL_GetPerformanceCounter();
         drawAll(help);
+        Uint64 tq1 = SDL_GetPerformanceCounter();
         present();
+        Uint64 tq2 = SDL_GetPerformanceCounter();
+        {   // Bildrate messen, alle 10 s ins Log
+            static double sDraw = 0, sPres = 0, sMax = 0; static int nFr = 0; static Uint32 statAt = 0;
+            double f = 1000.0 / SDL_GetPerformanceFrequency(), dd = (tq1 - tq0) * f, dp = (tq2 - tq1) * f;
+            sDraw += dd; sPres += dp; if (dd + dp > sMax) sMax = dd + dp; nFr++;
+            if (!statAt) statAt = now;
+            if (now - statAt >= 10000) {
+                printf("Bild: %.1f fps, zeichnen %.1f ms, ausgeben %.1f ms (max %.1f ms), CPU Audio %d%%\n",
+                       nFr * 1000.0 / (now - statAt), sDraw / nFr, sPres / nFr, sMax, (int)(cpuLoad * 100));
+                fflush(stdout);
+                sDraw = sPres = sMax = 0; nFr = 0; statAt = now;
+            }
+        }
         Uint32 spent = SDL_GetTicks() - now;
         if (spent < 16) SDL_Delay(16 - spent);
     }

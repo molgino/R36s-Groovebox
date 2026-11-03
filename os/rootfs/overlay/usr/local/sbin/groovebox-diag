@@ -11,6 +11,8 @@ mkdir -p /data/logs
   for c in $(seq 0 3); do [ -d /proc/asound/card$c ] && { echo "--- amixer card $c"; amixer -c $c scontents 2>&1 | head -80; }; done
   echo "=== usb"; ls /sys/class/udc /sys/class/usb_role 2>&1; cat /sys/class/usb_role/*/role 2>&1
   echo "=== power"; for p in /sys/class/power_supply/*; do echo "$p $(cat $p/type 2>/dev/null) $(cat $p/capacity 2>/dev/null)"; done
+  echo "=== takt"; for g in /sys/devices/system/cpu/cpufreq/policy*; do echo "CPU: $(cat $g/scaling_governor) $(cat $g/scaling_cur_freq) kHz (verfuegbar: $(cat $g/scaling_available_governors))"; done
+  for g in /sys/class/devfreq/*; do echo "$(basename $g): $(cat $g/governor 2>/dev/null) $(cat $g/cur_freq 2>/dev/null) Hz"; done
   echo "=== lsmod"; lsmod
   echo "=== dmesg (Fehler/Warnungen)"; dmesg --level=err,warn 2>/dev/null | tail -80
   echo "=== dmesg"; dmesg | tail -300

@@ -50,6 +50,11 @@ button:hover{border-color:var(--acc)}button.del:hover{border-color:var(--bad);co
 <span id="ust" class="dim">Datei groovebox-os-update.tgz aus dem Release „nightly“</span></div>
 </div>
 
+<h2>Logs</h2>
+<div class="row"><select id="logsel"><option>groovebox.log</option><option>groovebox.old.log</option><option>boot.txt</option><option>update.log</option><option>pc-modus.log</option></select>
+<button id="logload">anzeigen</button><label><input type="checkbox" id="logauto"> automatisch aktualisieren</label><a id="logdl" download><button>herunterladen</button></a></div>
+<pre id="logview" style="background:var(--panel);border-radius:12px;padding:12px;max-height:420px;overflow:auto;font-size:12px;white-space:pre-wrap;display:none"></pre>
+
 <h2>Projekte</h2>
 <div class="row"><span>Platz <select id="pslot"></select></span><button id="pup">Projekt (.gbx) hochladen</button><input type="file" id="ppick" accept=".gbx" hidden>
 <span class="dim">Laden am Gerät unter PRJ → SONG. Herunterladen = Sicherung.</span></div>
@@ -135,5 +140,8 @@ $('#upick').onchange=async e=>{const f=e.target.files[0];if(!f)return;const st=$
  try{const r=await fetch('/api/update',{method:'PUT',body:f});const t=await r.text();if(!r.ok)throw new Error(t);
   st.className='ok';st.textContent='✓ übertragen – Groovebox startet neu und installiert (ca. 15 s)';setTimeout(refresh,15000);}
  catch(err){st.className='bad';st.textContent='✗ '+(err.message||err);}e.target.value='';};
+async function loadLog(){const n=$('#logsel').value,v=$('#logview');v.style.display='';$('#logdl').href='/api/log?name='+n;$('#logdl').download=n;
+ try{const r=await fetch('/api/log?name='+encodeURIComponent(n));v.textContent=await r.text();v.scrollTop=v.scrollHeight;}catch(e){v.textContent='keine Verbindung';}}
+$('#logload').onclick=loadLog;$('#logsel').onchange=loadLog;setInterval(()=>{if($('#logauto').checked)loadLog()},3000);
 refresh();setInterval(refresh,8000);
 </script></body></html>)HTML";

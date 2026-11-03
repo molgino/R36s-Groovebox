@@ -219,6 +219,31 @@ static void handle(int fd) {
         return;
     }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/list")) { handleList(fd); return; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/api/log")) {   // Logs ansehen (feste Liste, keine beliebigen Pfade)
+        char nm[40] = "", path[800] = "";
+        if (q) queryGet(q, "name", nm, sizeof nm);
+        static const char* const LOGS[][2] = {
+            {"groovebox.log", "/var/log/groovebox/groovebox.log"}, {"groovebox.old.log", "/var/log/groovebox/groovebox.old.log"},
+            {"boot.txt", "/data/logs/boot.txt"}, {"update.log", "/data/logs/update.log"}, {"pc-modus.log", ""}};
+        for (auto& l : LOGS)
+            if (!strcmp(nm, l[0])) {
+                if (l[1][0]) snprintf(path, sizeof path, "%s", l[1]);
+                else snprintf(path, sizeof path, "%s%s", g_base, l[0]);
+            }
+        if (!path[0] && !strcmp(nm, "groovebox.log")) snprintf(path, sizeof path, "%sgroovebox.log", g_base);
+        FILE* f = path[0] ? fopen(path, "rb") : nullptr;
+        if (!f && !strcmp(nm, "groovebox.log")) { snprintf(path, sizeof path, "%sgroovebox.log", g_base); f = fopen(path, "rb"); }   // ArkOS
+        if (!f) { replyText(fd, 404, "(Log nicht vorhanden)"); return; }
+        fseek(f, 0, SEEK_END); long n = ftell(f);
+        long start = n > 300000 ? n - 300000 : 0;   // nur das Ende grosser Logs
+        fseek(f, start, SEEK_SET);
+        char* buf = (char*)malloc((size_t)(n - start) + 1);
+        size_t r = buf ? fread(buf, 1, (size_t)(n - start), f) : 0;
+        fclose(f);
+        reply(fd, 200, "text/plain; charset=utf-8", buf ? buf : "", r);
+        free(buf);
+        return;
+    }
     if (!strcmp(method, "PUT") && !strcmp(target, "/api/update")) {   // Groovebox-OS: Programm-Update (.tgz)
         if (!isOS()) { replyText(fd, 400, "Updates per Browser nur im Groovebox-OS (ArkOS: deploy.ps1)"); return; }
         if (clen <= 1000 || clen > 64LL * 1024 * 1024) { replyText(fd, 413, "Update-Datei ungueltig"); return; }

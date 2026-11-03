@@ -2,12 +2,18 @@
 # Startet die Groovebox (vom Dienst groovebox.service, der sie nach dem Beenden neu startet).
 # - installiert vorher ein Update aus /data/update/*.tgz (Browser-Upload, Laufwerk oder deploy-Skript)
 # - stuerzt die neue Version 3x direkt nach dem Start ab, wird die alte wiederhergestellt
-# Log: /data/logs/groovebox.log (am PC lesbar), Update-Log: /data/logs/update.log
+# Log: /var/log/groovebox/groovebox.log (Systempartition, damit GROOVEBOX als USB-Laufwerk
+#      ausgehaengt werden kann; Kopie nach /data/logs beim Beenden), Update-Log: /data/logs/update.log
 GB=/opt/groovebox
 UPD=/data/update
 LOG=/data/logs
 FRESH=$GB/.update-fresh
-mkdir -p $LOG $UPD
+VLOG=/var/log/groovebox
+mkdir -p $LOG $UPD $VLOG
+
+# volle Leistung: CPU, Speicher (DMC) und GPU nicht heruntertakten (fluessige Anzeige, kein Knacksen)
+for g in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do [ -w "$g" ] && echo performance > "$g"; done
+for g in /sys/class/devfreq/*/governor; do [ -w "$g" ] && echo performance > "$g" 2>/dev/null; done
 
 is_arm64_elf() {   # ELF-Kennung + e_machine 0xB7 (aarch64)
     [ "$(od -An -tx1 -N4 "$1" | tr -d ' \n')" = "7f454c46" ] && [ "$(od -An -tx1 -j18 -N2 "$1" | tr -d ' \n')" = "b700" ]
@@ -47,14 +53,19 @@ rollback() {
 
 install_update
 
-[ -f $LOG/groovebox.log ] && mv -f $LOG/groovebox.log $LOG/groovebox.old.log
+[ -f $VLOG/groovebox.log ] && mv -f $VLOG/groovebox.log $VLOG/groovebox.old.log
+{ echo "=== $(date) Start $(cat $GB/VERSION 2>/dev/null)"
+  for g in /sys/devices/system/cpu/cpufreq/policy*; do echo "CPU: $(cat $g/scaling_governor) $(cat $g/scaling_cur_freq) kHz"; done
+  for g in /sys/class/devfreq/*; do echo "$(basename $g): $(cat $g/governor 2>/dev/null) $(cat $g/cur_freq 2>/dev/null) Hz"; done
+} > $VLOG/groovebox.log 2>&1
 cd $GB
 if [ -f $FRESH ]; then   # nach 60 s Laufzeit gilt das Update als gut
     ( sleep 60; [ -f $FRESH ] && rm -f $FRESH $GB/VERSION.bak ) &
 fi
 START=$(date +%s)
-stdbuf -oL -eL ./groovebox >> $LOG/groovebox.log 2>&1
+stdbuf -oL -eL ./groovebox >> $VLOG/groovebox.log 2>&1
 RC=$?
+mountpoint -q /data && cp -f $VLOG/groovebox.log $LOG/groovebox.log 2>/dev/null
 if [ -f $FRESH ] && [ $(( $(date +%s) - START )) -lt 15 ] && [ $RC -ne 0 ]; then
     N=$(( $(cat $FRESH 2>/dev/null || echo 0) + 1 ))
     echo $N > $FRESH
