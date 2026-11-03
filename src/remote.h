@@ -1,0 +1,17 @@
+// Bildschirm-Spiegelung + Fernbedienung ueber das Webinterface (/screen)
+#pragma once
+#include <stdint.h>
+#include <stddef.h>
+#include "input.h"
+
+// Eingaben aus dem Browser (vom Web-Thread gesetzt, in Input::poll zusammengefuehrt)
+extern volatile bool remoteDown[BT_COUNT];
+extern volatile bool remoteHit[BT_COUNT];      // kurzer Druck: mindestens ein Frame lang "unten"
+extern volatile float remoteAxis[4];           // lx, ly, rx, ry (oben/rechts = positiv)
+void remoteInput(const char* name, int value); // Name wie "A", "UP", "LX"; value 1/0 bzw. -1/0/1 fuer Achsen
+
+// Bildschirm
+bool remoteWanted();                                   // hat in den letzten 2 s jemand zugeschaut?
+void remoteSnapshot(const uint32_t* argb, int pitchPx, int w, int h);   // aus dem Hauptthread
+// Web-Thread: Bild seit Nummer "since" kodieren; liefert Laenge (0 = nichts Neues), out wird (re)alloziert
+size_t remoteEncode(unsigned since, uint8_t** out, size_t* cap);

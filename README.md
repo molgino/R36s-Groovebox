@@ -397,6 +397,8 @@ Neue Groovebox-Versionen kommen als **`groovebox-os-update.tgz`** im Release **n
 
 Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, wird automatisch die vorige wiederhergestellt. Protokoll: `logs/update.log`.
 
+**Bildschirm & Fernbedienung im Browser:** Unter http://192.168.77.1/screen erscheint das Live-Bild der Groovebox (bis ca. 30 Bilder/s, nur geänderte Bildteile werden übertragen). Bedienen per Maus/Touch über die eingeblendeten Tasten oder per Tastatur: Pfeile = Steuerkreuz, Z = A, X = B, S = X, A = Y, Q/W = L1/R1, 1/2 = L2/R2, Shift = SELECT, Enter = START, T/F/G/H = linker Stick, I/J/K/L = rechter Stick. Mit „Vollbild“ groß darstellen, z. B. für Aufnahmen oder Streams.
+
 **Logs im Browser:** Auf der Upload-Seite (http://192.168.77.1) unter „Logs“ lassen sich groovebox.log, boot.txt, update.log und pc-modus.log direkt ansehen und herunterladen.
 
 **Wenn etwas nicht klappt:** Die Karte in den PC stecken. Auf dem Laufwerk **GROOVEBOX** liegen im Ordner `logs/` die Dateien `boot.txt` (Display, Tasten, Sound, USB) und `groovebox.log`. Diese bitte schicken.

@@ -1,6 +1,7 @@
 // Mini-Webserver: Samples und Projekte per Browser hochladen (PC-Modus: http://192.168.77.1)
 // Ein Thread, eine Verbindung nach der anderen. Nur Dateien unter samples/ und projects/.
 #include "web.h"
+#include "remote.h"
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@ static bool isOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0;
 bool webUpdateReady() { return g_updateReady != 0; }
 
 extern const char WEB_PAGE[];
+extern const char WEB_SCREEN[];
 
 int webPort() { return g_port; }
 bool webTakeChange(Uint32 now, Uint32 quietMs) {
@@ -57,7 +59,7 @@ static bool sendAll(int fd, const void* p, size_t n) {
 
 static void reply(int fd, int code, const char* type, const char* body, size_t len) {
     char h[256];
-    const char* msg = code == 200 ? "OK" : code == 404 ? "Not Found" : code == 413 ? "Too Large" : "Bad Request";
+    const char* msg = code == 200 ? "OK" : code == 204 ? "No Content" : code == 404 ? "Not Found" : code == 413 ? "Too Large" : "Bad Request";
     int hl = snprintf(h, sizeof h, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\n"
                       "Cache-Control: no-store\r\nConnection: close\r\n\r\n", code, msg, type, len);
     sendAll(fd, h, (size_t)hl);
@@ -219,6 +221,23 @@ static void handle(int fd) {
         return;
     }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/list")) { handleList(fd); return; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/screen")) { reply(fd, 200, "text/html; charset=utf-8", WEB_SCREEN, strlen(WEB_SCREEN)); return; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/api/screen")) {   // Bild (Differenz seit "since")
+        char sv[16] = "0";
+        if (q) queryGet(q, "since", sv, sizeof sv);
+        static uint8_t* sbuf = nullptr; static size_t scap = 0;
+        size_t n = remoteEncode((unsigned)strtoul(sv, nullptr, 10), &sbuf, &scap);
+        if (!n) { reply(fd, 204, "application/octet-stream", "", 0); return; }
+        reply(fd, 200, "application/octet-stream", (const char*)sbuf, n);
+        return;
+    }
+    if (!strcmp(method, "POST") && !strcmp(target, "/api/input")) {   // Fernbedienung
+        char bn[12] = "", vv[8] = "0";
+        if (q) { queryGet(q, "b", bn, sizeof bn); queryGet(q, "v", vv, sizeof vv); }
+        remoteInput(bn, atoi(vv));
+        reply(fd, 200, "text/plain", "ok", 2);
+        return;
+    }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/log")) {   // Logs ansehen (feste Liste, keine beliebigen Pfade)
         char nm[40] = "", path[800] = "";
         if (q) queryGet(q, "name", nm, sizeof nm);

@@ -77,19 +77,28 @@ static int usbThread(void*) {
         snd_pcm_close(pcm); g_active = false; return 0;
     }
     printf("USB-Audio zum PC aktiv (%s)\n", g_dev);
-    Uint32 lastOk = 0;
+    Uint32 lastOk = 0, statAt = SDL_GetTicks();
+    unsigned long wrote = 0, full = 0, dropped = 0, errs = 0; int lastErr = 0;
     while (g_run) {
+        if (SDL_GetTicks() - statAt >= 10000) {   // alle 10 s ins Log: kommt etwas beim PC an?
+            snd_pcm_sframes_t av = snd_pcm_avail(pcm);
+            printf("USB-Audio: %lu Frames an PC, voll %lux, verworfen %lu, Fehler %lu%s%s, Zustand %s, frei %ld\n",
+                   wrote, full, dropped, errs, lastErr ? " letzter: " : "", lastErr ? snd_strerror(lastErr) : "",
+                   snd_pcm_state_name(snd_pcm_state(pcm)), (long)av);
+            fflush(stdout);
+            wrote = full = dropped = errs = 0; lastErr = 0; statAt = SDL_GetTicks();
+        }
         unsigned w = g_w, r = g_r, fill = w - r;
-        if (fill > MAXLAT) { r = w - MAXLAT / 2; g_r = r; fill = MAXLAT / 2; }   // PC liest nicht mit -> Altes verwerfen
+        if (fill > MAXLAT) { dropped += fill - MAXLAT / 2; r = w - MAXLAT / 2; g_r = r; fill = MAXLAT / 2; }   // PC liest nicht mit -> Altes verwerfen
         if (fill < PERIOD) { SDL_Delay(2); continue; }
         unsigned chunk = fill;
         unsigned toEnd = RING - (r & RMASK);
         if (chunk > toEnd) chunk = toEnd;
         snd_pcm_sframes_t n = snd_pcm_writei(pcm, &g_ring[(r & RMASK) * 2], chunk);
-        if (n > 0) { g_r = r + (unsigned)n; lastOk = SDL_GetTicks(); g_status = 2; }
-        else if (n == -EAGAIN) SDL_Delay(2);
-        else if (n == -EPIPE || n == -ESTRPIPE) snd_pcm_prepare(pcm);
-        else { SDL_Delay(50); snd_pcm_prepare(pcm); }
+        if (n > 0) { g_r = r + (unsigned)n; wrote += (unsigned long)n; lastOk = SDL_GetTicks(); g_status = 2; }
+        else if (n == -EAGAIN) { full++; SDL_Delay(2); }
+        else if (n == -EPIPE || n == -ESTRPIPE) { errs++; lastErr = (int)n; snd_pcm_prepare(pcm); }
+        else { errs++; lastErr = (int)n; SDL_Delay(50); snd_pcm_prepare(pcm); }
         if (SDL_GetTicks() - lastOk > 500) g_status = 1;
     }
     snd_pcm_drop(pcm);

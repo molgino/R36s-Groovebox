@@ -15,6 +15,7 @@
 #include "midi.h"
 #include "drmout.h"
 #include "usbaudio.h"
+#include "remote.h"
 
 static const int SW = 640, SH = 480;
 
@@ -3109,7 +3110,7 @@ int main(int argc, char** argv) {
     SDL_ShowCursor(SDL_DISABLE);
 
     printf("SDL-Videotreiber: %s\n", SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "-");
-    if (useDrm) {
+    if (useDrm || getenv("GB_HEADLESS")) {   // GB_HEADLESS: ohne Anzeige in den Speicher zeichnen (Tests der Web-Spiegelung)
         drmOutSetByteOffset(cfg.dispOff);
         drmSurf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_ARGB8888);
         ren = drmSurf ? SDL_CreateSoftwareRenderer(drmSurf) : nullptr;
@@ -3210,6 +3211,10 @@ int main(int argc, char** argv) {
         Uint64 tq1 = SDL_GetPerformanceCounter();
         present();
         Uint64 tq2 = SDL_GetPerformanceCounter();
+        {   // Bildschirm-Spiegelung fuers Webinterface (nur wenn jemand zuschaut, max. 30 Bilder/s)
+            static Uint32 snapAt = 0;
+            if (fbPix && remoteWanted() && now - snapAt >= 33) { snapAt = now; remoteSnapshot(fbPix, fbPitch, SW, SH); }
+        }
         {   // Bildrate messen, alle 10 s ins Log
             static double sDraw = 0, sPres = 0, sMax = 0; static int nFr = 0; static Uint32 statAt = 0;
             double f = 1000.0 / SDL_GetPerformanceFrequency(), dd = (tq1 - tq0) * f, dp = (tq2 - tq1) * f;

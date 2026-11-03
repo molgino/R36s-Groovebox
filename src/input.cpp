@@ -1,4 +1,5 @@
 #include "input.h"
+#include "remote.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -127,6 +128,12 @@ void Input::poll() {
         if (fabsf(gx) > fabsf(lx)) lx = gx;
         if (fabsf(hx) > fabsf(rx)) rx = hx;
     }
+    // Fernbedienung aus dem Browser
+    for (int b = 0; b < BT_COUNT; b++) { if (remoteDown[b] || remoteHit[b]) d[b] = true; remoteHit[b] = false; }
+    if (fabsf(remoteAxis[0]) > fabsf(lx)) lx = remoteAxis[0];
+    if (fabsf(remoteAxis[1]) > fabsf(ly)) ly = remoteAxis[1];
+    if (fabsf(remoteAxis[2]) > fabsf(rx)) rx = remoteAxis[2];
+    if (fabsf(remoteAxis[3]) > fabsf(ry)) ry = remoteAxis[3];
     Uint32 now = SDL_GetTicks();
     for (int b = 0; b < BT_COUNT; b++) {
         down[b] = d[b];
