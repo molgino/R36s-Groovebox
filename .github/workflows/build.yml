@@ -24,11 +24,32 @@ jobs:
         run: |
           make -j4 DRM=1
           ./tools/os-update.sh groovebox
+      - name: Leistungstest (arm64)
+        run: SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./groovebox --bench dist/bench-arm64.txt
       - uses: actions/upload-artifact@v4
         with: { name: groovebox-os-update, path: dist/groovebox-os-update.tgz }
+      - uses: actions/upload-artifact@v4
+        with: { name: bench-arm64, path: dist/bench-arm64.txt }
+
+  # Unit-Tests, UI-Tests, Stresstest - mit AddressSanitizer/UBSan
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Abhaengigkeiten
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev libasound2-dev
+      - name: Unit-Tests (Sanitizer)
+        run: make test SAN=1
+      - name: UI-Tests + Stresstest (Sanitizer)
+        run: |
+          make clean
+          make -j4 SAN=1
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ASAN_OPTIONS=detect_leaks=0 ./groovebox --selftest 60
 
   build:
-    needs: os-app
+    needs: [os-app, tests]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -56,6 +77,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with: { name: groovebox-os-update, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: bench-arm64, path: dist }
 
       - name: Release "nightly" aktualisieren
         if: github.ref == 'refs/heads/main'
@@ -63,7 +86,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete nightly --yes --cleanup-tag || true
-          gh release create nightly dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz --prerelease \
+          gh release create nightly dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz dist/bench-arm64.txt --prerelease \
             --title "SYNTH CITY Nightly ($(git rev-parse --short HEAD))" \
             --notes "Automatischer Build von main ($(git rev-parse --short HEAD)). ArkOS: r36s-groovebox-arkos.zip. Groovebox-OS: groovebox-os-update.tgz (App-Update ohne neues Image)." --target "$GITHUB_SHA"
 
@@ -74,7 +97,7 @@ jobs:
         run: |
           TAG="nightly-${GITHUB_REF_NAME}"
           gh release delete "$TAG" --yes --cleanup-tag || true
-          gh release create "$TAG" dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz --prerelease \
+          gh release create "$TAG" dist/r36s-groovebox-arkos.zip dist/groovebox-os-update.tgz dist/bench-arm64.txt --prerelease \
             --title "SYNTH CITY Test ${GITHUB_REF_NAME} ($(git rev-parse --short HEAD))" \
             --notes "Testversion vom Branch ${GITHUB_REF_NAME}. Groovebox-OS: groovebox-os-update.tgz im Browser unter Update einspielen. Zurueck: Update aus dem Release nightly einspielen." --target "$GITHUB_SHA"
 

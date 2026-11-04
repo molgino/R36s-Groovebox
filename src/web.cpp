@@ -243,7 +243,7 @@ static void handle(int fd) {
         if (q) queryGet(q, "name", nm, sizeof nm);
         static const char* const LOGS[][2] = {
             {"groovebox.log", "/var/log/groovebox/groovebox.log"}, {"groovebox.old.log", "/var/log/groovebox/groovebox.old.log"},
-            {"boot.txt", "/data/logs/boot.txt"}, {"update.log", "/data/logs/update.log"}, {"pc-modus.log", ""}, {"usb-diagnose", "-"}};
+            {"boot.txt", "/data/logs/boot.txt"}, {"update.log", "/data/logs/update.log"}, {"bench.txt", "/data/logs/bench.txt"}, {"pc-modus.log", ""}, {"usb-diagnose", "-"}};
         for (auto& l : LOGS)
             if (!strcmp(nm, l[0])) {
                 if (l[1][0]) snprintf(path, sizeof path, "%s", l[1]);

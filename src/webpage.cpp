@@ -52,7 +52,7 @@ button:hover{border-color:var(--acc)}button.del:hover{border-color:var(--bad);co
 </div>
 
 <h2>Logs</h2>
-<div class="row"><select id="logsel"><option>groovebox.log</option><option>groovebox.old.log</option><option>boot.txt</option><option>update.log</option><option>pc-modus.log</option><option>usb-diagnose</option></select>
+<div class="row"><select id="logsel"><option>groovebox.log</option><option>groovebox.old.log</option><option>boot.txt</option><option>update.log</option><option>bench.txt</option><option>pc-modus.log</option><option>usb-diagnose</option></select>
 <button id="logload">anzeigen</button><label><input type="checkbox" id="logauto"> automatisch aktualisieren</label><a id="logdl" download><button>herunterladen</button></a></div>
 <pre id="logview" style="background:var(--panel);border-radius:12px;padding:12px;max-height:420px;overflow:auto;font-size:12px;white-space:pre-wrap;display:none"></pre>
 
