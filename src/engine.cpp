@@ -926,6 +926,8 @@ void Engine::init(int sampleRate) {
     initFx(sampleRate);
     for (int t = 0; t < NTRACKS; t++) {
         v[t].rng.s = 0x1234567u * (t + 1);
+        v[t].lastS = v[t].dcOff = 0.f; v[t].dcArm = false;
+        for (int k = 0; k < NCHORDV; k++) { cv[t][k].lastS = cv[t][k].dcOff = 0.f; cv[t][k].dcArm = false; }
         for (int k = 0; k < NCHORDV; k++) cv[t][k].rng.s = 0x7654321u * (t + 1) + k * 977u;
         midiNote[t] = liveNote[t] = skipStep[t] = -1;
         midiGate[t] = 0;
@@ -947,6 +949,8 @@ void Engine::initFx(int sampleRate) {
     for (int k = 0; k < 8; k++) { free(rev.cl[k].b); free(rev.cr[k].b); rev.cl[k] = Comb(); rev.cr[k] = Comb(); }
     for (int k = 0; k < 4; k++) { free(rev.al[k].b); free(rev.ar[k].b); rev.al[k] = Allpass(); rev.ar[k] = Allpass(); }
     rev.init(sr);
+    memset(limXL, 0, sizeof limXL); memset(limXR, 0, sizeof limXR);   // Limiter: leerer Vorausschau-Puffer
+    limReady = false; limPos = 0; limRel = 1.f;
 }
 
 void Engine::setRate(int sampleRate) {
