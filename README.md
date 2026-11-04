@@ -561,6 +561,10 @@ SSH startet die Groovebox selbst, „Enable Remote Services“ in ArkOS (das WLA
 
 Beim Aufspielen bleiben Projekte, Samples, Tastenbelegung und Einstellungen erhalten. Ersetzt werden nur Programm und Skripte.
 
+## Mehrkern-Audio
+
+Bei spürbarer Last (ab etwa 4 klingenden Stimmen) rechnet ein **zweiter Prozessorkern** mit: Beide Kerne holen sich abwechselnd Stimmen ab, der Audio-Kern wartet nie auf einen schlafenden Helfer. Auf dem SYNTH CITY OS laufen beide mit Echtzeit-Priorität. Ein- und ausschalten: SET → **Audio-Rechenkerne** (1/2). Bei Knacksern auf 1 stellen und im Log melden. Der Leistungstest zeigt Demo-Song und Worst Case mit 1 und 2 Kernen.
+
 ## Tests und Leistungstest
 
 * **Auf dem R36S:** SET → **Leistungstest** (ca. 30 s). Gemessen werden die Audio-Last je Engine (8 Stimmen, auch pro Stimme) und ein Worst Case mit allem an, die Zeichenzeit jeder Seite inkl. Ausgabe aufs Display und der Speicher. Den Bericht findest du im Browser unter **Logs → bench.txt** (Datei `/data/logs/bench.txt`). Die Wiedergabe läuft währenddessen weiter.

@@ -3,6 +3,8 @@
 #include "params.h"
 #include "samples.h"
 #include <stdint.h>
+#include <pthread.h>
+#include <semaphore.h>
 
 struct Step { uint8_t on; uint8_t lock[NPARAMS]; };
 
@@ -260,4 +262,20 @@ private:
     void clockTick();
     void trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, bool toMidi = true);
     void processBlock(float* out, int n);
+    // Mehrkern: ein Hilfs-Thread rechnet pro Block etwa die Haelfte der klingenden Stimmen
+    struct WkItem { Voice* v; bool key; };
+    pthread_t wkThread;
+    sem_t wkGo;
+    volatile int wkGoSeq = 0, wkSleeping = 0, wkDone = 0;   // __atomic: Blocknummer, Schlafzustand, vom Helfer fertige Stimmen
+    volatile uint32_t wkClaim = 0;                          // (Block & 0xFFFF) << 16 | naechste Stimme
+    bool wkOn = false, wkPrioSet = false;
+    WkItem wkList[NTRACKS * (1 + NCHORDV)];
+    int wkN = 0, wkNs = 0;
+    bool wkClaimOne(uint32_t tag, int& idx);
+    float wL[32], wR[32], wD[32], wRV[32], wKL[32], wKR[32];
+    static void* wkMain(void* arg);
+public:
+    bool helperReady() const { return wkOn; }
+    int audioThreads = 1;   // 1 oder 2 (gesetzt in init: 2, wenn mehrere Kerne und GB_AUDIO_THREADS != 1)
+    long wkBlocks = 0;      // Bloecke, die zweikernig gerechnet wurden (Anzeige/Test)
 };

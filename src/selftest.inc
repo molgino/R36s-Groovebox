@@ -115,6 +115,7 @@ static void benchAudio() {
     bout("  %-26s %7.1f%% %9.1f%% %7.2f\n", "Leerlauf (leeres Pattern)", r.load, r.peak, r.lvl);
     double idle = r.load;
     double worstEng = 0; int worstM = 0;
+    E.audioThreads = 1;   // Engine-Tabelle mit einem Kern (vergleichbar mit frueheren Messungen)
     for (int i = 0; i < M_COUNT; i++) {
         int m = MACHINE_ORDER[i];
         benchSetupEngine(E, m);
@@ -124,13 +125,21 @@ static void benchAudio() {
         bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f %9.2f%%%s\n", nm, r.load, r.peak, r.lvl, r.voices, per, r.bad ? "  NAN!" : "");
         if (per > worstEng) { worstEng = per; worstM = m; }
     }
-    buildDemo(E); E.songOn = true; E.songStart(0);
-    r = benchRender(E, 6.0);
-    E.songOn = false;
-    bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f\n", "DEMO-SONG (realistisch)", r.load, r.peak, r.lvl, r.voices);
-    benchSetupWorst(E);
-    r = benchRender(E, 4.0);
-    bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f%s\n", "WORST CASE (alles an)", r.load, r.peak, r.lvl, r.voices, r.bad ? "  NAN!" : "");
+    int thr = E.helperReady() ? 2 : 1;
+    for (int k = 1; k <= thr; k++) {   // realistischer Song und Worst Case mit 1 und (falls vorhanden) 2 Kernen
+        E.audioThreads = k;
+        char nm[48];
+        buildDemo(E); E.songOn = true; E.songStart(0);
+        r = benchRender(E, 6.0);
+        E.songOn = false;
+        snprintf(nm, sizeof nm, "DEMO-SONG, %d KERN%s", k, k > 1 ? "E" : "");
+        bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f\n", nm, r.load, r.peak, r.lvl, r.voices);
+        benchSetupWorst(E);
+        r = benchRender(E, 4.0);
+        snprintf(nm, sizeof nm, "WORST CASE, %d KERN%s", k, k > 1 ? "E" : "");
+        bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f%s\n", nm, r.load, r.peak, r.lvl, r.voices, r.bad ? "  NAN!" : "");
+    }
+    E.audioThreads = thr;
     bout("  -> teuerste Engine je Stimme: %s (%.2f%%). Reserve im Worst Case: %.0f%% eines Kerns\n", MACHINE_NAMES[worstM], worstEng, 100.0 - r.load);
     if (r.peak > 80) bout("  !! einzelne Bloecke brauchen >80%% des Budgets: Knackser bei kleinem Puffer moeglich\n");
 }

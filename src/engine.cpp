@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stddef.h>
+#include <unistd.h>
+#include <sched.h>
 
 static float SINT[2049];
 // Wavetables: 4 Tabellen x 32 Frames x 256 Samples (beim Start berechnet)
@@ -862,7 +864,52 @@ void Reverb::process(float in, float size, float damp, float& oL, float& oR) {
 
 // ---------------------------------------------------------------- Engine
 
+static inline void flushDenormals();
+// naechste Stimme des Blocks 'tag' abholen (beide Threads); false = Block vorbei oder alles vergeben
+bool Engine::wkClaimOne(uint32_t tag, int& idx) {
+    uint32_t c = __atomic_load_n(&wkClaim, __ATOMIC_ACQUIRE);
+    for (;;) {
+        if ((c >> 16) != tag || (c & 0xFFFF) == 0xFFFF || (int)(c & 0xFFFF) >= __atomic_load_n(&wkN, __ATOMIC_RELAXED)) return false;
+        if (__atomic_compare_exchange_n(&wkClaim, &c, c + 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { idx = (int)(c & 0xFFFF); return true; }
+    }
+}
+
+void* Engine::wkMain(void* arg) {
+    Engine* E = (Engine*)arg;
+    int seen = 0;
+    for (;;) {
+        // naechsten Block abwarten: kurz aktiv (Bloecke eines Puffers folgen dicht), sonst schlafen
+        int spins = 0;
+        while (__atomic_load_n(&E->wkGoSeq, __ATOMIC_ACQUIRE) == seen) {
+            if (++spins < 20000) { __asm__ __volatile__("" ::: "memory"); continue; }
+            __atomic_store_n(&E->wkSleeping, 1, __ATOMIC_SEQ_CST);
+            if (__atomic_load_n(&E->wkGoSeq, __ATOMIC_SEQ_CST) == seen) while (sem_wait(&E->wkGo) != 0) {}
+            __atomic_store_n(&E->wkSleeping, 0, __ATOMIC_SEQ_CST);
+            spins = 0;
+        }
+        seen = __atomic_load_n(&E->wkGoSeq, __ATOMIC_ACQUIRE);
+        flushDenormals();
+        uint32_t tag = (uint32_t)seen & 0xFFFF;
+        int idx;
+        while (E->wkClaimOne(tag, idx)) {   // so viele Stimmen wie moeglich mitrechnen (Puffer vom Audio-Thread geleert)
+            int n = E->wkNs;
+            Voice& v = *E->wkList[idx].v;
+            v.update(n, (float)E->sr, E->proj.bpm);
+            if (E->wkList[idx].key) v.render(E->wKL, E->wKR, E->wD, E->wRV, n, (float)E->sr);
+            else v.render(E->wL, E->wR, E->wD, E->wRV, n, (float)E->sr);
+            __atomic_add_fetch(&E->wkDone, 1, __ATOMIC_RELEASE);
+        }
+    }
+    return nullptr;
+}
+
 void Engine::init(int sampleRate) {
+    if (!wkOn) {   // zweiter Audio-Kern (einmalig)
+        long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+        const char* env = getenv("GB_AUDIO_THREADS");
+        if (cpus >= 2 && !(env && atoi(env) == 1) && sem_init(&wkGo, 0, 0) == 0
+            && pthread_create(&wkThread, nullptr, wkMain, this) == 0) { wkOn = true; audioThreads = 2; }
+    }
     buildWavetables();
     for (int i = 0; i <= 2048; i++) SINT[i] = sinf(i / 2048.f * 6.2831853f);
     initFx(sampleRate);
@@ -1449,19 +1496,51 @@ void Engine::render(float* out, int frames) {
 void Engine::processBlock(float* out, int n) {
     float L[32] = {0}, R[32] = {0}, D[32] = {0}, RV[32] = {0}, KL[32] = {0}, KR[32] = {0};   // = BLK in render()
     int key = (int)proj.cmp[CM_SRC] - 1;   // -1 = intern (Summe), sonst Sidechain-Spur
+    // klingende Stimmen sammeln; bei spuerbarer Last rechnet ein zweiter Kern mit (beide holen sich Stimmen ab,
+    // der Audio-Thread wartet nie auf einen schlafenden Helfer, hoechstens auf dessen laufende Stimme)
+    static const float WEIGHT[M_COUNT] = {1.9f, 2.3f, 2.f, 1.7f, 2.3f, 3.2f, 1.7f, 1.8f, 1.6f, 1.9f, 2.5f, 1.8f, 2.1f};
+    int nAct = 0; float tot = 0.f;
+    WkItem* act = wkList;
     for (int t = 0; t < NTRACKS; t++) {
-        if (!v[t].active) continue;
-        v[t].update(n, (float)sr, proj.bpm);
-        if (t == key) v[t].render(KL, KR, D, RV, n, (float)sr);
-        else v[t].render(L, R, D, RV, n, (float)sr);
+        if (v[t].active) { act[nAct].v = &v[t]; act[nAct].key = t == key; nAct++; tot += WEIGHT[v[t].machine % M_COUNT]; }
+        for (int k = 0; k < NCHORDV; k++) if (cv[t][k].active) { act[nAct].v = &cv[t][k]; act[nAct].key = t == key; nAct++; tot += WEIGHT[cv[t][k].machine % M_COUNT]; }
     }
-    for (int t = 0; t < NTRACKS; t++)   // Akkord-Zusatzstimmen
-        for (int k = 0; k < NCHORDV; k++) {
-            Voice& c = cv[t][k];
-            if (!c.active) continue;
-            c.update(n, (float)sr, proj.bpm);
-            if (t == key) c.render(KL, KR, D, RV, n, (float)sr); else c.render(L, R, D, RV, n, (float)sr);
+    bool split = wkOn && audioThreads > 1 && nAct >= 2 && tot >= 8.f;
+    if (!split) {
+        for (int i = 0; i < nAct; i++) {
+            Voice& vc = *act[i].v;
+            vc.update(n, (float)sr, proj.bpm);
+            if (act[i].key) vc.render(KL, KR, D, RV, n, (float)sr); else vc.render(L, R, D, RV, n, (float)sr);
         }
+    } else {
+        if (!wkPrioSet) {   // Helfer bekommt die Prioritaet des Audio-Threads
+            wkPrioSet = true;
+            int pol; struct sched_param sp;
+            if (pthread_getschedparam(pthread_self(), &pol, &sp) == 0) pthread_setschedparam(wkThread, pol, &sp);
+        }
+        for (int i = 0; i < n; i++) wL[i] = wR[i] = wD[i] = wRV[i] = wKL[i] = wKR[i] = 0.f;
+        __atomic_store_n(&wkN, nAct, __ATOMIC_RELAXED); wkNs = n;
+        __atomic_store_n(&wkDone, 0, __ATOMIC_RELAXED);
+        int seq = wkGoSeq + 1;
+        uint32_t tag = (uint32_t)seq & 0xFFFF;
+        __atomic_store_n(&wkClaim, tag << 16, __ATOMIC_RELEASE);
+        __atomic_store_n(&wkGoSeq, seq, __ATOMIC_SEQ_CST);
+        if (__atomic_load_n(&wkSleeping, __ATOMIC_SEQ_CST)) sem_post(&wkGo);
+        int idx, mineN = 0;
+        while (wkClaimOne(tag, idx)) {
+            Voice& vc = *act[idx].v;
+            vc.update(n, (float)sr, proj.bpm);
+            if (act[idx].key) vc.render(KL, KR, D, RV, n, (float)sr); else vc.render(L, R, D, RV, n, (float)sr);
+            mineN++;
+        }
+        __atomic_store_n(&wkClaim, (tag << 16) | 0xFFFF, __ATOMIC_RELEASE);   // Block schliessen
+        int helper = nAct - mineN;
+        if (helper > 0) {
+            while (__atomic_load_n(&wkDone, __ATOMIC_ACQUIRE) < helper) { __asm__ __volatile__("" ::: "memory"); }
+            for (int i = 0; i < n; i++) { L[i] += wL[i]; R[i] += wR[i]; D[i] += wD[i]; RV[i] += wRV[i]; KL[i] += wKL[i]; KR[i] += wKR[i]; }
+            wkBlocks++;
+        }
+    }
     // Kompressor-Parameter
     float cThr = cmpThrDb(proj.cmp[CM_THR]);
     float cSlope = 1.f - 1.f / CMP_RATIOS[proj.cmp[CM_RAT] > 8 ? 8 : proj.cmp[CM_RAT]];

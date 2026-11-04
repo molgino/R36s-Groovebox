@@ -78,8 +78,8 @@ static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2};
 static bool intMuted = false;   // interne Ausgabe stumm, weil USB-Audio laeuft
 static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
@@ -141,6 +141,7 @@ static void loadSettings() {
         else if (!strcmp(line, "usb_volume")) cfg.usbVol = clampi(atoi(v), 0, 100);
         else if (!strcmp(line, "internal_on_usb")) cfg.intUsb = atoi(v) != 0;
         else if (!strcmp(line, "hw_volume")) cfg.hwVol = clampi(atoi(v), 0, 100);
+        else if (!strcmp(line, "audio_cores")) cfg.cores = clampi(atoi(v), 1, 2);
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
@@ -148,8 +149,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -2944,7 +2945,7 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
 
 enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_CLRTRK, SI_TMPL, SI_MUTATE, SI_UNDO, SI_REDO, SI_DEMO,
-    SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
+    SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
     SI_H_SYS, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
@@ -3008,6 +3009,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else snprintf(v, vn, "%d  (%.1f ms)", BUF_SIZES[cfg.buf], BUF_SIZES[cfg.buf] * 1000.f / eng.sr);
         break;
     case SI_VOL: snprintf(l, ln, "Lautstärke"); snprintf(v, vn, "%d", eng.proj.mst[MS_VOL]); break;
+    case SI_CORES: snprintf(l, ln, "Audio-Rechenkerne"); snprintf(v, vn, "%s", eng.audioThreads > 1 ? "2 (schneller)" : (cfg.cores > 1 ? "1 (nur ein Kern verfügbar)" : "1")); break;
     case SI_H_MIDI: snprintf(l, ln, "MIDI"); break;
     case SI_MIN: snprintf(l, ln, "MIDI-Eingang"); snprintf(v, vn, "%s", cfg.midiIn ? "AN" : "AUS"); break;
     case SI_NOUT: snprintf(l, ln, "Noten ausgeben"); snprintf(v, vn, "%s", cfg.notesOut ? "AN (Spur = Kanal)" : "AUS"); break;
@@ -3077,6 +3079,7 @@ static void setChange(int i, int d) {
         m[MS_SCALE] = (uint8_t)scaleCombine(scaleType(m[MS_SCALE]), m[MS_ROOT]);
     } break;
     case SI_VOL: eng.proj.mst[MS_VOL] = (uint8_t)clampi(eng.proj.mst[MS_VOL] + d, 0, 127); break;
+    case SI_CORES: cfg.cores = cfg.cores > 1 ? 1 : 2; lockA(); eng.audioThreads = eng.helperReady() && cfg.cores > 1 ? 2 : 1; unlockA(); saveSettings(); break;
     case SI_OUT: {
         refreshDevices();
         int k = clampi(devIndex() + (d > 0 ? 1 : -1), 0, devCount);
@@ -3798,6 +3801,14 @@ static void midiOutHook(uint8_t st, uint8_t d1, uint8_t d2, int off) {
 }
 
 static void audioCb(void*, Uint8* stream, int len) {
+    static bool rtTried = false;
+    if (!rtTried) {   // Audio-Thread (und damit der Helfer-Kern) mit Echtzeit-Prioritaet, wenn erlaubt (Groovebox-OS: root)
+        rtTried = true;
+        struct sched_param sp; sp.sched_priority = 70;
+        int pol; struct sched_param cur;
+        if (pthread_getschedparam(pthread_self(), &pol, &cur) == 0 && pol == SCHED_OTHER)
+            printf("Audio-Thread Echtzeit-Prioritaet: %s\n", pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0 ? "ja" : "nein");
+    }
     Uint64 t0 = SDL_GetPerformanceCounter();
     int frames = len / (int)(sizeof(float) * 2);
     cbTime = midiNow();
@@ -4163,6 +4174,8 @@ int main(int argc, char** argv) {
     refreshDevices();
     for (int i = 0; i < devCount; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, devNames[i]);
     eng.init(44100);
+    eng.audioThreads = eng.helperReady() && cfg.cores > 1 ? 2 : 1;
+    printf("Audio-Rechenkerne: %d\n", eng.audioThreads);
     bool firstRun = true;
     for (int i = 0; i < 32; i++) if (songExists(i)) firstRun = false;
     if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);

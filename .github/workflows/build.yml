@@ -44,6 +44,8 @@ jobs:
           sudo apt-get install -y -qq libsdl2-dev libasound2-dev
       - name: Unit-Tests (Sanitizer)
         run: make test SAN=1
+      - name: Mehrkern-Audio (ThreadSanitizer)
+        run: make test-tsan
       - name: UI-Tests + Stresstest (Sanitizer)
         run: |
           make clean

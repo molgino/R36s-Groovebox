@@ -29,7 +29,7 @@ OBJ = $(SRC:.cpp=.o)
 OUT ?= groovebox
 
 $(OUT): $(OBJ)
-	$(CC_LINK) $(LDFLAGS) -o $@ $(OBJ) $(SDL_LIBS) $(LIBS) -lasound -lm
+	$(CC_LINK) $(LDFLAGS) -o $@ $(OBJ) $(SDL_LIBS) $(LIBS) -lasound -lm -lpthread
 
 src/%.o: src/%.cpp src/*.h src/*.inc
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -38,12 +38,15 @@ r36s:
 	./tools/cross-build.sh
 
 clean:
-	rm -f $(OBJ) groovebox groovebox-aarch64 tests/unit
+	rm -f $(OBJ) groovebox groovebox-aarch64 tests/unit tests/unit-tsan
 .PHONY: clean r36s
 
-# Tests: make test (SAN=1 -> AddressSanitizer + UBSan)
+# Tests: make test (SAN=1 -> AddressSanitizer + UBSan), make test-tsan (ThreadSanitizer: Mehrkern-Audio)
 tests/unit: tests/unit.cpp src/engine.cpp src/samples.cpp src/*.h
-	$(CXX) $(filter-out -O2,$(CXXFLAGS)) -O2 $(TFLAGS) -Isrc -o $@ tests/unit.cpp src/engine.cpp src/samples.cpp $(TFLAGS) -lm $(if $(TFLAGS),-lstdc++,)
+	$(CXX) $(filter-out -O2,$(CXXFLAGS)) -O2 $(TFLAGS) -Isrc -o $@ tests/unit.cpp src/engine.cpp src/samples.cpp $(TFLAGS) -lm -lpthread $(if $(TFLAGS),-lstdc++,)
 test: tests/unit
 	./tests/unit samples
-.PHONY: test
+test-tsan:
+	$(CXX) -O1 -g -fsanitize=thread -DWITH_MIDI -fno-exceptions -fno-rtti -Isrc -o tests/unit-tsan tests/unit.cpp src/engine.cpp src/samples.cpp -lm -lpthread
+	TSAN_OPTIONS=halt_on_error=1 ./tests/unit-tsan samples
+.PHONY: test test-tsan

@@ -273,6 +273,36 @@ static void testSaveLoad() {
     remove(path);
 }
 
+static Engine MC[2];   // zwei frische Engines: gleicher Startzustand, 1 bzw. 2 Kerne
+static void testMultiCore() {
+    curTest = "Mehrkern";
+    static float out[2][44100 * 2];
+    static const int ms[NTRACKS] = {M_SYNTH, M_WTBL, M_FM, M_GRAN, M_SYNTH, M_SAMPLE, M_FM, M_SNARE};
+    for (int k = 0; k < 2; k++) {
+        Engine& X = MC[k];
+        X.init(44100);
+        if (k && !X.helperReady()) { printf("  Mehrkern: nur ein Kern verfuegbar - uebersprungen\n"); return; }
+        X.audioThreads = k ? 2 : 1;
+        X.defaultProject(false);
+        X.proj.bpm = 150;
+        Pattern& P = X.proj.pat[0];
+        for (int t = 0; t < NTRACKS; t++) {
+            Engine::initTrack(P, t, ms[t]);
+            for (int s = 0; s < 16; s++) P.s[t][s].on = 1;
+            P.p[t][P_LEN] = 100; P.p[t][P_ITYP] = (uint8_t)(1 + t % 6); P.p[t][P_IMIX] = 100;
+            if (t < 3) { P.p[t][P_AMOD] = ARP_CHORD; P.p[t][P_ACHD] = 5; }
+        }
+        X.proj.cmp[CM_SRC] = 3; X.proj.cmp[CM_THR] = 40;   // Sidechain-Spur kann auf beiden Kernen landen
+        X.start();
+        for (int i = 0; i < 44100; i += 256) X.render(out[k] + i * 2, 44100 - i < 256 ? 44100 - i : 256);
+    }
+    float md = 0; for (int i = 0; i < 44100 * 2; i++) { float d = fabsf(out[0][i] - out[1][i]); if (d > md) md = d; }
+    printf("  Mehrkern: %ld Bloecke zweikernig, max. Abweichung %.2e\n", MC[1].wkBlocks, md);
+    CHECK(MC[1].wkBlocks > 0, "zweiter Kern hat nie mitgerechnet");
+    CHECK(MC[0].wkBlocks == 0, "1-Kern-Modus hat trotzdem aufgeteilt");
+    CHECK(md < 1e-4f, "1 Kern und 2 Kerne klingen verschieden (%.2e)", md);
+}
+
 static void testDeterminism() {
     curTest = "Reproduzierbarkeit";
     static float a[44100 * 2], b[44100 * 2];
@@ -303,6 +333,7 @@ int main(int argc, char** argv) {
     testDecay();
     testSaveLoad();
     testDeterminism();
+    testMultiCore();
     printf("%s: %d Pruefungen ok, %d Fehler\n", nFail ? "FEHLGESCHLAGEN" : "OK", nPass, nFail);
     return nFail ? 1 : 0;
 }
