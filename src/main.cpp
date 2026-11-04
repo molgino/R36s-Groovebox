@@ -11,6 +11,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <ctype.h>
 #include <time.h>
 #include <sys/mman.h>
 #include "engine.h"
@@ -66,7 +67,7 @@ static int pageClipStore = -1, pageClipMachine = 0, pageClipTrack = 0, pageClipL
 static Pattern mutUndo;            // Pattern vor der letzten Mutation
 static bool haveMutUndo = false;
 static int mutAmt = 1, mutPat = 0;
-static int prjSel = 0, presetSel = 0, mixRow = 0;
+static int mixRow = 0;
 static const uint8_t MIX_P[4] = {P_VOL, P_PAN, P_DLY, P_REV};
 static const char* const MIX_NAMES[4] = {"VOL", "PAN", "DLY", "REV"};
 static bool menuOpen = false; static int menuSel = 0;
@@ -77,12 +78,13 @@ static volatile float cpuLoad = 0;
 static volatile double audGapMax = 0, audWorkMax = 0;   // Audio-Diagnose (ms) seit der letzten Log-Zeile
 static volatile int audLate = 0, audLateTotal = 0;     // verspaetete/zu lange Audio-Aufrufe
 static char basePath[512] = "./", cfgPath[600], projPath[600];
+int g_lang = 0;                    // Sprache (settings.cfg language: 0 de, 1 en)
 static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (USB, Lernmodus, Audio-Geraet)
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang; char project[64]; };
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, ""};
 static bool intMuted = false;   // interne Ausgabe stumm, weil USB-Audio laeuft
 static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
@@ -149,7 +151,9 @@ static void loadSettings() {
         else if (!strcmp(line, "midi_clock")) cfg.clk = clampi(atoi(v), 0, 2);
         else if (!strcmp(line, "midi_channels")) cfg.chm = atoi(v) != 0;
         else if (!strcmp(line, "usb_mode")) cfg.usb = clampi(atoi(v), 0, 2);
-        else if (!strcmp(line, "song")) cfg.song = clampi(atoi(v), 0, 31);
+        else if (!strcmp(line, "song")) { cfg.song = clampi(atoi(v), 0, 31); if (!cfg.project[0]) snprintf(cfg.project, sizeof cfg.project, "song%02d", cfg.song + 1); }   // alte Einstellung (Platz)
+        else if (!strcmp(line, "project")) snprintf(cfg.project, sizeof cfg.project, "%s", v);
+        else if (!strcmp(line, "language")) { cfg.lang = clampi(atoi(v), 0, 1); g_lang = cfg.lang; }
         else if (!strcmp(line, "usb_audio")) cfg.usbAudio = atoi(v) != 0;
         else if (!strcmp(line, "pc_in")) cfg.pcIn = atoi(v) != 0;
         else if (!strcmp(line, "usb_volume")) cfg.usbVol = clampi(atoi(v), 0, 100);
@@ -163,8 +167,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nproject %s\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.project);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -837,8 +841,6 @@ static void drawHeader() {
     if (mr) rrect(629, 37 - mr, 6, mr, 2, eng.peakR > 0.95f ? C_TRIG : C_GREEN);
 }
 
-static bool songExists(int i);
-static bool presetExists(int m, int i);
 
 // Wert + Anzeige eines Reglers der aktuellen Seite ermitteln
 static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, char* label, int ln) {
@@ -848,14 +850,16 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         d = MST_DEFS[k];
         val = k == MS_BPM ? eng.proj.bpm : eng.proj.mst[k];
     } else if (page == PG_PRJ) {
-        static const ParamDef PRJ_DEFS[8] = {
-            {"SONG", K_SLOT, 0, 31}, {"LADEN", K_ACT, 0, 0}, {"SPEICHERN", K_ACT, 0, 0}, {"NEU", K_ACT, 0, 0},
-            {"PRESET", K_SLOT, 0, 31 + NFACTORY}, {"P.LADEN", K_ACT, 0, 0}, {"P.SPEICHERN", K_ACT, 0, 0}, {"INIT", K_ACT, 0, 0}};
-        d = PRJ_DEFS[k];
-        val = k == 0 ? prjSel : (k == 4 ? presetSel : 0);
-        if (k == 0) snprintf(label, ln, "SONG %02d %s", prjSel + 1, prjSel == cfg.song ? "(AKTIV)" : (songExists(prjSel) ? "" : "(LEER)"));
-        if (k == 4 && presetSel >= 32) snprintf(label, ln, "W:%.16s", FACTORY[presetSel - 32].name);
-        else if (k == 4) snprintf(label, ln, "%s %02d%s", MACHINE_NAMES[P.machine[track]], presetSel + 1, presetExists(P.machine[track], presetSel) ? "" : " (LEER)");
+        static const ParamDef PRJ_DE[8] = {
+            {"LADEN...", K_ACT, 0, 0}, {"SPEICHERN", K_ACT, 0, 0}, {"SPEICH. ALS", K_ACT, 0, 0}, {"NEU...", K_ACT, 0, 0},
+            {"SOUND LADEN", K_ACT, 0, 0}, {"SOUND SPEICH.", K_ACT, 0, 0}, {"INIT SOUND", K_ACT, 0, 0}, {"DEMO-SONG", K_ACT, 0, 0}};
+        static const ParamDef PRJ_EN[8] = {
+            {"LOAD...", K_ACT, 0, 0}, {"SAVE", K_ACT, 0, 0}, {"SAVE AS...", K_ACT, 0, 0}, {"NEW...", K_ACT, 0, 0},
+            {"LOAD SOUND", K_ACT, 0, 0}, {"SAVE SOUND", K_ACT, 0, 0}, {"INIT SOUND", K_ACT, 0, 0}, {"DEMO SONG", K_ACT, 0, 0}};
+        d = g_lang ? PRJ_EN[k] : PRJ_DE[k];
+        val = 0;
+        if (k == 1) snprintf(label, ln, "%.18s", cfg.project);                      // aktuelles Projekt unter SPEICHERN
+        if (k == 5 || k == 6) snprintf(label, ln, "%s %d", MACHINE_NAMES[P.machine[track] % M_COUNT], track + 1);
     } else if (page == PG_MIX) {
         d = PDEF_NONE;
         val = 0;
@@ -2119,7 +2123,7 @@ static void drawKnobs() {
                 float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
                 rrect(cx - 54, cy - 18, 108, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
                 textC(cx, cy - 8, d.name, sel ? C_BG : C_TEXT);
-                textC(cx, y + 70, sel ? "A = START" : "", C_DIM);
+                textC(cx, y + 70, sel ? TR("A = START", "A = GO") : label, sel ? C_DIM : C_TEXT);
                 continue;
             }
             Col kc = trackPage(page) ? tc : C_ACC;
@@ -2243,7 +2247,7 @@ static void drawSteps() {
     else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN  LANG = LOCK-MODUS";
     else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE";
     else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
-    else if (page == PG_PRJ) h = "[L-STICK]WÄHLEN [R-STICK^v]PLATZ [A/X]AUSFÜHREN [SEL]MENÜ";
+    else if (page == PG_PRJ) h = TR("[L-STICK]WÄHLEN [A]AUSFÜHREN [SEL]MENÜ", "[L-STICK]SELECT [A]RUN [SEL]MENU");
     else h = "[A]TRIG [B]HÖR [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE";
     hint(6, 452, h, C_ACC, C_DIM);
 }
@@ -2539,6 +2543,9 @@ static void drawLive() {
     hint(6, 452, "[STEUERKREUZ/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PATTERN [R-ST]DJ [SEL]MENÜ", C_ACC, C_DIM);
 }
 
+static bool fbOpen, kbOpen;
+static void drawBrowser();
+static void drawKeyboard();
 static void drawSettings();
 static void drawSong();
 static void drawDrive();
@@ -2555,6 +2562,8 @@ static void drawAll(bool help) {
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
     if (menuOpen) drawMenu();
+    if (fbOpen) drawBrowser();
+    if (kbOpen) drawKeyboard();
     if (confirmOpen) drawConfirm();
     if (driveOn) drawDrive();
     for (int y = 0; y < SH; y += 3) fill(0, y, SW, 1, C_DARK, 26);   // leichte Scanlines (Röhren-Look)
@@ -2692,11 +2701,7 @@ static void editValue(int delta) {
         curP().p[track][idx] = (uint8_t)clampi(curP().p[track][idx] + delta, 0, 127);
         return;
     }
-    if (page == PG_PRJ) {
-        if (slot == 0) prjSel = clampi(prjSel + delta, 0, 31);
-        else if (slot == 4) presetSel = clampi(presetSel + delta, 0, 31);
-        return;
-    }
+    if (page == PG_PRJ) return;   // nur Schaltflaechen
     if (page == PAGE_SYS) {
         int d = delta > 0 ? 1 : -1;
         switch (slot) {
@@ -2807,34 +2812,17 @@ static int curMax() {
 
 // ---------------------------------------------------------------- Projekte, Presets, Abfragen
 
-enum { ACT_LOAD = 1, ACT_SAVE, ACT_NEW, ACT_PSAVE, ACT_INIT, ACT_PASTE, ACT_CLEARPAT, ACT_QUIT, ACT_CLEARTRK, ACT_DEMO };
+enum { ACT_LOAD = 1, ACT_SAVE, ACT_NEW, ACT_PSAVE, ACT_INIT, ACT_PASTE, ACT_CLEARPAT, ACT_QUIT, ACT_CLEARTRK, ACT_DEMO,
+       ACT_SAVEAS, ACT_NEWNAME, ACT_PSAVENAME, ACT_LOADNAME };
 
-static void songPath(int i, char* out, int n) { snprintf(out, n, "%sprojects/song%02d.gbx", basePath, i + 1); }
 static bool fileExists(const char* p) { struct stat st; return stat(p, &st) == 0; }
-static bool songExists(int i) { char p[700]; songPath(i, p, sizeof p); return fileExists(p); }
-static void presetPath(int m, int i, char* out, int n) { snprintf(out, n, "%spresets/%s/%02d.gbp", basePath, MACHINE_NAMES[m], i + 1); }
-static bool presetExists(int m, int i) { char p[700]; presetPath(m, i, p, sizeof p); return fileExists(p); }
 
 static void askConfirm(int act, int arg, const char* fmt, ...) {
     va_list ap; va_start(ap, fmt); vsnprintf(confirmText, sizeof confirmText, fmt, ap); va_end(ap);
     confirmAct = act; confirmArg = arg; confirmOpen = true;
 }
 
-static bool savePreset(int t, int i) {
-    int m = curP().machine[t];
-    char d[700];
-    snprintf(d, sizeof d, "%spresets", basePath); mkdir(d, 0755);
-    snprintf(d, sizeof d, "%spresets/%s", basePath, MACHINE_NAMES[m]); mkdir(d, 0755);
-    char p[700]; presetPath(m, i, p, sizeof p);
-    FILE* f = fopen(p, "wb");
-    if (!f) return false;
-    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 2, 0};   // [6]: 1 Filtertypen FT_*, 2 Huellkurvenform
-    bool ok = fwrite(hdr, 8, 1, f) == 1 && fwrite(curP().p[t], NPARAMS, 1, f) == 1;
-    fclose(f);
-    return ok;
-}
-static int loadPreset(int t, int m, int i) {   // 1 ok, 0 leer, -1 Fehler
-    char p[700]; presetPath(m, i, p, sizeof p);
+static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
     FILE* f = fopen(p, "rb");
     if (!f) return 0;
     uint8_t hdr[8], prm[NPARAMS];
@@ -2853,44 +2841,23 @@ static int loadPreset(int t, int m, int i) {   // 1 ok, 0 leer, -1 Fehler
     return 1;
 }
 
-static void doLoadSong(int i) {
-    char p[700]; songPath(i, p, sizeof p);
-    if (!fileExists(p)) { toast("SONG %02d IST LEER", i + 1); return; }
-    lockA(); eng.stop(); bool ok = eng.load(p); unlockA();
-    if (!ok) { toast("LADEN FEHLGESCHLAGEN"); return; }
-    snprintf(projPath, sizeof projPath, "%s", p);
-    memcpy(&lastSaved, &eng.proj, sizeof(Project));
-    cfg.song = i; saveSettings();
-    toast("SONG %02d GELADEN", i + 1);
-}
-static void doSaveSong(int i) {
-    songPath(i, projPath, sizeof projPath);
-    cfg.song = i; saveSettings();
-    toast(saveProject() ? "IN SONG %02d GESPEICHERT" : "SPEICHERN FEHLGESCHLAGEN", i + 1);
-}
-static void doNewSong() {
-    int j = -1;
-    for (int i = 0; i < 32 && j < 0; i++) if (!songExists(i)) j = i;
-    if (j < 0) { toast("ALLE 32 PLÄTZE BELEGT"); return; }
-    lockA(); eng.stop(); eng.defaultProject(false); unlockA();
-    prjSel = j;
-    doSaveSong(j);
-    toast("NEUES PROJEKT: SONG %02d", j + 1);
-}
+#include "filedlg.inc"
+
 static void runAction(int act, int arg) {
     switch (act) {
-    case ACT_LOAD: doLoadSong(arg); break;
-    case ACT_SAVE: doSaveSong(arg); break;
-    case ACT_NEW: doNewSong(); break;
-    case ACT_DEMO: {
-        int j = -1;
-        for (int i = 0; i < 32 && j < 0; i++) if (!songExists(i)) j = i;
-        if (j < 0) { toast("ALLE 32 PLÄTZE BELEGT"); break; }
-        lockA(); eng.stop(); buildDemo(eng); eng.songOn = true; eng.songStart(0); unlockA();
-        prjSel = j; doSaveSong(j);
-        toast("DEMO 'NEON NIGHTS' ALS SONG %02d - START DRÜCKEN", j + 1);
+    case ACT_SAVEAS: doSaveProjectAs(pendingName); break;
+    case ACT_NEWNAME: doNewProject(pendingName); break;
+    case ACT_LOADNAME: doLoadProject(pendingName); break;
+    case ACT_PSAVENAME: {
+        char p[700]; presetFile(curP().machine[arg], pendingName, p, sizeof p);
+        toast(savePresetFile(arg, p) ? TR("SOUND GESPEICHERT: %s", "SOUND SAVED: %s") : TR("SPEICHERN FEHLGESCHLAGEN", "SAVING FAILED"), pendingName);
     } break;
-    case ACT_PSAVE: toast(savePreset(track, arg) ? "PRESET %02d GESPEICHERT" : "PRESET-FEHLER", arg + 1); break;
+    case ACT_DEMO: {
+        char nm[64]; freeProjectName("Neon Nights", nm, sizeof nm);
+        lockA(); eng.stop(); buildDemo(eng); eng.songOn = true; eng.songStart(0); unlockA();
+        doSaveProjectAs(nm);
+        toast(TR("DEMO '%s' GELADEN - START DRÜCKEN", "DEMO '%s' LOADED - PRESS START"), nm);
+    } break;
     case ACT_PASTE: lockA(); curP() = clip; unlockA(); toast("PATTERN EINGEFÜGT"); break;
     case ACT_CLEARTRK:
         lockA();
@@ -2912,37 +2879,19 @@ static void runAction(int act, int arg) {
     } break;
     }
 }
-static void prjTrigger(int k) {   // Aktions-Regler auf der PRJ-Seite ausloesen
-    int m = curP().machine[track];
+static void prjTrigger(int k) {   // Schaltflaechen der PRJ-Seite
     switch (k) {
-    case 1:
-        if (!songExists(prjSel)) toast("SONG %02d IST LEER", prjSel + 1);
-        else askConfirm(ACT_LOAD, prjSel, "SONG %02d LADEN? UNGESPEICHERTES GEHT VERLOREN", prjSel + 1);
-        break;
-    case 2:
-        if (songExists(prjSel) && cfg.song != prjSel) askConfirm(ACT_SAVE, prjSel, "SONG %02d ÜBERSCHREIBEN?", prjSel + 1);
-        else doSaveSong(prjSel);
-        break;
-    case 3: askConfirm(ACT_NEW, 0, "NEUES LEERES PROJEKT ANLEGEN?"); break;
-    case 5: {
-        if (presetSel >= 32) {   // Werksklang (setzt auch die Engine)
-            lockA(); applyFactory(curP(), track, presetSel - 32); unlockA();
-            toast("WERKSKLANG: %s", FACTORY[presetSel - 32].name);
-            break;
-        }
-        int r = loadPreset(track, m, presetSel);
-        if (r > 0) toast("%s %02d GELADEN", MACHINE_NAMES[m], presetSel + 1);
-        else toast(r == 0 ? "PRESET %02d IST LEER" : "PRESET %02d DEFEKT", presetSel + 1);
-    } break;
-    case 6:
-        if (presetSel >= 32) { toast("WERKSKLÄNGE SIND SCHREIBGESCHÜTZT - PLATZ 1-32 WÄHLEN"); break; }
-        if (presetExists(m, presetSel)) askConfirm(ACT_PSAVE, presetSel, "%s-PRESET %02d ÜBERSCHREIBEN?", MACHINE_NAMES[m], presetSel + 1);
-        else runAction(ACT_PSAVE, presetSel);
-        break;
-    case 7: askConfirm(ACT_INIT, 0, "KLANG VON SPUR %d ZURÜCKSETZEN?", track + 1); break;
+    case 0: openBrowser(FB_PROJECT); break;
+    case 1: toast(saveProject() ? TR("GESPEICHERT: %s", "SAVED: %s") : TR("SPEICHERN FEHLGESCHLAGEN", "SAVING FAILED"), cfg.project); break;
+    case 2: openKeyboard(KB_SAVEAS, cfg.project); break;
+    case 3: { char nm[64]; freeProjectName(TR("Projekt", "Project"), nm, sizeof nm); openKeyboard(KB_NEW, nm); } break;
+    case 4: openBrowser(FB_PRESET); break;
+    case 5: { char nm[48]; snprintf(nm, sizeof nm, "%s %d", MACHINE_NAMES[curP().machine[track] % M_COUNT], track + 1); openKeyboard(KB_PSAVE, nm); } break;
+    case 6: askConfirm(ACT_INIT, 0, TR("KLANG VON SPUR %d ZURÜCKSETZEN?", "RESET SOUND OF TRACK %d?"), track + 1); break;
+    case 7: askConfirm(ACT_DEMO, 0, TR("DEMO-SONG ALS NEUES PROJEKT ANLEGEN?", "CREATE DEMO SONG AS NEW PROJECT?")); break;
     }
 }
-static bool prjIsAction(int k) { return k == 1 || k == 2 || k == 3 || k >= 5; }
+static bool prjIsAction(int k) { return k >= 0 && k < 8; }
 
 // Stick-"Antippen": ein Schritt pro Auslenkung, beim Halten wiederholt
 static int flLX = 0, flLY = 0, flRX = 0; static Uint32 flLXt = 0, flLYt = 0, flRXt = 0;
@@ -3500,6 +3449,8 @@ static void handleInput(Uint32 now, float dt) {
         else if (I.pressed(BT_B) || I.pressed(BT_SELECT)) { confirmOpen = false; toast("ABGEBROCHEN"); }
         return;
     }
+    if (kbOpen) { kbInput(I, now); return; }
+    if (fbOpen) { fbInput(I, now); return; }
     if (menuOpen) { menuInput(I, now); return; }
     if (driveOn) { if (I.pressed(BT_A) || I.pressed(BT_START)) stopDrive(); return; }
     {   // rechter Stick: Achse beim Auslenken festlegen, erst in der Mitte wieder frei
@@ -3684,6 +3635,10 @@ static void handleInput(Uint32 now, float dt) {
         } else {
             int big = curMax() >= 100;
             int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
+            if (I.pressed(BT_X) && trackPage(page)) {   // Sample-Regler: X oeffnet den Explorer (mit Unterordnern)
+                ParamDef sd; int sv, sb; bool sl; char slab[24];
+                if (knobInfo(slot, sd, sv, sl, sb, slab, sizeof slab) && sd.kind == K_SMPL) { openBrowser(FB_SAMPLE); return; }
+            }
             if (I.repeat(BT_X, now, 300, 45)) editValue(mul);
             if (I.repeat(BT_Y, now, 300, 45)) editValue(-mul);
             float ry = rsAxis == 1 ? I.ry : 0.f;
@@ -3966,7 +3921,7 @@ int runDhcpd(const char* ifname);
 // Samples nach Upload neu laden: Bank im Hintergrund fuellen, kurz unter Audio-Sperre tauschen,
 // Sample-Nummern in allen Patterns ueber den Namen neu zuordnen
 static void reloadSamples() {
-    static char oldNames[MAX_SAMPLES][48];
+    static char oldNames[MAX_SAMPLES][96];
     int on = sampleCount();
     for (int i = 0; i < on; i++) snprintf(oldNames[i], 48, "%s", sampleName(i));
     char sdir[600];
@@ -4108,6 +4063,13 @@ int main(int argc, char** argv) {
         if (shotPage == 24) { page = PG_MST; slot = MS_SCALE; eng.proj.mst[MS_SCALE] = 1 + 1 * 12 + 9; eng.proj.mst[MS_ROOT] = 9; editSlot = MS_SCALE; editAt = 1; }
         if (shotPage == 25) { page = PG_AMP; menuOpen = true; menuSel = PG_FLT; pageClipStore = 2; pageClipTrack = 1; }
         if (getenv("GB_SHOT_FT")) { curP().p[4][P_FTYP] = (uint8_t)atoi(getenv("GB_SHOT_FT")); curP().p[4][P_RESO] = 90; slot = 2; }   // Filtertyp fuer Screenshots
+        if (shotPage >= 50 && shotPage <= 53) {   // Datei-Dialoge: 50 Tastatur, 51 Samples, 52 Projekte, 53 Sounds
+            page = PG_SRC; track = 7; slot = 0;
+            if (shotPage == 50) { page = PG_PRJ; openKeyboard(KB_SAVEAS, "Night Drive"); kbRow = 1; kbCol = 4; }
+            if (shotPage == 51) { openBrowser(FB_SAMPLE); if (fbN > 1) fbSel = 1; }
+            if (shotPage == 52) { page = PG_PRJ; openBrowser(FB_PROJECT); }
+            if (shotPage == 53) { page = PG_PRJ; track = 4; openBrowser(FB_PRESET); fbPick(); fbSel = 3; }
+        }
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
         lastPage = page;
@@ -4168,14 +4130,18 @@ int main(int argc, char** argv) {
 
     loadSettings();
     drmOutSetByteOffset(cfg.dispOff);
-    if (!projFromArg) {   // Projektplatz aus den Einstellungen; altes project1.gbx wird zu song01.gbx
+    bool firstRun = !anyProject();   // vor dem ersten Speichern pruefen
+    if (!projFromArg) {   // Projekt aus den Einstellungen (Name); altes project1.gbx wird zu song01.gbx
         char old[700], s1[700];
         snprintf(old, sizeof old, "%sprojects/project1.gbx", basePath);
-        songPath(0, s1, sizeof s1);
-        if (fileExists(old) && !fileExists(s1)) rename(old, s1);
-        songPath(cfg.song, projPath, sizeof projPath);
+        projectPath("song01", s1, sizeof s1);
+        if (fileExists(old) && !fileExists(s1)) { rename(old, s1); firstRun = false; }
+        if (!cfg.project[0]) snprintf(cfg.project, sizeof cfg.project, "%s", firstRun ? "Neon Nights" : "song01");
+        projectPath(cfg.project, projPath, sizeof projPath);
+    } else {   // --project DATEI: Name aus dem Dateinamen
+        const char* b = strrchr(projPath, '/'); b = b ? b + 1 : projPath;
+        snprintf(cfg.project, sizeof cfg.project, "%.*s", (int)(strcspn(b, ".")), b);
     }
-    prjSel = cfg.song;
     {
         char vp[700]; snprintf(vp, sizeof vp, "%sVERSION", basePath);
         FILE* vf = fopen(vp, "r");
@@ -4203,8 +4169,6 @@ int main(int argc, char** argv) {
     eng.init(44100);
     eng.audioThreads = eng.helperReady() && cfg.cores > 1 ? 2 : 1;
     printf("Audio-Rechenkerne: %d\n", eng.audioThreads);
-    bool firstRun = true;
-    for (int i = 0; i < 32; i++) if (songExists(i)) firstRun = false;
     if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);
     else if (firstRun) { buildDemo(eng); eng.songOn = true; eng.songStart(0); printf("Erster Start: Demo-Song angelegt\n"); }   // Einsteiger: sofort etwas zum Hoeren
     memcpy(&lastSaved, &eng.proj, sizeof(Project));
@@ -4212,7 +4176,8 @@ int main(int argc, char** argv) {
     eng.midiOut = midiOutHook;
     midiStart();
     openAudio();
-    toast(firstRun ? "WILLKOMMEN! START = DEMO ABSPIELEN, SELECT = MENÜ" : "%d SAMPLES GELADEN", sampleCount());
+    if (firstRun) toast(TR("WILLKOMMEN! START = DEMO ABSPIELEN, SELECT = MENÜ", "WELCOME! START = PLAY DEMO, SELECT = MENU"));
+    else toast(TR("%d SAMPLES GELADEN", "%d SAMPLES LOADED"), sampleCount());
     if (firstRun) msgUntil = SDL_GetTicks() + 6000;
     webStart(basePath);
     int webSeq = 0;

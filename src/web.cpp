@@ -1,6 +1,7 @@
 // Mini-Webserver: Samples und Projekte per Browser hochladen (PC-Modus: http://192.168.77.1)
 // Ein Thread, eine Verbindung nach der anderen. Nur Dateien unter samples/ und projects/.
 #include "web.h"
+#include "samples.h"
 #include "remote.h"
 #include <SDL.h>
 #include <stdio.h>
@@ -149,7 +150,7 @@ static void listDir(Buf& b, const char* dir, const char* sub, const char* ext, b
         struct stat st;
         if (stat(full, &st)) continue;
         if (S_ISDIR(st.st_mode)) {
-            if (depth < 1) {
+            if (depth < SAMPLE_DEPTH) {
                 if (folders) { if (!ffirst) bstr(*folders, ","); ffirst = false; bjson(*folders, rel); }
                 listDir(b, dir, rel, ext, first, depth + 1, folders, ffirst);
             }
@@ -178,13 +179,13 @@ static void handleList(int fd) {
     bstr(b, "],\"folders\":");
     bput(b, f.p, f.n);
     bstr(b, ",\"projects\":[");
-    listDir(b, pd, "", ".gbx", pf, 1, nullptr, dummy);
+    listDir(b, pd, "", ".gbx", pf, SAMPLE_DEPTH, nullptr, dummy);   // Projekte ohne Unterordner
     struct statvfs vs;
     long long freeB = statvfs(sd, &vs) == 0 ? (long long)vs.f_bavail * (long long)vs.f_frsize : -1;
     char ver[64] = "";
     { char vp[700]; snprintf(vp, sizeof vp, "%sVERSION", g_base); FILE* vf = fopen(vp, "r");
       if (vf) { if (fgets(ver, sizeof ver, vf)) ver[strcspn(ver, "\r\n\"\\")] = 0; fclose(vf); } }
-    snprintf(num, sizeof num, "],\"free\":%lld,\"max\":%d,\"os\":%s,\"version\":\"%s\"}", freeB, 128, isOS() ? "true" : "false", ver);
+    snprintf(num, sizeof num, "],\"free\":%lld,\"max\":%d,\"os\":%s,\"version\":\"%s\"}", freeB, (int)MAX_SAMPLES, isOS() ? "true" : "false", ver);
     bstr(b, num);
     reply(fd, 200, "application/json", b.p, b.n);
     free(b.p); free(f.p);
@@ -315,7 +316,7 @@ static void handle(int fd) {
     snprintf(full, sizeof full, "%s/%s", dir, rel);
 
     if (!strcmp(method, "GET") && !strcmp(target, "/api/file")) {
-        if (!safeRel(rel, isS ? 1 : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
+        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
         FILE* f = fopen(full, "rb");
         if (!f) { replyText(fd, 404, "nicht gefunden"); return; }
         fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
@@ -330,7 +331,7 @@ static void handle(int fd) {
         return;
     }
     if (!strcmp(method, "PUT") && !strcmp(target, "/api/upload")) {
-        if (!safeRel(rel, isS ? 1 : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Ungueltiger Dateiname"); return; }
+        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Ungueltiger Dateiname"); return; }
         int slotNo = 0;
         if (!isS && (sscanf(rel, "song%2d.gbx", &slotNo) != 1 || slotNo < 1 || slotNo > 32 || strlen(rel) != 10)) { replyText(fd, 400, "Projekte heissen songNN.gbx"); return; }
         if (clen <= 0 || clen > 200LL * 1024 * 1024) { replyText(fd, 413, "Datei zu gross (max. 200 MB)"); return; }
@@ -361,7 +362,7 @@ static void handle(int fd) {
         return;
     }
     if (!strcmp(method, "POST") && !strcmp(target, "/api/delete")) {
-        if (!safeRel(rel, isS ? 1 : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
+        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
         if (unlink(full)) { replyText(fd, 404, "nicht gefunden"); return; }
         const char* sl = strchr(rel, '/');   // leeren Ordner mit entfernen
         if (sl) { char sub[700]; snprintf(sub, sizeof sub, "%s/%.*s", dir, (int)(sl - rel), rel); rmdir(sub); }

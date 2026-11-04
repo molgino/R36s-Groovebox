@@ -5,6 +5,10 @@
 #include <math.h>
 
 // Speicher-Seiten je Spur (je 8 Parameter): 0 TRG, 1 SRC, 2 FLT, 3 AMP, 4 LFO1, 5 INS, 6 SRC2, 7 LFO2, 8 LFO3, 9 SEQ, 10 FLT2, 11 ARP
+// Sprache der Oberflaeche: 0 Deutsch, 1 English (definiert in main.cpp). TR waehlt den passenden Text.
+extern int g_lang;
+#define TR(de, en) (g_lang ? (en) : (de))
+
 enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 12, NPARAMS = NPAGES * 8, NLFO = 3 };
 // Oberflaechen-Seiten (Reihenfolge = Navigation). Spurseiten zuerst.
 enum UiPage { PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_SONG, PG_MST, PG_SYS, PG_LIVE, NUI_PAGES };
@@ -183,7 +187,7 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
     {{"ALGO", K_ALGO, 0, 7}, {"FBK", K_NUM, 0, 127}, {"RAT1", K_RATIO, 3, 15}, {"RAT2", K_RATIO, 5, 15},
      {"RAT3", K_RATIO, 3, 15}, {"RAT4", K_RATIO, 3, 15}, {"FINE", K_BIP, 64, 127}, {"NOIS", K_NUM, 0, 127}},
     // SAMPLE (END < STRT = rueckwaerts)
-    {{"SMPL", K_SMPL, 0, 127}, {"TUNE", K_SEMI, 24, 48}, {"FINE", K_BIP, 64, 127}, {"STRT", K_NUM, 0, 127},
+    {{"SMPL", K_SMPL, 0, 249}, {"TUNE", K_SEMI, 24, 48}, {"FINE", K_BIP, 64, 127}, {"STRT", K_NUM, 0, 127},
      {"END", K_NUM, 127, 127}, {"LOOP", K_OFFON, 0, 1}, {"GAIN", K_NUM, 64, 127}, PDEF_NONE},
     // TOM
     {{"TUNE", K_NUM, 50, 127}, {"DCAY", K_NUM, 70, 127}, {"SWEP", K_NUM, 40, 127}, {"NOIS", K_NUM, 30, 127},
@@ -198,10 +202,10 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
     {{"TABL", K_WTAB, 0, 3}, {"POS", K_NUM, 0, 127}, {"WARP", K_BIP, 64, 127}, {"DETN", K_NUM, 0, 127},
      {"SUB", K_NUM, 0, 127}, {"NOIS", K_NUM, 0, 127}, {"P.ENV", K_BIP, 64, 127}, {"GLID", K_NUM, 0, 127}},
     // CHOP (Sample in gleiche Scheiben, SLIC 0 = AUTO: Step-Nummer waehlt die Scheibe)
-    {{"SMPL", K_SMPL, 0, 127}, {"SLCS", K_NUM, 15, 63}, {"SLIC", K_SLICE, 0, 64}, {"TUNE", K_SEMI, 24, 48},
+    {{"SMPL", K_SMPL, 0, 249}, {"SLCS", K_NUM, 15, 63}, {"SLIC", K_SLICE, 0, 64}, {"TUNE", K_SEMI, 24, 48},
      {"FINE", K_BIP, 64, 127}, {"LEN", K_PCT, 100, 100}, {"REV", K_OFFON, 0, 1}, {"GAIN", K_NUM, 64, 127}},
     // GRAN
-    {{"SMPL", K_SMPL, 0, 127}, {"POS", K_NUM, 30, 127}, {"SPRY", K_NUM, 10, 127}, {"SIZE", K_NUM, 50, 127},
+    {{"SMPL", K_SMPL, 0, 249}, {"POS", K_NUM, 30, 127}, {"SPRY", K_NUM, 10, 127}, {"SIZE", K_NUM, 50, 127},
      {"DENS", K_NUM, 60, 127}, {"PTCH", K_SEMI, 24, 48}, {"P.SPR", K_NUM, 0, 127}, {"GAIN", K_NUM, 64, 127}},
 };
 

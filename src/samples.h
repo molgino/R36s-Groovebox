@@ -2,10 +2,10 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_SAMPLES = 128 };
+enum { MAX_SAMPLES = 250, SAMPLE_DEPTH = 3 };   // Unterordner bis 3 Ebenen tief
 
 struct Sample {
-    char name[48];   // z.B. "drums/kick-808"
+    char name[96];   // z.B. "drums/808/kick"
     float* data;     // mono
     int len;
     int rate;

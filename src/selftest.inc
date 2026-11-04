@@ -384,6 +384,57 @@ static void uiScenarios() {
     }
     curP().s[6][9].on = 0; curP().s[6][9].lock[P_VEL] = NO_LOCK;
 
+    uiCase = "Projekt speichern als";
+    simReset(); goPage(PG_PRJ); goSlot(2); tap(BT_A);
+    UCHECK(kbOpen, "SPEICH. ALS oeffnet keine Tastatur");
+    for (int i = 0; i < 40; i++) tap(BT_B);
+    tap(BT_A); tap(BT_RIGHT); tap(BT_A); tap(BT_DOWN); tap(BT_DOWN); tap(BT_A);   // "A", "b", dann Zeile 3 Spalte 2 = "1"
+    UCHECK(!strcmp(kbText, "Ab1"), "Tastatur-Text '%s' statt 'Ab1'", kbText);
+    tap(BT_START);
+    UCHECK(!kbOpen && projectExists("Ab1") && !strcmp(cfg.project, "Ab1"), "Projekt 'Ab1' nicht gespeichert (aktiv: %s)", cfg.project);
+
+    uiCase = "Projekt laden";
+    curP().s[5][5].on = 1; curP().s[5][5].lock[P_VEL] = 11;   // ungespeicherte Aenderung
+    simWait(900);
+    goSlot(0); tap(BT_A);
+    UCHECK(fbOpen && fbMode == FB_PROJECT, "LADEN oeffnet keinen Projekt-Explorer");
+    for (int i = 0; i < fbN; i++) if (!strcmp(fbEnt[i].name, "Ab1")) fbSel = i;
+    tap(BT_A);
+    UCHECK(confirmOpen, "keine Rueckfrage trotz ungespeicherter Aenderung");
+    tap(BT_A);
+    UCHECK(curP().s[5][5].lock[P_VEL] == NO_LOCK && !strcmp(cfg.project, "Ab1"), "Projekt nicht neu geladen");
+
+    uiCase = "Sound speichern/laden";
+    simReset(); goTrack(4); goPage(PG_PRJ); goSlot(5); tap(BT_A);
+    UCHECK(kbOpen && kbMode == KB_PSAVE, "SOUND SPEICH. oeffnet keine Tastatur");
+    for (int i = 0; i < 40; i++) tap(BT_B);
+    tap(BT_DOWN); tap(BT_LEFT); tap(BT_LEFT); tap(BT_LEFT); tap(BT_A);   // Zeile 2: von N dreimal links (Z, Y, X)
+    int freq0 = curP().p[4][P_FREQ];
+    tap(BT_START);
+    { char pp[700]; presetFile(curP().machine[4], "X", pp, sizeof pp); UCHECK(fileExists(pp), "Sound-Datei X fehlt"); }
+    curP().p[4][P_FREQ] = (uint8_t)(freq0 ^ 1);
+    goSlot(4); tap(BT_A);
+    UCHECK(fbOpen && fbMode == FB_PRESET, "SOUND LADEN oeffnet keinen Explorer");
+    for (int i = 0; i < fbN; i++) if (fbEnt[i].dir && fbEnt[i].idx == curP().machine[4]) fbSel = i;
+    tap(BT_A);
+    for (int i = 0; i < fbN; i++) if (!strcmp(fbEnt[i].name, "X")) fbSel = i;
+    tap(BT_A);
+    UCHECK(!fbOpen && curP().p[4][P_FREQ] == freq0, "Sound nicht geladen (FREQ %d statt %d)", curP().p[4][P_FREQ], freq0);
+
+    uiCase = "Sample-Explorer";
+    if (sampleCount() > 1) {
+        simReset(); goTrack(7); Engine::setMachine(curP(), 7, M_SAMPLE); goPage(PG_SRC); goSlot(0);
+        tap(BT_X);
+        UCHECK(fbOpen && fbMode == FB_SAMPLE, "X auf SMPL oeffnet keinen Explorer");
+        while (fbDir[0]) tap(BT_B);   // zur Wurzel
+        int dirs = 0; for (int i = 0; i < fbN; i++) dirs += fbEnt[i].dir;
+        UCHECK(dirs > 0, "keine Unterordner sichtbar");
+        fbSel = 0; tap(BT_A);   // in den ersten Ordner
+        int want = -1; for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir) { fbSel = i; want = fbEnt[i].idx; break; }
+        tap(BT_A);
+        UCHECK(!fbOpen && want >= 0 && curP().p[7][P_S0] == want, "Sample nicht gewaehlt (%d statt %d)", curP().p[7][P_S0], want);
+    }
+
     uiCase = "Pattern wechseln";
     simReset();
     combo(BT_SELECT, BT_RIGHT); UCHECK(eng.curPat == 1, "SELECT+Rechts: Pattern %d statt 2", eng.curPat + 1);
@@ -504,7 +555,8 @@ static int runSelftest(double stressSecs) {
     if (symlink(src, smp) != 0) {}
     snprintf(basePath, sizeof basePath, "%s", tmp);
     snprintf(cfgPath, sizeof cfgPath, "%sinput.cfg", tmp);
-    songPath(0, projPath, sizeof projPath);
+    snprintf(cfg.project, sizeof cfg.project, "Selbsttest");
+    projectPath(cfg.project, projPath, sizeof projPath);
     printf("UI-Szenarien\n");
     uiScenarios();
     uiTasks();
