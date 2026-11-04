@@ -39,4 +39,6 @@ const char* sampleLastError();      // Grund des letzten Lesefehlers
 
 // Tests/Benchmark: Bibliothek lesen und die ersten Dateien der Reihe nach in den Pool laden
 int samplesLoad(const char* dir);
-int libLegacyList(char (*out)[96], int max);   // Zuordnung alter Projekte (Nummer = Position)
+// Zuordnung alter Projekte (Nummer = Position): bis 11/2026 (1 Ebene) max 128, depth 1, cap 256;
+// danach (3 bzw. 8 Ebenen) max 250, depth SAMPLE_DEPTH, cap 500
+int libLegacyList(char (*out)[96], int max, int depth, int cap);

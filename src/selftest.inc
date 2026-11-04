@@ -462,16 +462,26 @@ static void uiScenarios() {
             UCHECK(sampleGet(s3) && !strcmp(sampleName(s3), want), "Sound: Sample '%s' statt '%s'", sampleName(s3), want);
             remove(pp);
         }
-        static char legacy[128][96];   // altes Projekt ohne Namensliste: Nummer = Position in der frueheren Liste
-        int ln = libLegacyList(legacy, 128);
-        if (ln > 1) {
-            curP().p[7][P_S0] = 1;
-            char lp[700]; projectPath("PoolAlt", lp, sizeof lp);
-            FILE* f = fopen(lp, "wb"); if (f) { fwrite(&eng.proj, sizeof(Project), 1, f); fclose(f); }
-            doLoadProject("PoolAlt");
-            int s4 = curP().p[7][P_S0];
-            UCHECK(sampleGet(s4) && !strcmp(sampleName(s4), legacy[1]), "altes Projekt: '%s' statt '%s'", sampleName(s4), legacy[1]);
-            remove(lp);
+        static char l1[128][96], l2[250][96];   // altes Projekt ohne Namensliste: Nummer = Position in der frueheren Liste
+        int n1 = libLegacyList(l1, 128, 1, 256), n2 = libLegacyList(l2, 250, SAMPLE_DEPTH, 500);
+        if (n1 > 1 && n2 > 1) {
+            for (int p = 0; p < NPATTERNS; p++) for (int t = 0; t < NTRACKS; t++) {
+                if (machineUsesSample(eng.proj.pat[p].machine[t] % M_COUNT)) eng.proj.pat[p].p[t][P_S0] = 1;
+                for (int s = 0; s < NSTEPS; s++) eng.proj.pat[p].s[t][s].lock[P_S0] = NO_LOCK;
+            }
+            for (int k = 0; k < 2; k++) {   // songNN = Zeit der 1-Ebenen-Liste, benannte Projekte = 250er-Liste
+                const char* nm = k ? "PoolAlt" : "song99";
+                char lp[700]; projectPath(nm, lp, sizeof lp);
+                FILE* f = fopen(lp, "wb"); if (f) { fwrite(&eng.proj, sizeof(Project), 1, f); fclose(f); }
+                doLoadProject(nm);
+                const char* want = k ? l2[1] : l1[1];
+                int s4 = curP().p[7][P_S0];
+                UCHECK(poolLegacy == k && sampleGet(s4) && !strcmp(sampleName(s4), want), "altes Projekt %s: Liste %d, '%s' statt '%s'", nm, poolLegacy, sampleName(s4), want);
+                setChange(SI_OLDSMP, 1);   // SET: andere Reihenfolge
+                const char* other = k ? l1[1] : l2[1];
+                UCHECK(poolLegacy == 1 - k && !strcmp(sampleName(curP().p[7][P_S0]), other), "SET Alte Sample-Nummern: '%s' statt '%s'", sampleName(curP().p[7][P_S0]), other);
+                remove(lp);
+            }
         }
         char p2[700]; projectPath("PoolTest", p2, sizeof p2); remove(p2);
         doLoadProject("Ab1");

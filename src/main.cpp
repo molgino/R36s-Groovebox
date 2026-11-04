@@ -116,7 +116,8 @@ static bool driveOn = false;   // Groovebox-OS: Datenpartition gerade als USB-La
 static void writePoolTrailer(FILE* f, const Project& J);   // Sample-Namen des Projekts (nach den Projektdaten)
 static bool poolSetSlot(int slot, const char* name);
 static int poolAssign(const char* name);
-static void poolLoadForProject(const char* path);
+static void poolLoadForProject(const char* path, int force = -1);
+static int poolLegacy = -1;   // altes Projekt ohne Namensliste: 0 = Liste 1 Ordner-Ebene (bis 128), 1 = alle Ebenen (bis 250); -1 = Namen
 static void poolDefaults();
 static Project saveSnap;
 static bool saveProject() {
@@ -128,7 +129,7 @@ static bool saveProject() {
     if (ok) writePoolTrailer(f, saveSnap);
     if (f) { ok = fflush(f) == 0 && ok; ok = fsync(fileno(f)) == 0 && ok; fclose(f); }
     ok = ok && rename(tmp, projPath) == 0;
-    if (ok) memcpy(&lastSaved, &saveSnap, sizeof(Project));
+    if (ok) { memcpy(&lastSaved, &saveSnap, sizeof(Project)); poolLegacy = -1; }   // jetzt mit Sample-Namen gespeichert
     else remove(tmp);
     return ok;
 }
@@ -2855,9 +2856,10 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
     if (!ok) return -1;
     int slot = -1;
     if (machineUsesSample(hdr[4]) && np > P_S0) {
-        if (!hasName) {   // alter Sound: Nummer = Position in der frueheren Sample-Liste
-            static char legacy[128][96];
-            int n = libLegacyList(legacy, 128);
+        if (!hasName) {   // alter Sound: Nummer = Position in der frueheren Sample-Liste (neuere 250er-Liste, wenn sie reicht)
+            static char legacy[250][96];
+            int n = libLegacyList(legacy, 250, SAMPLE_DEPTH, 500);
+            if (prm[P_S0] >= n) n = libLegacyList(legacy, 128, 1, 256);
             if (prm[P_S0] < n) snprintf(sname, sizeof sname, "%s", legacy[prm[P_S0]]);
         }
         if (sname[0]) slot = poolAssign(sname);
@@ -2944,7 +2946,7 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_CLRTRK, SI_TMPL, SI_MUTATE, SI_UNDO, SI_REDO, SI_DEMO,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE, SI_SAMPLES,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE, SI_SAMPLES, SI_OLDSMP,
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
@@ -3057,6 +3059,10 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         break;
     case SI_QUIT: snprintf(l, ln, TR("Groovebox beenden", "Quit groovebox")); break;
     case SI_DRIVE: snprintf(l, ln, TR("USB-Laufwerk (Samples vom PC)", "USB drive (samples from PC)")); if (!isGrooveboxOS()) snprintf(v, vn, TR("nur Groovebox-OS", "Groovebox OS only")); break;
+    case SI_OLDSMP: snprintf(l, ln, TR("Alte Sample-Nummern", "Old sample numbers"));
+        if (poolLegacy < 0) snprintf(v, vn, TR("- (Projekt hat Namen)", "- (project has names)"));
+        else snprintf(v, vn, "%s", poolLegacy ? TR("ALLE EBENEN (BIS 250)", "ALL LEVELS (UP TO 250)") : TR("1 ORDNER-EBENE (BIS 128)", "1 FOLDER LEVEL (UP TO 128)"));
+        break;
     case SI_SAMPLES: {   // Bibliothek / im Projekt geladen / fehlend / nicht lesbare Formate
         int inPool = 0; for (int k = 0; k < PREVIEW_SLOT; k++) if (sampleGet(k)) inPool++;
         snprintf(l, ln, "Samples");
@@ -3071,6 +3077,12 @@ static void setChange(int i, int d) {
     Pattern& P = curP();
     switch (i) {
     case SI_LANG: g_lang = cfg.lang = cfg.lang ? 0 : 1; saveSettings(); break;
+    case SI_OLDSMP:   // altes Projekt: andere fruehere Reihenfolge ausprobieren (bis zum naechsten Speichern)
+        if (poolLegacy >= 0) {
+            poolLoadForProject(projPath, 1 - poolLegacy);
+            if (!poolMissing) toast(TR("SAMPLES NEU ZUGEORDNET - ANHÖREN, DANN SPEICHERN", "SAMPLES REMAPPED - LISTEN, THEN SAVE"));
+        }
+        break;
     case SI_TMPL: tmplSel = ((tmplSel + d) % RHY_N + RHY_N) % RHY_N; break;
     case SI_PATTERN: {
         int to = (eng.curPat + d + NPATTERNS) % NPATTERNS;
@@ -4030,16 +4042,27 @@ static bool readPoolTrailer(const char* path, char (*names)[96]) {
     return ok;
 }
 // nach dem Laden eines Projekts: Pool passend fuellen (neue Projekte per Namensliste, alte per frueherer Nummerierung)
-static void poolLoadForProject(const char* path) {
+static void poolLoadForProject(const char* path, int force) {
     static char names[MAX_SAMPLES][96];
     bool used[MAX_SAMPLES]; poolUsed(eng.proj, used);
     bool have = readPoolTrailer(path, names);
-    if (!have) {   // altes Projekt: Nummer = Position in der frueheren Liste (eine Unterordner-Ebene, max. 128)
-        static char legacy[128][96];
-        int n = libLegacyList(legacy, 128);
+    poolLegacy = -1;
+    if (!have) {   // altes Projekt: Nummer = Position in der Liste der damaligen Version
+        static char l1[128][96], l2[250][96];
+        int n1 = libLegacyList(l1, 128, 1, 256);              // bis 11/2026: 1 Unterordner-Ebene, 128 Samples
+        int n2 = libLegacyList(l2, 250, SAMPLE_DEPTH, 500);   // danach: alle Ebenen, 250 Samples
+        int maxUsed = -1; for (int i = 0; i < MAX_SAMPLES; i++) if (used[i]) maxUsed = i;
+        const char* base = strrchr(path, '/'); base = base ? base + 1 : path;
+        bool songNN = !strncmp(base, "song", 4) && isdigit((unsigned char)base[4]) && isdigit((unsigned char)base[5]) && !strcmp(base + 6, ".gbx");
+        // Plaetze, die es nur in der 250er-Liste gibt, entscheiden; sonst stammen songNN-Projekte aus der Zeit der 1-Ebenen-Liste
+        int var = force >= 0 ? force : (maxUsed >= n1 ? 1 : (songNN ? 0 : 1));
+        if (var == 1 && maxUsed >= n2 && maxUsed < n1) var = 0;
         for (int i = 0; i < MAX_SAMPLES; i++) names[i][0] = 0;
-        for (int i = 0; i < n && i < MAX_SAMPLES; i++) if (used[i]) snprintf(names[i], 96, "%s", legacy[i]);
-        printf("Projekt ohne Sample-Liste: %d alte Nummern ueber die fruehere Reihenfolge zugeordnet\n", n);
+        for (int i = 0; i < MAX_SAMPLES; i++) if (used[i] && i < (var ? n2 : n1)) snprintf(names[i], 96, "%s", var ? l2[i] : l1[i]);
+        poolLegacy = var;
+        printf("Projekt ohne Sample-Liste: alte Nummern ueber die fruehere Reihenfolge (%s, %d bzw. %d Dateien), hoechster Platz %d\n",
+               var ? "alle Ebenen bis 250" : "1 Ebene bis 128", n1, n2, maxUsed);
+        for (int i = 0; i < MAX_SAMPLES; i++) if (names[i][0]) printf("  Platz %d -> %s\n", i, names[i]);
     }
     poolMissing = 0;
     for (int i = 0; i < MAX_SAMPLES; i++) {
@@ -4051,6 +4074,7 @@ static void poolLoadForProject(const char* path) {
 }
 // neues Projekt: Pool leeren, Sample-Spuren auf das Start-Sample (falls vorhanden)
 static void poolDefaults() {
+    poolLegacy = -1;
     for (int i = 0; i < MAX_SAMPLES; i++) if (sampleName(i)[0]) poolSetSlot(i, "");
     const char* def = libFind("keys/stab-minor") >= 0 ? "keys/stab-minor" : (libCount() ? libName(0) : nullptr);
     int sl = def ? poolAssign(def) : -1;

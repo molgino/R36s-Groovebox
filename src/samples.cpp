@@ -174,8 +174,9 @@ int samplesLoad(const char* dir) {
     return n;
 }
 
-// alte Projekte (bis Nov. 2026): Sample-Nummer = Position in der alphabetischen Liste (mit ".wav" sortiert)
-// aller lesbaren WAVs im Hauptordner und einer Unterordner-Ebene, hoechstens 128
+// alte Projekte (bis Nov. 2026): Sample-Nummer = Position in der Liste, die die damalige Version geladen hat.
+// Nachbau des alten Scans: Ordner in Verzeichnisreihenfolge (readdir) bis zur Tiefe, Abbruch nach cap Dateien,
+// dann alphabetisch (mit ".wav") sortiert, nur lesbare WAVs, hoechstens max.
 static bool wavProbe(const char* full) {
     FILE* f = fopen(full, "rb");
     if (!f) return false;
@@ -198,16 +199,31 @@ static bool wavProbe(const char* full) {
     fclose(f);
     return ok;
 }
-int libLegacyList(char (*out)[96], int max) {
-    static char tmp[1024][100];
-    int n = 0;
-    for (int i = 0; i < g_libN && n < 1024; i++) {
-        const char* nm = g_lib[i];
-        const char* sl = strchr(nm, '/');
-        if (sl && strchr(sl + 1, '/')) continue;   // nur eine Unterordner-Ebene
-        snprintf(tmp[n++], sizeof tmp[0], "%s.wav", nm);
+static void legacyScan(const char* sub, int depth, int maxDepth, char (*tmp)[160], int& n, int cap) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s%s%s", g_dir, sub[0] ? "/" : "", sub);
+    DIR* d = opendir(path);
+    if (!d) return;
+    struct dirent* e;
+    while ((e = readdir(d)) && n < cap) {
+        if (e->d_name[0] == '.') continue;
+        char rel[160], full[1400];
+        snprintf(rel, sizeof rel, "%s%s%s", sub, sub[0] ? "/" : "", e->d_name);
+        snprintf(full, sizeof full, "%s/%s", g_dir, rel);
+        struct stat st;
+        if (stat(full, &st)) continue;
+        if (S_ISDIR(st.st_mode)) { if (depth < maxDepth && strcmp(rel, "rec")) legacyScan(rel, depth + 1, maxDepth, tmp, n, cap); }
+        else if (isWav(e->d_name)) snprintf(tmp[n++], 160, "%s", rel);
     }
-    qsort(tmp, n, sizeof tmp[0], cmpName);
+    closedir(d);
+}
+static int cmpLegacy(const void* a, const void* b) { return strcasecmp((const char*)a, (const char*)b); }
+int libLegacyList(char (*out)[96], int max, int depth, int cap) {
+    static char tmp[1024][160];
+    if (cap > 1024) cap = 1024;
+    int n = 0;
+    legacyScan("", 0, depth, tmp, n, cap);
+    qsort(tmp, n, sizeof tmp[0], cmpLegacy);
     int k = 0;
     for (int i = 0; i < n && k < max; i++) {
         char full[800]; snprintf(full, sizeof full, "%s/%s", g_dir, tmp[i]);
