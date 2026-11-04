@@ -60,7 +60,7 @@ static BenchRes benchRender(Engine& E, double secs) {
         E.render(blk, B);
         double el = nowMs() - t0;
         tot += el; if (el > worst) worst = el;
-        for (int t = 0; t < NTRACKS; t++) if (E.v[t].active) vsum += 1;
+        for (int t = 0; t < NTRACKS; t++) { if (E.v[t].active) vsum += 1; for (int k = 0; k < NCHORDV; k++) if (E.cv[t][k].active) vsum += 1; }
         for (int k = 0; k < B * 2; k++) { float x = blk[k]; if (!(x == x)) bad = true; else if (fabsf(x) > pk) pk = fabsf(x); }
     }
     E.stop();
@@ -98,7 +98,7 @@ static void benchSetupWorst(Engine& E) {
         P.p[t][P_BASE] = 20; P.p[t][P_WDTH] = 90;
         static const int lb[3] = {P_L1, P_L2, P_L3};
         for (int k = 0; k < 3; k++) { P.p[t][lb[k] + LF_DEST] = (uint8_t)(k == 0 ? P_FREQ + 1 : (k == 1 ? P_PAN + 1 : P_S2 + 1)); P.p[t][lb[k] + LF_DEPTH] = 110; P.p[t][lb[k] + LF_RATE] = 100; P.p[t][lb[k] + LF_WAVE] = LW_SH; }
-        if (!machineIsDrum(m)) { P.p[t][P_AMOD] = 1; P.p[t][P_ACHD] = 5; P.p[t][P_AOCT] = 2; P.p[t][P_ARAT] = 0; }
+        if (!machineIsDrum(m)) { P.p[t][P_AMOD] = (t == 0 || t == 1 || t == 2) ? ARP_CHORD : 1; P.p[t][P_ACHD] = 5; P.p[t][P_AOCT] = 2; P.p[t][P_ARAT] = 0; }   // 3 Spuren mit 4-stimmigen Akkorden
     }
     E.proj.cmp[CM_THR] = 30; E.proj.cmp[CM_SRC] = 1; E.proj.cmp[CM_MIX] = 127;
     E.proj.mst[MS_SWNG] = 10;

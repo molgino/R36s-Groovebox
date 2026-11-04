@@ -861,6 +861,7 @@ void Engine::init(int sampleRate) {
     initFx(sampleRate);
     for (int t = 0; t < NTRACKS; t++) {
         v[t].rng.s = 0x1234567u * (t + 1);
+        for (int k = 0; k < NCHORDV; k++) cv[t][k].rng.s = 0x7654321u * (t + 1) + k * 977u;
         midiNote[t] = liveNote[t] = skipStep[t] = -1;
         midiGate[t] = 0;
     }
@@ -1051,7 +1052,7 @@ void Engine::start() {
 
 void Engine::stop() {
     playing = false;
-    for (int t = 0; t < NTRACKS; t++) { if (v[t].gated()) v[t].noteOff(); rt[t].left = 0; ar[t].left = 0; pend[t][0].on = pend[t][1].on = false; preDone[t] = -1; }
+    for (int t = 0; t < NTRACKS; t++) { if (v[t].gated()) v[t].noteOff(); for (int k = 0; k < NCHORDV; k++) if (cv[t][k].active) cv[t][k].noteOff(); rt[t].left = 0; ar[t].left = 0; pend[t][0].on = pend[t][1].on = false; preDone[t] = -1; }
     sendStop = true;
 }
 
@@ -1068,6 +1069,31 @@ void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, boo
     double tss = trackStepSamples(t);
     int gs = ls < 0 ? -1 : (int)(ls * tss) + 1;
     // Arpeggiator (nur Klangerzeuger mit Tonhoehe): statt eines Tons die Akkordtoene im Tempo RATE
+    if (fromSeq && val(P_AMOD) == ARP_CHORD && !machineIsDrum(P.machine[t])) {   // Akkord: Toene gleichzeitig
+        int base = val(P_NOTE), chord = val(P_ACHD) % 10;
+        int sv = proj.mst[MS_SCALE];
+        int notes[4], n = 0;
+        if (chord == 9) {   // Skala: Terzschichtung 1-3-5-7 der Skala
+            int x = sv ? quantizeNote(base, sv) : base;
+            for (int k = 0; k < 4 && x <= 127; k++) { notes[n++] = x; x = sv ? stepScale(stepScale(x, 1, sv), 1, sv) : x + (k % 2 ? 3 : 4); }
+        } else for (int k = 0; k < 5 && ARP_IV[chord][k] >= 0 && n < 4; k++) if (base + ARP_IV[chord][k] <= 127) notes[n++] = base + ARP_IV[chord][k];
+        if (n == 0) notes[n++] = base;
+        ar[t].left = 0; rt[t].left = 0;
+        uint8_t L[NPARAMS];
+        for (int i = 0; i < NPARAMS; i++) L[i] = lk ? lk[i] : NO_LOCK;
+        L[P_NOTE] = (uint8_t)notes[0];
+        playNote(t, L, velScale, gs, toMidi);
+        for (int k = 0; k < NCHORDV; k++) {
+            Voice& c = cv[t][k];
+            if (k + 1 < n) {
+                L[P_NOTE] = (uint8_t)notes[k + 1];
+                c.scaleVal = sv; c.stepSec = v[t].stepSec;
+                c.noteOn(P.machine[t], b, L, velScale * 0.8f, gs, (float)sr);
+            } else if (c.active) c.noteOff();
+        }
+        return;
+    }
+    if (fromSeq) for (int k = 0; k < NCHORDV; k++) if (cv[t][k].active) cv[t][k].noteOff();   // normaler Trig beendet einen Akkord
     if (fromSeq && val(P_AMOD) > 0 && !machineIsDrum(P.machine[t])) {
         Arp& a = ar[t];
         int base = val(P_NOTE), chord = val(P_ACHD) % 10, oct = val(P_AOCT) % 4 + 1;
@@ -1422,6 +1448,13 @@ void Engine::processBlock(float* out, int n) {
         if (t == key) v[t].render(KL, KR, D, RV, n, (float)sr);
         else v[t].render(L, R, D, RV, n, (float)sr);
     }
+    for (int t = 0; t < NTRACKS; t++)   // Akkord-Zusatzstimmen
+        for (int k = 0; k < NCHORDV; k++) {
+            Voice& c = cv[t][k];
+            if (!c.active) continue;
+            c.update(n, (float)sr, proj.bpm);
+            if (t == key) c.render(KL, KR, D, RV, n, (float)sr); else c.render(L, R, D, RV, n, (float)sr);
+        }
     // Kompressor-Parameter
     float cThr = cmpThrDb(proj.cmp[CM_THR]);
     float cSlope = 1.f - 1.f / CMP_RATIOS[proj.cmp[CM_RAT] > 8 ? 8 : proj.cmp[CM_RAT]];

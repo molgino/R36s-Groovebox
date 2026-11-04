@@ -179,6 +179,7 @@ public:
     volatile float peakL = 0, peakR = 0;
     volatile float grPeak = 0;   // Gain-Reduktion in dB (fuer die Anzeige)
     Voice v[NTRACKS];
+    Voice cv[NTRACKS][NCHORDV];   // Akkord-Zusatzstimmen (ARP-Modus AKKD)
 
     // MIDI (Ausgabe ueber Callback aus dem Audio-Thread; frameOff = Position im aktuellen Puffer)
     typedef void (*MidiOutFn)(uint8_t st, uint8_t d1, uint8_t d2, int frameOff);

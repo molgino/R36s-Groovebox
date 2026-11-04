@@ -1273,6 +1273,11 @@ static void arpGraph(int gx, int gy, int gw, int gh, Col c) {
     int x0 = gx + 12, W = gw - 24, y0 = gy + 8, H = gh - 16;
     float bw = (float)W / cnt, gate = pv(P_AGAT) / 100.f;
     uint32_t rs = 12345;
+    if (mode == ARP_CHORD) {   // Akkord: alle Toene (max. 4) gleichzeitig ueber die Trig-Laenge
+        int nn = n < 4 ? n : 4, w = (int)(W * fminf(steps / 16.f, 1.f)); if (w < 8) w = 8;
+        for (int k = 0; k < nn; k++) { int y = y0 + H - 4 - (int)((float)L[k] / top * (H - 8)); rrect(x0, y - 3, w, 6, 2, c, (Uint8)(k ? 170 : 255)); }
+        cnt = 0;
+    }
     for (int i = 0; i < cnt; i++) {
         int nv;
         if (mode == 4) { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; nv = seq[rs % m]; }
@@ -1282,7 +1287,7 @@ static void arpGraph(int gx, int gy, int gw, int gh, Col c) {
         int w = (int)(bw * gate); if (w < 2) w = 2;
         rrect(x0 + (int)(i * bw), y - 3, w, 6, 2, mode ? c : C_OFF2, (Uint8)(mode ? 120 + 135 * acc : 255));
     }
-    const char* t = mode ? ARP_MODES[mode % 5] : "ARP AUS";
+    const char* t = mode ? ARP_MODES[mode % 6] : "ARP AUS";
     text(gx + gw - 10 - textW(t), gy + 6, t, dimC(c, 0.8f));
 }
 
@@ -2263,7 +2268,7 @@ static void sigSummary(int p, char* b, int n) {
     case PG_INS: snprintf(b, n, "%s", q[P_ITYP] < INS_COUNT ? INS_NAMES[q[P_ITYP]] : "?"); break;
     case PG_TRG: fmtParam(COMMON_DEFS[P_NOTE], q[P_NOTE], v, sizeof v); snprintf(b, n, "%s", v); break;
     case PG_SEQ: snprintf(b, n, "%d STEPS", P.len[track]); break;
-    case PG_ARP: snprintf(b, n, "%s", ARP_MODES[q[P_AMOD] % 5]); break;
+    case PG_ARP: snprintf(b, n, "%s", ARP_MODES[q[P_AMOD] % 6]); break;
     default: {
         int k = p - PG_LFO1, dst = q[LFO_BASE[k] + 2];
         if (dst > 0 && q[LFO_BASE[k] + 3] != 64) snprintf(b, n, ">%.5s", paramDef(P.machine[track], dst - 1).name);

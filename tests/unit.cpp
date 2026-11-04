@@ -155,6 +155,25 @@ static void testArp() {
     CHECK(trigs(4) - a >= 3, "Arp: nur %u Noten in 4 Sechzehnteln", trigs(4) - a);
 }
 
+static void testChord() {
+    curTest = "Akkord";
+    fresh(120);
+    Pattern& P = E.proj.pat[0];
+    Engine::initTrack(P, 4, M_SYNTH);
+    P.s[4][0].on = 1; P.p[4][P_LEN] = 100;
+    P.p[4][P_AMOD] = ARP_CHORD; P.p[4][P_ACHD] = 5;   // MAJ7: 4 Toene
+    E.start();
+    bool bad = false;
+    run(4410, &bad);
+    int act = E.v[4].active;
+    for (int k = 0; k < NCHORDV; k++) act += E.cv[4][k].active;
+    CHECK(act == 4, "MAJ7-Akkord: %d statt 4 klingende Stimmen", act);
+    CHECK(!bad, "Akkord: NaN");
+    E.stop(); run(44100 * 3);
+    act = 0; for (int k = 0; k < NCHORDV; k++) act += E.cv[4][k].active;
+    CHECK(act == 0, "Akkordstimmen klingen nach Stop weiter (%d)", act);
+}
+
 // alle Engines x alle Filtertypen x Extremwerte: endlich, begrenzt
 static void testStability() {
     curTest = "Stabilitaet";
@@ -248,6 +267,7 @@ int main(int argc, char** argv) {
     testTrigless();
     testSong();
     testArp();
+    testChord();
     testStability();
     testDecay();
     testSaveLoad();

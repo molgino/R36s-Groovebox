@@ -116,11 +116,12 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     {"BASE", K_NUM, 0, 127}, {"WDTH", K_NUM, 127, 127}, {"KEYT", K_PCT, 0, 100}, {"VELF", K_BIP, 64, 127},
     {"F.KRV", K_BIP, 64, 127}, {"A.KRV", K_BIP, 64, 127}, PDEF_NONE, PDEF_NONE,   // Huellkurvenform (ab v11)
     // ARP: spielt waehrend der Trig-Laenge die Akkordtoene ueber OCT Oktaven im Tempo RATE
-    {"MODE", K_ARPM, 0, 4}, {"CHRD", K_ACHD, 2, 9}, {"OCT", K_CNT, 0, 3}, {"RATE", K_ARAT, 2, 5},
+    {"MODE", K_ARPM, 0, 5}, {"CHRD", K_ACHD, 2, 9}, {"OCT", K_CNT, 0, 3}, {"RATE", K_ARAT, 2, 5},
     {"GATE", K_PCT, 60, 100}, {"ACCT", K_PCT, 0, 100}, PDEF_NONE, PDEF_NONE,
 };
 // Arpeggiator: Akkord-Intervalle (Halbtoene), Tempo in Steps
-static const char* const ARP_MODES[5] = {"AUS", "UP", "DOWN", "UPDN", "RAND"};
+static const char* const ARP_MODES[6] = {"AUS", "UP", "DOWN", "UPDN", "RAND", "AKKD"};   // AKKD = Akkordtoene gleichzeitig
+enum { ARP_CHORD = 5, NCHORDV = 3 };   // Zusatzstimmen je Spur fuer Akkorde
 static const char* const ARP_CHORDS[10] = {"OKT", "5TH", "MAJ", "MIN", "SUS4", "MAJ7", "MIN7", "DOM7", "DIM", "SKALA"};
 static const int8_t ARP_IV[10][5] = {{0, -1}, {0, 7, -1}, {0, 4, 7, -1}, {0, 3, 7, -1}, {0, 5, 7, -1},
                                      {0, 4, 7, 11, -1}, {0, 3, 7, 10, -1}, {0, 4, 7, 10, -1}, {0, 3, 6, 9, -1}, {-1}};
@@ -307,7 +308,7 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_DIR: { static const char* dn[6] = {"FWD", "REV", "PING", "PEND", "RND", "DRNK"}; snprintf(buf, n, "%s", dn[v % 6]); } break;
     case K_TLEN: snprintf(buf, n, "%d", v); break;
     case K_TSPD: snprintf(buf, n, "%s", SPEED_NAMES[v % 7]); break;
-    case K_ARPM: snprintf(buf, n, "%s", ARP_MODES[v % 5]); break;
+    case K_ARPM: snprintf(buf, n, "%s", ARP_MODES[v % 6]); break;
     case K_ACHD: snprintf(buf, n, "%s", ARP_CHORDS[v % 10]); break;
     case K_ARAT: snprintf(buf, n, "%s", ARP_RATES[v % 6]); break;
     case K_RANGE: if (v) snprintf(buf, n, "+%d", v); else snprintf(buf, n, "AUS"); break;
