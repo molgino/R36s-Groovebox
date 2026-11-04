@@ -34,14 +34,17 @@
 | Browser | Samples/Projekte hoch- und herunterladen, Bildschirm-Spiegelung mit Fernbedienung, Logs, App-Update ohne neues Image |
 
 ## Leistung (gemessen mit `--bench`)
-| | R36S (RK3326, 1,3 GHz), Version 305f93e | nach Optimierung (Instruktionen, gemessen) |
+Gemessen auf dem R36S (RK3326, Cortex-A35 1,3 GHz) mit SET → Leistungstest, Anteil eines Kerns (Budget 5,8 ms je 256-Frame-Block):
+
+| | vor Optimierung (305f93e) | nach Optimierung (a098e23) |
 |---|---|---|
-| Audio-Last Leerlauf | 5,1 % | −83 % |
-| Audio-Last 8× Kick | 23 % | −34 % |
-| Audio-Last 8× FM | 31 % | −22 % |
-| Audio-Last Worst Case (16 Stimmen, alle LFOs/FX, 3 Akkord-Spuren) | 86 % | −21 % (dazu Compiler-Tuning für Cortex-A35) |
-| Bildaufbau inkl. Ausgabe | 10–13 ms, Menü 17,5 ms, Hilfe 20,6 ms | Zeichnen −35 % (Menü −57 %), Ausgabe ohne Abfragen pro Pixel, Ruhe mit 30 Bildern/s |
-| Speicher | 26 MB | |
+| Audio Leerlauf | 5,1 % | **0,7 %** |
+| Demo-Song (realistisch) | – | **9,9 %** (Spitze 24,5 %) |
+| 8× Kick / 8× Synth / 8× FM | 23,3 / 24,8 / 31,1 % | **16,2 / 19,0 / 25,9 %** |
+| Worst Case (16,5 Stimmen, alle LFOs/FX, 3 Akkord-Spuren) | 86,4 % (Spitze 94 %) | **70,5 %** (Spitze 79 %) |
+| Bild je Frame inkl. Ausgabe (davon Ausgabe 4,3 ms) | 10,3–13,2 ms | **8,5–11,0 ms** |
+| Seitenmenü / Hilfe | 17,5 / 20,6 ms | **12,5 / 14,0 ms** |
+| Speicher | 26 MB | 24 MB |
 
 Neue Gerätewerte: SET → Leistungstest (Bericht im Browser unter Logs → bench.txt).
 
