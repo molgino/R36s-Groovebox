@@ -34,7 +34,7 @@ fi
 CROSS=${CROSS:-aarch64-linux-gnu-}
 make clean >/dev/null
 make OUT=groovebox-aarch64 \
-  CXX="${CROSS}g++ --sysroot=$SYSROOT -mcpu=cortex-a35 -nostdinc -isystem $(${CROSS}gcc -print-file-name=include) -isystem $SYSROOT/usr/include/aarch64-linux-gnu -isystem $SYSROOT/usr/include" \
+  CXX="${CROSS}g++ --sysroot=$SYSROOT -mcpu=cortex-a35 -fno-math-errno -nostdinc -isystem $(${CROSS}gcc -print-file-name=include) -isystem $SYSROOT/usr/include/aarch64-linux-gnu -isystem $SYSROOT/usr/include" \
   CC_LINK="${CROSS}gcc --sysroot=$SYSROOT -B$SYSROOT/usr/lib/aarch64-linux-gnu -L$SYSROOT/lib/aarch64-linux-gnu -L$SYSROOT/usr/lib/aarch64-linux-gnu -Wl,-rpath-link,$SYSROOT/lib/aarch64-linux-gnu -Wl,--allow-shlib-undefined" \
   SDL_CFLAGS="-I$SYSROOT/usr/include/SDL2 -D_REENTRANT" \
   SDL_LIBS="-lSDL2"

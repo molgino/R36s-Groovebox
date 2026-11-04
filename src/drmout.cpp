@@ -151,13 +151,19 @@ void drmOutPresent(SDL_Surface* s) {
             const uint32_t* prv = (const uint32_t*)((uint8_t*)s->pixels + (size_t)(y > 0 ? y - 1 : h - 1) * s->pitch);
             // Quelle fuer Ausgabepixel x: Pixel x-N fortlaufend (x<N -> Vorzeile), dazu der Vorgaenger fuer r=1/2
             uint32_t prev = N > 0 ? prv[w - N - 1] : prv[w - 1];   // N <= w-1
-            for (int x = 0; x < w; x++) {
-                uint32_t c = x < N ? prv[x - N + w] : cur[x - N], v;
-                if (r == 0) v = c;
-                else if (r == 1) v = ((prev & 0xffu) << 16) | ((c >> 8) & 0xffffu);
-                else v = ((prev & 0xffffu) << 8) | ((c >> 16) & 0xffu);
-                tmp[x] = 0xff000000u | v;
-                prev = c;
+            // Bedingungen (r, x < N) gelten fuer das ganze Bild: Schleifen getrennt, ohne Abfragen pro Pixel
+            const uint32_t* src0 = prv + w - N;   // x < N: Ende der Vorzeile
+            if (r == 0) {
+                for (int x = 0; x < N; x++) tmp[x] = 0xff000000u | src0[x];
+                for (int x = N; x < w; x++) tmp[x] = 0xff000000u | cur[x - N];
+            } else {
+                int sh1 = r == 1 ? 16 : 8, sh2 = r == 1 ? 8 : 16;
+                uint32_t m1 = r == 1 ? 0xffu : 0xffffu, m2 = r == 1 ? 0xffffu : 0xffu;
+                for (int x = 0; x < w; x++) {
+                    uint32_t c = x < N ? src0[x] : cur[x - N];
+                    tmp[x] = 0xff000000u | ((prev & m1) << sh1) | ((c >> sh2) & m2);
+                    prev = c;
+                }
             }
             memcpy(b.map + (size_t)y * b.pitch, tmp, (size_t)w * 4);
         }

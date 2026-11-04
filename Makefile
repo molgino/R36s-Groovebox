@@ -5,8 +5,12 @@ CXX      ?= g++
 CC_LINK  ?= gcc
 SDL_CFLAGS ?= $(shell sdl2-config --cflags)
 SDL_LIBS   ?= $(shell sdl2-config --libs)
-CXXFLAGS += -DWITH_MIDI -O2 -Wall -Wextra -Wno-unused-parameter -fno-exceptions -fno-rtti -fno-threadsafe-statics $(SDL_CFLAGS)
+CXXFLAGS += -DWITH_MIDI -O2 -fno-math-errno -Wall -Wextra -Wno-unused-parameter -fno-exceptions -fno-rtti -fno-threadsafe-statics $(SDL_CFLAGS)
 LDFLAGS  +=
+# auf arm64 (R36S/RK3326 bzw. CI-Runner fuer das Groovebox-OS) fuer den In-Order-Kern Cortex-A35 optimieren
+ifeq ($(shell uname -m),aarch64)
+CXXFLAGS += -mcpu=cortex-a35
+endif
 LIBS     ?=
 # make DRM=1 -> direkte DRM-Ausgabe ohne GPU (Groovebox-OS), braucht libdrm-dev
 ifeq ($(DRM),1)

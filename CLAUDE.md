@@ -39,6 +39,7 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 
 ## Tests
 - `make test [SAN=1]` → `tests/unit.cpp` (Engine ohne UI); `./groovebox --selftest [sek]` und `--bench [datei]` aus `src/selftest.inc` (am Ende von main.cpp eingebunden; `selfTesting` blockiert USB/Lernmodus/Audio-Gerät; UI-Simulation `simFrame/tap/combo/flickL/stickR`, `goPage/goSlot` zählen Tasten → Bedienweg-Report); SET „Leistungstest“ → /data/logs/bench.txt; CI-Job `tests` mit Sanitizern, bench-arm64.txt im Release
+- R36S-Messung (A35 1,3 GHz ≈ 14× langsamer als CI): Worst Case war 86 % → Optimierungen: `fastExp2/fastExpE` in update/ADSR/decayCo, `lfMask` statt LFO-Schleife in `P()`, Blockgröße 32 (`processBlock`-Arrays [32]), Delay/Reverb-Leerlauf (`dQuiet/rQuiet`), `sin01` ohne floorf, P()-Aufrufe aus der Sample-Schleife, Kick-Sweep/Klick nur solange hörbar, `-fno-math-errno`, `-mcpu=cortex-a35` auch im nativen arm64-Build (Makefile); UI: `fbMix` (gepackte Alpha-Mischung), Schrift-Schnellweg, Menü/Hilfe deckend, drmOutPresent ohne Abfragen pro Pixel, 30 fps in Ruhe. Messwerkzeug: callgrind-Instruktionen (Basis-Werte in docs/SPECS.md)
 - Gefunden/behoben: Denormals (Kick 3,5× schneller, `flushDenormals()` in Engine::render), editValue/knobInfo auf globalen Seiten ohne Speicherseite (Index −8)
 
 ## Bauen

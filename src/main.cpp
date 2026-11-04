@@ -179,15 +179,18 @@ static int devIndex() {
 static uint32_t* fbPix = nullptr;   // ARGB8888, SW x SH
 static int fbPitch = 0;             // in Pixeln
 static Col curCol = {0, 0, 0}; static Uint8 curA = 255;
+// Alpha-Mischung mit gepackter Arithmetik: Rot+Blau in einem Wort, Gruen getrennt (2 Multiplikationen pro Pixel)
+static inline uint32_t fbMix(uint32_t d, uint32_t srbA, uint32_t sgA, uint32_t ia) {
+    uint32_t rb = ((d & 0xFF00FFu) * ia + srbA) >> 8 & 0xFF00FFu;
+    uint32_t g = ((d & 0x00FF00u) * ia + sgA) >> 8 & 0x00FF00u;
+    return 0xff000000u | rb | g;
+}
 static inline void fbBlendSpan(uint32_t* p, int n, Col c, Uint8 a) {
     if (a == 255) { uint32_t v = 0xff000000u | ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | c.b; for (int i = 0; i < n; i++) p[i] = v; return; }
     if (a == 0) return;
-    uint32_t ia = 255 - a, sr = c.r * a, sg = c.g * a, sb = c.b * a;
-    for (int i = 0; i < n; i++) {
-        uint32_t d = p[i];
-        uint32_t r = (sr + ((d >> 16) & 255) * ia) * 257 >> 16, g = (sg + ((d >> 8) & 255) * ia) * 257 >> 16, b = (sb + (d & 255) * ia) * 257 >> 16;
-        p[i] = 0xff000000u | (r << 16) | (g << 8) | b;
-    }
+    uint32_t a256 = a + (a >> 7), ia = 256 - a256;
+    uint32_t srbA = (((uint32_t)c.r << 16) | c.b) * a256, sgA = ((uint32_t)c.g << 8) * a256;
+    for (int i = 0; i < n; i++) p[i] = fbMix(p[i], srbA, sgA, ia);
 }
 static void fbFill(int x, int y, int w, int h, Col c, Uint8 a) {
     if (x < 0) { w += x; x = 0; }
@@ -251,10 +254,25 @@ static int textLen(const char* s) { int n = 0; while (*s) { nextGlyph(s); n++; }
 static int textW(const char* s, int sc = 1) { return textLen(s) * FONT_W * sc; }
 static void text(int x, int y, const char* s, Col c, int sc = 1) {
     if (fbPix) {   // Glyphen direkt mischen
+        uint32_t srb = ((uint32_t)c.r << 16) | c.b, sg = (uint32_t)c.g << 8;
+        uint32_t solid = 0xff000000u | srb | sg;
         for (; *s; x += FONT_W * sc) {
             int gi = nextGlyph(s);
             if (x >= SW || x + FONT_W * sc <= 0) continue;
             const uint8_t* g = FONT_DATA[gi];
+            if (sc == 1 && x >= 0 && x + FONT_W <= SW && y >= 0 && y + FONT_H <= SH) {   // haeufigster Fall: direkt mischen
+                uint32_t* row = fbPix + (size_t)y * fbPitch + x;
+                for (int gy = 0; gy < FONT_H; gy++, row += fbPitch, g += FONT_W)
+                    for (int gx = 0; gx < FONT_W; gx++) {
+                        unsigned av = g[gx];
+                        if (!av) continue;
+                        if (textAlpha != 255) av = av * textAlpha / 255;
+                        if (av >= 250) { row[gx] = solid; continue; }
+                        uint32_t a256 = av + (av >> 7);
+                        row[gx] = fbMix(row[gx], srb * a256, sg * a256, 256 - a256);
+                    }
+                continue;
+            }
             for (int gy = 0; gy < FONT_H; gy++) {
                 int py = y + gy * sc;
                 if (py + sc <= 0 || py >= SH) continue;
@@ -1911,7 +1929,7 @@ static void drawMixer(int ox) {
 // Seitenmenue (SELECT kurz antippen)
 static void drawMenu() {
     rrect(50, 40, 540, 360, 14, C_ACC);
-    rrect(52, 42, 536, 356, 13, C_BG, 250);
+    rrect(52, 42, 536, 356, 13, C_BG);
     textC(320, 50, "SEITE WÄHLEN", C_ACC, 2);
     int y = 104;
     for (int g = 0; g < 3; g++) {
@@ -2217,7 +2235,7 @@ static void drawSteps() {
 
 static void drawHelp() {
     rrect(30, 22, 580, 436, 12, C_ACC);
-    rrect(32, 24, 576, 432, 11, C_BG, 245);
+    rrect(32, 24, 576, 432, 11, C_BG);
     static const char* lines[] = {
         "SELECT GEHALTEN +",
         "  LINKS/RECHTS   Pattern wechseln",
@@ -4215,8 +4233,14 @@ int main(int argc, char** argv) {
                 sDraw = sPres = sMax = 0; nFr = 0; statAt = now;
             }
         }
+        // Ruhe: ohne Wiedergabe und 2 s ohne Eingabe nur 30 Bilder/s (spart CPU und Akku)
+        static Uint32 lastActive = 0;
+        bool active = eng.playing || fabsf(in.lx) + fabsf(in.ly) + fabsf(in.rx) + fabsf(in.ry) > 0.2f;
+        for (int b = 0; b < BT_COUNT && !active; b++) if (in.down[b]) active = true;
+        if (active || now - msgAt < 1500) lastActive = now;
+        Uint32 frameMs = now - lastActive > 2000 ? 33 : 16;
         Uint32 spent = SDL_GetTicks() - now;
-        if (spent < 16) SDL_Delay(16 - spent);
+        if (spent < frameMs) SDL_Delay(frameMs - spent);
     }
 
     lockA(); eng.stop(); unlockA();

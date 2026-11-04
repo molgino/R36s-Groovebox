@@ -34,12 +34,16 @@
 | Browser | Samples/Projekte hoch- und herunterladen, Bildschirm-Spiegelung mit Fernbedienung, Logs, App-Update ohne neues Image |
 
 ## Leistung (gemessen mit `--bench`)
-| | ARM-Server (CI) | R36S (RK3326) |
+| | R36S (RK3326, 1,3 GHz), Version 305f93e | nach Optimierung (Instruktionen, gemessen) |
 |---|---|---|
-| Audio-Last, Worst Case (8 Spuren, 3 Akkord-Spuren, alle LFOs/FX) | ca. 3–6 % eines Kerns | *Messung ausstehend: SET → Leistungstest* |
-| teuerste Engine je Stimme | FM, ca. 0,25 % | *ausstehend* |
-| Bildaufbau je Bild | 0,4–1,1 ms | *ausstehend* |
-| Speicher | ca. 14 MB | *ausstehend* |
+| Audio-Last Leerlauf | 5,1 % | −83 % |
+| Audio-Last 8× Kick | 23 % | −34 % |
+| Audio-Last 8× FM | 31 % | −22 % |
+| Audio-Last Worst Case (16 Stimmen, alle LFOs/FX, 3 Akkord-Spuren) | 86 % | −21 % (dazu Compiler-Tuning für Cortex-A35) |
+| Bildaufbau inkl. Ausgabe | 10–13 ms, Menü 17,5 ms, Hilfe 20,6 ms | Zeichnen −35 % (Menü −57 %), Ausgabe ohne Abfragen pro Pixel, Ruhe mit 30 Bildern/s |
+| Speicher | 26 MB | |
+
+Neue Gerätewerte: SET → Leistungstest (Bericht im Browser unter Logs → bench.txt).
 
 ## Gerät (R36S, typische Herstellerangaben – Klone können abweichen)
 Rockchip RK3326 (4 × Cortex-A35, bis 1,5 GHz), 1 GB RAM, 3,5″-IPS 640 × 480, Akku ca. 3200 mAh, Kopfhöreranschluss, Lautsprecher, 2 Analogsticks, Steuerkreuz, 4 Aktionstasten, 4 Schultertasten.

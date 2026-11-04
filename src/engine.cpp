@@ -62,7 +62,8 @@ static inline float wtRead(int t, float pos, float ph) {
 }
 const float* wavetableFrame(int t, int f) { return WT[t & 3][f < 0 ? 0 : (f >= WT_FR ? WT_FR - 1 : f)]; }
 static inline float sin01(float ph) {
-    ph -= floorf(ph);
+    ph -= (float)(int)ph;          // schneller als floorf (Phase meist in [0,1))
+    if (ph < 0.f) ph += 1.f;
     float x = ph * 2048.f;
     int i = (int)x;
     float f = x - i;
@@ -73,9 +74,10 @@ static inline float clampf(float x, float a, float b) { return x < a ? a : (x > 
 static inline float fastExp2(float x) {
     if (x < -120.f) return 0.f;
     if (x > 120.f) x = 120.f;
-    float xi = floorf(x), f = x - xi;
+    int ii = (int)x; if ((float)ii > x) ii--;
+    float xi = (float)ii, f = x - xi;
     float p = 1.f + f * (0.6931472f + f * (0.2402265f + f * (0.0555041f + f * (0.0096181f + f * 0.0013334f))));
-    union { float f; int32_t i; } u; u.f = p; u.i += (int32_t)xi * (1 << 23);
+    union { float f; int32_t i; } u; u.f = p; u.i += ii * (1 << 23);
     return u.f;
 }
 static inline float fastLog2(float x) {
@@ -92,8 +94,9 @@ static inline float fastTanh(float x) {
     float x2 = x * x;
     return x * (27.f + x2) / (27.f + 9.f * x2);
 }
-static inline float envT(int v) { return 0.0005f * exp2f(v * (15.f / 127.f)); }
-static inline float decayCo(float t, float sr) { return expf(-6.9f / (t * sr)); }
+static inline float fastExpE(float x) { return fastExp2(x * 1.4426950f); }
+static inline float envT(int v) { return 0.0005f * fastExp2(v * (15.f / 127.f)); }
+static inline float decayCo(float t, float sr) { return fastExpE(-6.9f / (t * sr)); }
 static inline float blep(float t, float dt) {
     if (t < dt) { t /= dt; return t + t - t * t - 1.f; }
     if (t > 1.f - dt) { t = (t - 1.f) / dt; return t * t + t + t + 1.f; }
@@ -218,13 +221,14 @@ void Voice::lfoTrigger() {
 
 void Voice::lfoUpdate(int n, float sr) {
     noteMod = 0;
+    lfAny = false; lfMask[0] = lfMask[1] = 0;
     for (int k = 0; k < NLFO; k++) {
         int b = LFO_BASE[k];
         int dest = PR(b + LF_DEST) - 1;
         float depth = (PR(b + LF_DEPTH) - 64) / 64.f;
         if (dest < 0 || depth == 0.f) { lfDst[k] = -1; lfVal[k] = 0; continue; }
         int sync = PR(b + LF_SYNC) % 12, wave = PR(b + LF_WAVE) % LW_COUNT, mode = PR(b + LF_MODE);
-        float hz = sync ? 1.f / (LFO_SYNC_STEPS[sync] * stepSec) : 0.05f * exp2f(PR(b + LF_RATE) * (9.f / 127.f));
+        float hz = sync ? 1.f / (LFO_SYNC_STEPS[sync] * stepSec) : 0.05f * fastExp2(PR(b + LF_RATE) * (9.f / 127.f));
         float inc = hz * n / sr;
         float lim = mode == LM_ONE ? 1.f : (mode == LM_HALF ? 0.5f : 1e9f);
         if (lfRun[k] < lim) {
@@ -236,7 +240,7 @@ void Voice::lfoUpdate(int n, float sr) {
         float w = mode == LM_HOLD ? lfHeld[k] : Voice_lfoWave(*this, k, wave, lfPh[k]);
         int fd = PR(b + LF_FADE) - 64;
         if (fd) {
-            float ft = 0.05f * exp2f(fabsf((float)fd) / 64.f * 6.f);
+            float ft = 0.05f * fastExp2(fabsf((float)fd) / 64.f * 6.f);
             float st = n / (ft * sr);
             lfFade[k] = fd < 0 ? fminf(1.f, lfFade[k] + st) : fmaxf(0.f, lfFade[k] - st);
         } else lfFade[k] = 1.f;
@@ -244,7 +248,7 @@ void Voice::lfoUpdate(int n, float sr) {
         lfVal[k] = out;
         if (dest == P_NOTE) { noteMod += out * 12.f; lfDst[k] = -1; }
         else if (dest < NPARAMS) {
-            lfDst[k] = dest;
+            lfDst[k] = dest; lfAny = true; lfMask[dest >> 6] |= 1ull << (dest & 63);
             lfMax[k] = paramDef(machine, dest).max;
             lfOff[k] = out * (lfMax[k] < 1 ? 1 : lfMax[k]);
         } else lfDst[k] = -1;
@@ -263,101 +267,101 @@ void Voice::update(int n, float sr, float bpm) {
     {
         int bs = P(P_BASE), wd = P(P_WDTH);
         bwOn = bs > 0 || wd < 127;
-        bwLo = 20.f * exp2f(bs * (10.f / 127.f));
-        bwHi = bwLo * exp2f(wd * (10.f / 127.f));
+        bwLo = 20.f * fastExp2(bs * (10.f / 127.f));
+        bwHi = bwLo * fastExp2(wd * (10.f / 127.f));
         if (bwHi > 20000.f) bwHi = 20000.f;
     }
     fEnv = (P(P_FENV) - 64) * 2.f;
-    fCrvK = exp2f((P(P_FCRV) - 64) / 32.f);
-    aCrvK = exp2f((P(P_ACRV) - 64) / 32.f);
+    fCrvK = fastExp2((P(P_FCRV) - 64) / 32.f);
+    aCrvK = fastExp2((P(P_ACRV) - 64) / 32.f);
     reso = clampf(P(P_RESO) / 127.f, 0.f, 1.f);
     ftype = P(P_FTYP) % FT_COUNT;
 
     // Tonhoehe inkl. Glide
     if ((machine == M_SYNTH || machine == M_WTBL) && P(P_S7) > 0 && n > 0) {
-        float gt = 0.001f * exp2f(P(P_S7) * (11.f / 127.f));
-        float co = 1.f - expf(-(float)n / (gt * sr));
+        float gt = 0.001f * fastExp2(P(P_S7) * (11.f / 127.f));
+        float co = 1.f - fastExpE(-(float)n / (gt * sr));
         curNote += (note - curNote) * co;
     } else {
         curNote = note;
     }
     float nn = curNote + noteMod;
-    float ratio = exp2f((nn - 60.f) / 12.f);
+    float ratio = fastExp2((nn - 60.f) / 12.f);
     switch (machine) {
     case M_KICK:
-        pitchHz = 30.f * exp2f(P(P_S0) * (2.f / 127.f)) * ratio;
-        ddco = decayCo(0.03f * exp2f(P(P_S1) * (6.f / 127.f)), sr);
-        pco = decayCo(0.002f * exp2f(P(P_S3) * (7.f / 127.f)), sr);
+        pitchHz = 30.f * fastExp2(P(P_S0) * (2.f / 127.f)) * ratio;
+        ddco = decayCo(0.03f * fastExp2(P(P_S1) * (6.f / 127.f)), sr);
+        pco = decayCo(0.002f * fastExp2(P(P_S3) * (7.f / 127.f)), sr);
         cco = decayCo(0.004f, sr);
         break;
     case M_SNARE:
-        pitchHz = 120.f * exp2f(P(P_S0) * (1.74f / 127.f)) * ratio;
-        ddco = decayCo(0.03f * exp2f(P(P_S1) * (5.f / 127.f)), sr);
-        nco = decayCo(0.03f * exp2f(P(P_S3) * (5.f / 127.f)), sr);
-        aux.set(1500.f * exp2f(P(P_S4) * (3.2f / 127.f)), 0.15f, sr);   // TONE = Tiefpass des Rauschens
+        pitchHz = 120.f * fastExp2(P(P_S0) * (1.74f / 127.f)) * ratio;
+        ddco = decayCo(0.03f * fastExp2(P(P_S1) * (5.f / 127.f)), sr);
+        nco = decayCo(0.03f * fastExp2(P(P_S3) * (5.f / 127.f)), sr);
+        aux.set(1500.f * fastExp2(P(P_S4) * (3.2f / 127.f)), 0.15f, sr);   // TONE = Tiefpass des Rauschens
         pco = decayCo(0.012f, sr);                                       // kurzer Pitch-Abfall der Fell-Oszillatoren
         break;
     case M_HAT:
-        pitchHz = 200.f * exp2f(P(P_S0) * (1.6f / 127.f)) * ratio;
-        ddco = decayCo(0.01f * exp2f(P(P_S1) * (7.5f / 127.f)), sr);
-        aux.set(5000.f * exp2f(P(P_S2) * (1.3f / 127.f)), 0.35f, sr);   // 808: Bandpass um 7-12 kHz
+        pitchHz = 200.f * fastExp2(P(P_S0) * (1.6f / 127.f)) * ratio;
+        ddco = decayCo(0.01f * fastExp2(P(P_S1) * (7.5f / 127.f)), sr);
+        aux.set(5000.f * fastExp2(P(P_S2) * (1.3f / 127.f)), 0.35f, sr);   // 808: Bandpass um 7-12 kHz
         break;
     case M_CLAP:
-        aux.set(600.f * exp2f(P(P_S0) * (2.5f / 127.f)) * ratio, 0.55f, sr);
-        ddco = decayCo(0.05f * exp2f(P(P_S1) * (5.f / 127.f)), sr);
+        aux.set(600.f * fastExp2(P(P_S0) * (2.5f / 127.f)) * ratio, 0.55f, sr);
+        ddco = decayCo(0.05f * fastExp2(P(P_S1) * (5.f / 127.f)), sr);
         clapInterval = (int)((0.004f + P(P_S2) / 127.f * 0.025f) * sr);
         bco = decayCo(0.012f, sr);
         break;
     case M_FM: {
-        pitchHz = 440.f * exp2f((nn - 69.f) / 12.f);
+        pitchHz = 440.f * fastExp2((nn - 69.f) / 12.f);
         fmAlgo = P(P_S0) & 7;
         fmFbAmt = P(P_S1) / 127.f * 0.5f;
         float fine = (P(P_S6) - 64) / 64.f;   // leichte Verstimmung OP2-4 (+/- 1/4 Halbton, gespreizt)
         float velS = P(P_X7) / 127.f;
         float vg = 1.f - velS + velS * vel;
         for (int k = 0; k < 4; k++) {
-            float r = FM_RATIOS[P(P_S2 + k) & 15] * (k ? exp2f(fine * 0.25f * k / 12.f) : 1.f);
+            float r = FM_RATIOS[P(P_S2 + k) & 15] * (k ? fastExp2(fine * 0.25f * k / 12.f) : 1.f);
             fmInc[k] = pitchHz * r / sr;
             float lv = k ? P(P_X0 + k - 1) / 127.f : 1.f;
             fmMod[k] = lv * 2.2f * vg;     // als Modulator: Index in Perioden
             fmCar[k] = lv;                 // als Traeger: Ausgangspegel
             int dv = P(P_X3 + k);
-            fmDco[k] = dv >= 127 ? 1.f : decayCo(0.01f * exp2f(dv * (9.f / 127.f)), sr);
+            fmDco[k] = dv >= 127 ? 1.f : decayCo(0.01f * fastExp2(dv * (9.f / 127.f)), sr);
         }
         int nc = 0; for (int k = 0; k < 4; k++) if (FM_CARRIERS[fmAlgo] >> k & 1) nc++;
         float norm = 1.f / sqrtf((float)(nc ? nc : 1));
         for (int k = 0; k < 4; k++) fmCar[k] *= norm;
     } break;
     case M_TOM:
-        pitchHz = 60.f * exp2f(P(P_S0) * (2.5f / 127.f)) * ratio;
-        ddco = decayCo(0.05f * exp2f(P(P_S1) * (5.f / 127.f)), sr);
+        pitchHz = 60.f * fastExp2(P(P_S0) * (2.5f / 127.f)) * ratio;
+        ddco = decayCo(0.05f * fastExp2(P(P_S1) * (5.f / 127.f)), sr);
         pco = decayCo(0.06f, sr);
         nco = decayCo(0.02f, sr);
         break;
     case M_RIM:
-        pitchHz = 300.f * exp2f(P(P_S0) * (1.6f / 127.f)) * ratio;
-        ddco = decayCo(0.008f * exp2f(P(P_S1) * (3.f / 127.f)), sr);
+        pitchHz = 300.f * fastExp2(P(P_S0) * (1.6f / 127.f)) * ratio;
+        ddco = decayCo(0.008f * fastExp2(P(P_S1) * (3.f / 127.f)), sr);
         cco = decayCo(0.003f, sr);
-        aux.set(800.f * exp2f(P(P_S2) * (2.5f / 127.f)), 0.6f, sr);
+        aux.set(800.f * fastExp2(P(P_S2) * (2.5f / 127.f)), 0.6f, sr);
         break;
     case M_SHKR:
-        aux.set(2000.f * exp2f(P(P_S0) * (2.6f / 127.f)) * ratio, 0.35f, sr);
-        ddco = decayCo(0.02f * exp2f(P(P_S1) * (4.5f / 127.f)), sr);
+        aux.set(2000.f * fastExp2(P(P_S0) * (2.6f / 127.f)) * ratio, 0.35f, sr);
+        ddco = decayCo(0.02f * fastExp2(P(P_S1) * (4.5f / 127.f)), sr);
         sAtkInc = 1.f / ((0.001f + P(P_S2) / 127.f * 0.08f) * sr);
         shkGrit = P(P_S3) / 127.f;
         break;
     case M_WTBL:
-        pitchHz = 440.f * exp2f((nn - 69.f) / 12.f);
+        pitchHz = 440.f * fastExp2((nn - 69.f) / 12.f);
         wtTab = P(P_S0) & 3;
         wtPos = P(P_S1) / 127.f;
         wtWarp = (P(P_S2) - 64) / 64.f;
-        wtDet = exp2f(P(P_S3) / 127.f * 0.4f / 12.f);
+        wtDet = fastExp2(P(P_S3) / 127.f * 0.4f / 12.f);
         wtPenv = (P(P_S6) - 64) / 64.f;
         break;
     case M_CHOP:
         if (smp) {
             float semis = (nn - 60.f) + (P(P_S3) - 24) + (P(P_S4) - 64) / 64.f;
-            sinc = smp->rate / sr * exp2f(semis / 12.f) * (sRev ? -1.f : 1.f);
+            sinc = smp->rate / sr * fastExp2(semis / 12.f) * (sRev ? -1.f : 1.f);
             float g = P(P_S7) / 64.f; sGain = g * g;
         }
         break;
@@ -365,10 +369,10 @@ void Voice::update(int n, float sr, float bpm) {
         if (smp) {
             grPosF = P(P_S1) / 127.f;
             grSpray = P(P_S2) / 127.f;
-            grLen = (0.01f * exp2f(P(P_S3) * (5.6f / 127.f))) * sr;          // 10 ms .. 0.5 s
-            float dHz = 2.f * exp2f(P(P_S4) * (6.f / 127.f));                 // 2 .. 128 Koerner/s
+            grLen = (0.01f * fastExp2(P(P_S3) * (5.6f / 127.f))) * sr;          // 10 ms .. 0.5 s
+            float dHz = 2.f * fastExp2(P(P_S4) * (6.f / 127.f));                 // 2 .. 128 Koerner/s
             grInterval = sr / dHz;
-            grPitch = smp->rate / sr * exp2f(((nn - 60.f) + (P(P_S5) - 24)) / 12.f);
+            grPitch = smp->rate / sr * fastExp2(((nn - 60.f) + (P(P_S5) - 24)) / 12.f);
             grPSpr = P(P_S6) / 127.f;
             float g = P(P_S7) / 64.f; sGain = g * g;
         }
@@ -376,13 +380,13 @@ void Voice::update(int n, float sr, float bpm) {
     case M_SAMPLE:
         if (smp) {
             float semis = (nn - 60.f) + (P(P_S1) - 24) + (P(P_S2) - 64) / 64.f;
-            sinc = smp->rate / sr * exp2f(semis / 12.f) * (sRev ? -1.f : 1.f);
+            sinc = smp->rate / sr * fastExp2(semis / 12.f) * (sRev ? -1.f : 1.f);
             float g = P(P_S6) / 64.f;
             sGain = g * g;
         }
         break;
     default:
-        pitchHz = 440.f * exp2f((nn - 69.f) / 12.f);
+        pitchHz = 440.f * fastExp2((nn - 69.f) / 12.f);
         break;
     }
 
@@ -396,7 +400,7 @@ void Voice::update(int n, float sr, float bpm) {
     sendR = vol * P(P_REV) / 127.f;
     drive = P(P_DRIV) / 127.f;
     float cr = (float)P(P_CRSH);
-    crushQ = cr > 0.5f ? exp2f(15.f - cr / 127.f * 13.f) : 0.f;
+    crushQ = cr > 0.5f ? fastExp2(15.f - cr / 127.f * 13.f) : 0.f;
     srrN = 1 + P(P_SRR) / 6;
 
     // Insert-Effekt
@@ -406,28 +410,28 @@ void Voice::update(int n, float sr, float bpm) {
     insP2 = p2; insP3 = p3;
     switch (insType) {
     case INS_CHORUS: case INS_FLANGER: case INS_APAN:
-        insRate = 0.05f * exp2f(p1 * 8.f);
+        insRate = 0.05f * fastExp2(p1 * 8.f);
         insFb = (p3 - 0.5f) * 1.8f;
         break;
     case INS_PHASER: {
-        insRate = 0.05f * exp2f(p1 * 8.f);
+        insRate = 0.05f * fastExp2(p1 * 8.f);
         insPh += insRate * n / sr; if (insPh >= 1.f) insPh -= floorf(insPh);
         insFb = p3 * 0.85f;
         // zwei Allpass-Koeffizienten (L/R) aus dem LFO
         for (int c = 0; c < 2; c++) {
             float lv = sin01(insPh + c * 0.25f);
-            float f = 300.f * exp2f(p2 * 3.5f * (0.5f + 0.5f * lv));
+            float f = 300.f * fastExp2(p2 * 3.5f * (0.5f + 0.5f * lv));
             float t = tanf(3.14159265f * fminf(f, sr * 0.45f) / sr);
             apA[c] = (t - 1.f) / (t + 1.f);
         }
     } break;
     case INS_DRIVE:
         odG = 1.f + p1 * p1 * 40.f;
-        odCo = 1.f - expf(-6.2831853f * (400.f * exp2f(p2 * 5.f)) / sr);
+        odCo = 1.f - fastExpE(-6.2831853f * (400.f * fastExp2(p2 * 5.f)) / sr);
         odLvl = (0.1f + p3 * 0.9f) * 0.4f;
         break;
     case INS_RING:
-        insRate = 20.f * exp2f(p1 * 7.f) * exp2f((p2 - 0.5f) / 12.f * 2.f);
+        insRate = 20.f * fastExp2(p1 * 7.f) * fastExp2((p2 - 0.5f) / 12.f * 2.f);
         break;
     default: break;
     }
@@ -494,7 +498,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     float units = fBase + fEnv * fev;
     bool bypassF = (ftype == FT_LP12 && units >= 126.f && reso < 0.01f);
     if (!bypassF) {
-        float fcHz = 16.f * exp2f(units * (10.3f / 127.f));
+        float fcHz = 16.f * fastExp2(units * (10.3f / 127.f));
         switch (ftype) {
         case FT_LP24: case FT_HP24:   // zwei SVF-Stufen = 24 dB/Okt. (Resonanz in der zweiten)
             filt.set(fcHz, 0.3f, sr); filt2.set(fcHz, reso * 0.98f, sr); break;
@@ -529,11 +533,11 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     float sweep = P(P_S2) / 127.f * 6.f, click = P(P_S4) / 127.f, body = P(P_S5) / 127.f;
     float snap = P(P_S2) / 127.f, metl = P(P_S3) / 127.f;
     float pw = 0.5f + (P(P_S6) - 64) / 140.f;
-    float detune = exp2f((P(P_S2) - 64) / 64.f * 0.5f / 12.f) * exp2f((drift2 - drift1) * 0.25f / 1200.f);
+    float detune = fastExp2((P(P_S2) - 64) / 64.f * 0.5f / 12.f + (drift2 - drift1) * 0.25f / 1200.f);
     float mix = P(P_S3) / 127.f, sub = P(P_S4) / 127.f, noise = P(P_S5) / 127.f;
     float fmNoise = P(P_S7) / 127.f;
     int w1 = P(P_S0) & 3, w2 = P(P_S1) & 3;
-    float dt = pitchHz * inv * (machine == M_SYNTH ? exp2f(drift1 * 0.25f / 1200.f) : 1.f);
+    float dt = pitchHz * inv * (machine == M_SYNTH ? fastExp2(drift1 * 0.25f / 1200.f) : 1.f);
     float bmax = 0.f;
 
     for (int i = 0; i < n; i++) {
@@ -541,13 +545,16 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         switch (machine) {
         case M_KICK: {
             // 808/909: exponentieller Pitch-Abfall (SWEP bis 3 Oktaven), Sinus, Anschlag aus Puls + Rauschen
-            float f = pitchHz * fastExp2(sweep * 0.5f * penv);
+            float se = sweep * 0.5f * penv;   // Pitch-Sweep nur solange er hoerbar ist
+            float f = se > 1e-4f ? pitchHz * fastExp2(se) : pitchHz;
             penv *= pco;
             ph1 += f * inv; if (ph1 >= 1.f) ph1 -= 1.f;
             s = sin01(ph1) * denv;
             s = fastTanh(s * (1.15f + body * 5.f)) * (body > 0 ? 1.f : 1.05f);   // etwas Waerme, BODY = Drive (909)
-            float clk = (ph1 < 0.5f ? 1.f : -1.f) * 0.5f + rng.next() * 0.5f;
-            s += clk * cenv * click * 0.8f;
+            if (cenv > 1e-5f) {   // Klick klingt nach wenigen ms aus
+                float clk = (ph1 < 0.5f ? 1.f : -1.f) * 0.5f + rng.next() * 0.5f;
+                s += clk * cenv * click * 0.8f;
+            }
             denv *= ddco; cenv *= cco;
         } break;
         case M_SNARE: {
@@ -626,8 +633,8 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             penv *= pco;
             ph1 += f * inv; if (ph1 >= 1.f) ph1 -= 1.f;
             s = sin01(ph1) * denv;
-            s += rng.next() * nenv * P(P_S3) / 127.f * 0.5f;
-            if (P(P_S4)) s = fastTanh(s * (1.f + P(P_S4) / 127.f * 4.f));
+            s += rng.next() * nenv * mix * 0.5f;              // mix = P_S3 (NOIS), sub = P_S4 (BODY)
+            if (sub > 0.f) s = fastTanh(s * (1.f + sub * 4.f));
             denv *= ddco; nenv *= nco;
         } break;
         case M_RIM: {
@@ -636,7 +643,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             float src = (ph1 < 0.5f ? 1.f : -1.f) + 0.7f * (ph2 < 0.5f ? 1.f : -1.f);
             float lo, bp, hp;
             aux.proc(src, lo, bp, hp);
-            s = bp * denv * 1.3f + rng.next() * cenv * P(P_S3) / 127.f;
+            s = bp * denv * 1.3f + rng.next() * cenv * mix;   // mix = P_S3 (CLCK)
             denv *= ddco; cenv *= cco;
         } break;
         case M_SHKR: {
@@ -657,8 +664,8 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
             ph2 += dt * wtDet; if (ph2 >= 1.f) ph2 -= 1.f;
             phs += dt * 0.5f; if (phs >= 1.f) phs -= 1.f;
-            s += P(P_S4) / 127.f * 0.6f * sin01(phs);
-            s += P(P_S5) / 127.f * 0.4f * rng.next();
+            s += sub * 0.6f * sin01(phs);
+            s += noise * 0.4f * rng.next();
             s *= 0.55f;
         } break;
         case M_CHOP: {
@@ -1385,7 +1392,7 @@ static inline void flushDenormals() {
 
 void Engine::render(float* out, int frames) {
     flushDenormals();
-    const int BLK = 16;
+    const int BLK = 32;   // Steuerdaten (Huellkurven-Koeffizienten, LFOs) alle 32 Samples = 0,7 ms
     for (int i = 0; i < frames; i += BLK) {
         int m = frames - i < BLK ? frames - i : BLK;
         curOff = i;
@@ -1440,7 +1447,7 @@ void Engine::render(float* out, int frames) {
 }
 
 void Engine::processBlock(float* out, int n) {
-    float L[16] = {0}, R[16] = {0}, D[16] = {0}, RV[16] = {0}, KL[16] = {0}, KR[16] = {0};
+    float L[32] = {0}, R[32] = {0}, D[32] = {0}, RV[32] = {0}, KL[32] = {0}, KR[32] = {0};   // = BLK in render()
     int key = (int)proj.cmp[CM_SRC] - 1;   // -1 = intern (Summe), sonst Sidechain-Spur
     for (int t = 0; t < NTRACKS; t++) {
         if (!v[t].active) continue;
@@ -1485,7 +1492,15 @@ void Engine::processBlock(float* out, int n) {
     else if (djMode == 2) { float fc = 20.f * exp2f(djSm * 9.f); djL.set(fc, 0.35f, sr); djR.set(fc, 0.35f, sr); }
 
     float pl = peakL * 0.97f, pr = peakR * 0.97f;
+    // Leerlauf: Delay/Reverb rechnen erst wieder, wenn etwas hineingeht (spart viel CPU bei trockenen Spuren)
+    bool dIn = false, rIn = false;
+    for (int i = 0; i < n; i++) { if (D[i] != 0.f) dIn = true; if (RV[i] != 0.f) rIn = true; }
+    bool dRun = dIn || dQuiet < dlyLen + n;
+    bool rRun = rIn || dRun || rQuiet < 44100 * 2 + preLen;
+    float dMax = 0.f, rMax = 0.f;
     for (int i = 0; i < n; i++) {
+        float wdL = 0.f, wdR = 0.f, rl = 0.f, rr = 0.f;
+        if (dRun) {
         dSm += (dTarget - dSm) * 0.0004f;                     // Zeitwechsel gleitet wie beim Bandecho
         float rp = dlyPos - dSm; if (rp < 0) rp += dlyLen;
         int i0 = (int)rp, i1 = i0 + 1 >= dlyLen ? 0 : i0 + 1;
@@ -1499,18 +1514,22 @@ void Engine::processBlock(float* out, int n) {
         if (++dlyPos >= dlyLen) dlyPos = 0;
         // Delay-Stereobreite: 0 = mono, 127 = volles Ping-Pong
         float dm = (dlpL + dlpR) * 0.5f;
-        float wdL = dm + (dlpL - dm) * dwid, wdR = dm + (dlpR - dm) * dwid;
+        wdL = dm + (dlpL - dm) * dwid; wdR = dm + (dlpR - dm) * dwid;
+        float da = fabsf(dlpL) + fabsf(dlpR); if (da > dMax) dMax = da;
+        }
+        if (rRun) {
         // Reverb mit Predelay
-        float rin = RV[i] + (dlpL + dlpR) * 0.15f;
+        float rin = RV[i] + (dRun ? (dlpL + dlpR) * 0.15f : 0.f);
         if (pre > 0) {
             int rp2 = prePos - pre; if (rp2 < 0) rp2 += preLen;
             preBuf[prePos] = rin; rin = preBuf[rp2];
             if (++prePos >= preLen) prePos = 0;
         }
-        float rl, rr;
         rev.process(rin, rsize, rdamp, rl, rr);
         float rm = (rl + rr) * 0.5f;
         rl = rm + (rl - rm) * rwid; rr = rm + (rr - rm) * rwid;
+        float ra = fabsf(rl) + fabsf(rr); if (ra > rMax) rMax = ra;
+        }
         float oL = L[i] + wdL + rl, oR = R[i] + wdR + rr;
         if (cOn) {
             float det = key >= 0 ? fmaxf(fabsf(KL[i]), fabsf(KR[i])) : fmaxf(fabsf(oL), fabsf(oR));
@@ -1539,6 +1558,10 @@ void Engine::processBlock(float* out, int n) {
     }
     peakL = pl; peakR = pr;
     if (grMax > grPeak) grPeak = grMax;
+    // verklungen = kein Eingang und Ausgang unter -100 dB; erst nach einer vollen Pufferlaenge Stille abschalten
+    if (dIn || dMax > 1e-5f) dQuiet = 0; else if (dQuiet < (1 << 30)) dQuiet += n;
+    if (rIn || rMax > 1e-5f || (dRun && dMax > 1e-5f)) rQuiet = 0; else if (rQuiet < (1 << 30)) rQuiet += n;
+    if (!dRun) { dlpL = dlpR = dhpL = dhpR = 0.f; }
 }
 
 bool Engine::save(const char* path) {

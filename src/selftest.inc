@@ -70,6 +70,7 @@ static BenchRes benchRender(Engine& E, double secs) {
 // alle 8 Spuren mit Engine m, jeder Step ein Trig, typische Einstellungen
 static void benchSetupEngine(Engine& E, int m) {
     E.defaultProject(false);
+    E.songOn = false; E.curPat = 0; E.nextPat = -1;
     E.proj.bpm = 128;
     Pattern& P = E.proj.pat[0];
     for (int t = 0; t < NTRACKS; t++) {
@@ -83,6 +84,7 @@ static void benchSetupEngine(Engine& E, int m) {
 static void benchSetupWorst(Engine& E) {
     static const int ms[NTRACKS] = {M_SYNTH, M_WTBL, M_FM, M_GRAN, M_CHOP, M_SAMPLE, M_SYNTH, M_SNARE};
     E.defaultProject(false);
+    E.songOn = false; E.curPat = 0; E.nextPat = -1;
     E.proj.bpm = 174;
     Pattern& P = E.proj.pat[0];
     for (int t = 0; t < NTRACKS; t++) {
@@ -122,6 +124,10 @@ static void benchAudio() {
         bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f %9.2f%%%s\n", nm, r.load, r.peak, r.lvl, r.voices, per, r.bad ? "  NAN!" : "");
         if (per > worstEng) { worstEng = per; worstM = m; }
     }
+    buildDemo(E); E.songOn = true; E.songStart(0);
+    r = benchRender(E, 6.0);
+    E.songOn = false;
+    bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f\n", "DEMO-SONG (realistisch)", r.load, r.peak, r.lvl, r.voices);
     benchSetupWorst(E);
     r = benchRender(E, 4.0);
     bout("  %-26s %7.1f%% %9.1f%% %7.2f %8.1f%s\n", "WORST CASE (alles an)", r.load, r.peak, r.lvl, r.voices, r.bad ? "  NAN!" : "");
@@ -134,23 +140,26 @@ static void benchAudio() {
 static void benchUi(int frames, bool withPresent) {
     int sp0 = page, st0 = track, ss0 = slot; bool mo0 = menuOpen;
     bout("\nBILDAUFBAU (%d Bilder je Seite%s, Ziel < 16,7 ms = 60 fps)\n", frames, withPresent ? ", inkl. Ausgabe aufs Display" : "");
-    bout("  %-22s %8s %8s\n", "Seite", "Mittel", "Max");
+    bout("  %-22s %8s %8s %9s\n", "Seite", "Mittel", "Max", withPresent ? "Ausgabe" : "");
     double sum = 0, worst = 0; int worstP = 0, n = 0;
     for (int p = 0; p <= NUI_PAGES + 1; p++) {
         menuOpen = false;
         if (p < NUI_PAGES) { page = p; if (!pageAvail(p)) continue; }
         else if (p == NUI_PAGES) { page = PG_FLT; menuOpen = true; menuSel = PG_FLT; }
         track = 4; slot = 0;
-        double tot = 0, mx = 0;
+        double tot = 0, mx = 0, pres = 0;
         for (int i = 0; i < frames; i++) {
             double t0 = nowMs();
             drawAll(p == NUI_PAGES + 1);
+            double t1 = nowMs();
             if (withPresent) present();
             double el = nowMs() - t0;
+            pres += nowMs() - t1;
             tot += el; if (el > mx) mx = el;
         }
         const char* nm = p < NUI_PAGES ? PAGE_LONG[p] : (p == NUI_PAGES ? "SEITENMENUE" : "HILFE");
-        bout("  %-22s %6.2fms %6.2fms\n", nm, tot / frames, mx);
+        if (withPresent) bout("  %-22s %6.2fms %6.2fms %7.2fms\n", nm, tot / frames, mx, pres / frames);
+        else bout("  %-22s %6.2fms %6.2fms\n", nm, tot / frames, mx);
         sum += tot / frames; n++;
         if (tot / frames > worst) { worst = tot / frames; worstP = p; }
     }

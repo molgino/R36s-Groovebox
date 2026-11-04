@@ -130,7 +130,10 @@ struct Voice {
     volatile float peakHold = 0;
 
     inline int PR(int i) const { return lk[i] != NO_LOCK ? lk[i] : base[i]; }   // ohne LFO
+    bool lfAny = false;   // mindestens ein LFO moduliert einen Parameter (sonst schneller Weg in P)
+    uint64_t lfMask[2] = {0, 0};   // Bit je modulierten Parameter
     inline int P(int i) const {                                                   // mit LFO-Modulation
+        if (!lfAny || !((lfMask[i >> 6] >> (i & 63)) & 1)) return PR(i);
         int r = PR(i);
         for (int k = 0; k < NLFO; k++)
             if (i == lfDst[k]) { r += (int)lfOff[k]; if (r < 0) r = 0; if (r > lfMax[k]) r = lfMax[k]; }
@@ -243,7 +246,8 @@ private:
     void schedule(int t, double at, int s, const uint8_t* lk);
     double stepStartT[NTRACKS] = {0}, stepLenT[NTRACKS] = {1};
     int tickCount = 0; double tickHist[25]; int tickHistN = 0;
-    float dSm = 0, dhpL = 0, dhpR = 0;   // Delay: geglaettete Zeit, Hochpass in der Schleife
+    float dSm = 0, dhpL = 0, dhpR = 0;
+    int dQuiet = 1 << 30, rQuiet = 1 << 30;   // Samples ohne Eingang und mit verklungenem Ausgang (dann Delay/Reverb ueberspringen)   // Delay: geglaettete Zeit, Hochpass in der Schleife
     void doTick();
     void stepTrack(int t);
     bool condOk(int t, int cond);
