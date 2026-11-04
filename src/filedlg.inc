@@ -57,6 +57,7 @@ static void doLoadProject(const char* name) {
     if (!fileExists(p)) { toast(TR("PROJEKT '%s' NICHT GEFUNDEN", "PROJECT '%s' NOT FOUND"), name); return; }
     lockA(); eng.stop(); bool ok = eng.load(p); unlockA();
     if (!ok) { toast(TR("LADEN FEHLGESCHLAGEN", "LOADING FAILED")); return; }
+    poolLoadForProject(p);
     memcpy(&lastSaved, &eng.proj, sizeof(Project));
     setCurrentProject(name);
     toast(TR("GELADEN: %s", "LOADED: %s"), name);
@@ -68,6 +69,7 @@ static void doSaveProjectAs(const char* name) {
 }
 static void doNewProject(const char* name) {
     lockA(); eng.stop(); eng.defaultProject(false); eng.songOn = false; unlockA();
+    poolDefaults();
     doSaveProjectAs(name);
     toast(TR("NEUES PROJEKT: %s", "NEW PROJECT: %s"), name);
 }

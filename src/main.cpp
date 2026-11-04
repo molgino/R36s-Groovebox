@@ -113,6 +113,11 @@ static bool driveOn = false;   // Groovebox-OS: Datenpartition gerade als USB-La
 // Speichern: unter der Audio-Sperre nur kopieren (~1 ms), Schreiben auf die SD-Karte ohne Sperre
 // (sonst steht der Audio-Thread waehrend des Schreibens -> Aussetzer beim automatischen Speichern).
 // Erst in eine Temp-Datei, dann umbenennen: ein Stromausfall beim Speichern zerstoert das Projekt nicht.
+static void writePoolTrailer(FILE* f, const Project& J);   // Sample-Namen des Projekts (nach den Projektdaten)
+static bool poolSetSlot(int slot, const char* name);
+static int poolAssign(const char* name);
+static void poolLoadForProject(const char* path);
+static void poolDefaults();
 static Project saveSnap;
 static bool saveProject() {
     if (driveOn) return false;
@@ -120,6 +125,7 @@ static bool saveProject() {
     char tmp[700]; snprintf(tmp, sizeof tmp, "%s.tmp", projPath);
     FILE* f = fopen(tmp, "wb");
     bool ok = f && fwrite(&saveSnap, sizeof(Project), 1, f) == 1;
+    if (ok) writePoolTrailer(f, saveSnap);
     if (f) { ok = fflush(f) == 0 && ok; ok = fsync(fileno(f)) == 0 && ok; fclose(f); }
     ok = ok && rename(tmp, projPath) == 0;
     if (ok) memcpy(&lastSaved, &saveSnap, sizeof(Project));
@@ -2857,6 +2863,7 @@ static void runAction(int act, int arg) {
     case ACT_DEMO: {
         char nm[64]; freeProjectName("Neon Nights", nm, sizeof nm);
         lockA(); eng.stop(); buildDemo(eng); eng.songOn = true; eng.songStart(0); unlockA();
+        poolDefaults();
         doSaveProjectAs(nm);
         toast(TR("DEMO '%s' GELADEN - START DRÜCKEN", "DEMO '%s' LOADED - PRESS START"), nm);
     } break;
@@ -3921,41 +3928,114 @@ static void setupPaths() {
     char sdir[600];
     snprintf(sdir, sizeof sdir, "%ssamples", basePath);
     mkdir(sdir, 0755);
-    int ns = samplesLoad(sdir);
-    printf("%d Samples geladen aus %s\n", ns, sdir);
+    int ns = libScan(sdir);
+    printf("Sample-Bibliothek: %d WAV-Dateien in %s (%d in anderen Formaten werden nicht gelesen)\n", ns, sdir, libSkipped());
 }
 
 int runDhcpd(const char* ifname);
 
-// Samples nach Upload neu laden: Bank im Hintergrund fuellen, kurz unter Audio-Sperre tauschen,
-// Sample-Nummern in allen Patterns ueber den Namen neu zuordnen
-static void reloadSamples() {
-    static char oldNames[MAX_SAMPLES][96];
-    int on = sampleCount();
-    for (int i = 0; i < on; i++) snprintf(oldNames[i], 48, "%s", sampleName(i));
-    char sdir[600];
-    snprintf(sdir, sizeof sdir, "%ssamples", basePath);
-    int nn = samplesPrepare(sdir);
-    int map[MAX_SAMPLES];
-    for (int i = 0; i < on; i++) map[i] = -1;
-    lockA();
-    eng.dropSamples();
-    samplesSwap();
-    for (int i = 0; i < on; i++)
-        for (int j = 0; j < nn; j++) if (!strcmp(oldNames[i], sampleName(j))) { map[i] = j; break; }
-    auto fix = [&](uint8_t& v) { if (v < on) v = (uint8_t)(map[v] >= 0 ? map[v] : 0); };
-    auto fixPat = [&](Pattern& P) {
-        for (int t = 0; t < NTRACKS; t++) {
-            if (!machineUsesSample(P.machine[t])) continue;
-            fix(P.p[t][P_S0]);
-            for (int s = 0; s < NSTEPS; s++) if (P.s[t][s].lock[P_S0] != NO_LOCK) fix(P.s[t][s].lock[P_S0]);
+// ---------------------------------------------------------------- Sample-Pool des Projekts
+// Spur-Parameter SMPL = Pool-Platz; das Projekt speichert zu jedem benutzten Platz den Bibliotheksnamen.
+static int poolMissing = 0;   // beim letzten Projekt-Laden nicht gefundene Samples
+static bool poolSetSlot(int slot, const char* name) {   // Datei in den Platz laden (leerer Name = Platz leeren)
+    Sample s; memset(&s, 0, sizeof s);
+    if (name && name[0] && !sampleRead(name, s)) { printf("Sample nicht lesbar: %s (%s)\n", name, sampleLastError()); return false; }
+    lockA(); poolSwap(slot, s); unlockA();
+    sampleFree(s);
+    return true;
+}
+static int poolAssign(const char* name) {   // Platz fuer ein Bibliotheks-Sample: vorhandenen nutzen oder neu laden
+    int sl = poolFind(name);
+    if (sl >= 0) return sl;
+    sl = poolFreeSlot();
+    if (sl < 0) { toast(TR("SAMPLE-POOL VOLL (%d)", "SAMPLE POOL FULL (%d)"), (int)PREVIEW_SLOT); return -1; }
+    if (!poolSetSlot(sl, name)) { toast(TR("NICHT LESBAR: %s", "CANNOT READ: %s"), sampleLastError()); return -1; }
+    return sl;
+}
+static void poolUsed(const Project& J, bool* used) {   // welche Plaetze benutzt das Projekt (Grundwerte + Locks)
+    for (int i = 0; i < MAX_SAMPLES; i++) used[i] = false;
+    for (int p = 0; p < NPATTERNS; p++) for (int t = 0; t < NTRACKS; t++) {
+        const Pattern& P = J.pat[p];
+        if (!machineUsesSample(P.machine[t] % M_COUNT)) continue;
+        if (P.p[t][P_S0] < MAX_SAMPLES) used[P.p[t][P_S0]] = true;
+        for (int st = 0; st < NSTEPS; st++) { uint8_t v = P.s[t][st].lock[P_S0]; if (v < MAX_SAMPLES) used[v] = true; }
+    }
+}
+static void writePoolTrailer(FILE* f, const Project& J) {   // "SPL1", Anzahl, je Eintrag: Platz, Laenge, Name
+    bool used[MAX_SAMPLES]; poolUsed(J, used);
+    uint16_t n = 0;
+    for (int i = 0; i < PREVIEW_SLOT; i++) if (used[i] && sampleName(i)[0]) n++;
+    fwrite("SPL1", 1, 4, f); fwrite(&n, 2, 1, f);
+    for (int i = 0; i < PREVIEW_SLOT; i++) {
+        if (!used[i] || !sampleName(i)[0]) continue;
+        uint8_t hdr[2] = {(uint8_t)i, (uint8_t)strlen(sampleName(i))};
+        fwrite(hdr, 1, 2, f); fwrite(sampleName(i), 1, hdr[1], f);
+    }
+}
+static bool readPoolTrailer(const char* path, char (*names)[96]) {
+    for (int i = 0; i < MAX_SAMPLES; i++) names[i][0] = 0;
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    bool ok = false;
+    char mg[4]; uint16_t n = 0;
+    if (fseek(f, (long)sizeof(Project), SEEK_SET) == 0 && fread(mg, 1, 4, f) == 4 && !memcmp(mg, "SPL1", 4) && fread(&n, 2, 1, f) == 1) {
+        ok = true;
+        for (int k = 0; k < n; k++) {
+            uint8_t hdr[2];
+            if (fread(hdr, 1, 2, f) != 2) break;
+            char nm[256] = "";
+            if (fread(nm, 1, hdr[1], f) != hdr[1]) break;
+            nm[hdr[1]] = 0;
+            if (hdr[0] < MAX_SAMPLES) snprintf(names[hdr[0]], 96, "%s", nm);
         }
-    };
-    for (int p = 0; p < NPATTERNS; p++) fixPat(eng.proj.pat[p]);
-    if (haveClip) fixPat(clip);
+    }
+    fclose(f);
+    return ok;
+}
+// nach dem Laden eines Projekts: Pool passend fuellen (neue Projekte per Namensliste, alte per frueherer Nummerierung)
+static void poolLoadForProject(const char* path) {
+    static char names[MAX_SAMPLES][96];
+    bool used[MAX_SAMPLES]; poolUsed(eng.proj, used);
+    bool have = readPoolTrailer(path, names);
+    if (!have) {   // altes Projekt: Nummer = Position in der frueheren Liste (eine Unterordner-Ebene, max. 128)
+        static char legacy[128][96];
+        int n = libLegacyList(legacy, 128);
+        for (int i = 0; i < MAX_SAMPLES; i++) names[i][0] = 0;
+        for (int i = 0; i < n && i < MAX_SAMPLES; i++) if (used[i]) snprintf(names[i], 96, "%s", legacy[i]);
+        printf("Projekt ohne Sample-Liste: %d alte Nummern ueber die fruehere Reihenfolge zugeordnet\n", n);
+    }
+    poolMissing = 0;
+    for (int i = 0; i < MAX_SAMPLES; i++) {
+        const char* want = (i < PREVIEW_SLOT && used[i]) ? names[i] : "";
+        if (!strcmp(sampleName(i), want) && (want[0] == 0 || sampleGet(i))) continue;
+        if (!poolSetSlot(i, want)) { poolMissing++; poolSetSlot(i, ""); }
+    }
+    if (poolMissing) toast(TR("%d SAMPLES FEHLEN (LOG)", "%d SAMPLES MISSING (LOG)"), poolMissing);
+}
+// neues Projekt: Pool leeren, Sample-Spuren auf das Start-Sample (falls vorhanden)
+static void poolDefaults() {
+    for (int i = 0; i < MAX_SAMPLES; i++) if (sampleName(i)[0]) poolSetSlot(i, "");
+    const char* def = libFind("keys/stab-minor") >= 0 ? "keys/stab-minor" : (libCount() ? libName(0) : nullptr);
+    int sl = def ? poolAssign(def) : -1;
+    lockA();
+    for (int p = 0; p < NPATTERNS; p++) for (int t = 0; t < NTRACKS; t++)
+        if (machineUsesSample(eng.proj.pat[p].machine[t] % M_COUNT)) eng.proj.pat[p].p[t][P_S0] = (uint8_t)(sl >= 0 ? sl : 0);
     unlockA();
-    samplesFreeBack();
-    printf("Samples neu geladen: %d\n", nn);
+}
+// nach Upload/Loeschen im Browser oder USB-Laufwerk: Bibliothek neu einlesen, geaenderte Pool-Samples neu laden
+static void reloadSamples() {
+    char sdir[600]; snprintf(sdir, sizeof sdir, "%ssamples", basePath);
+    int n = libScan(sdir);
+    int re = 0;
+    for (int i = 0; i < MAX_SAMPLES; i++) {
+        const Sample* sm = sampleGet(i);
+        if (!sm) continue;
+        char full[800]; snprintf(full, sizeof full, "%s/%s.wav", sdir, sm->name);
+        struct stat st;
+        if (stat(full, &st)) continue;   // Datei weg: geladene Daten behalten (Projekt klingt weiter)
+        if ((long)st.st_mtime != sm->mtime || (long)st.st_size != sm->fsize) { char nm[96]; snprintf(nm, sizeof nm, "%s", sm->name); if (poolSetSlot(i, nm)) re++; }
+    }
+    printf("Bibliothek: %d Samples (%d andere Formate), %d im Pool neu geladen\n", n, libSkipped(), re);
 }
 
 #include "selftest.inc"
@@ -3981,7 +4061,7 @@ int main(int argc, char** argv) {
     if (renderOut) {   // Offline-Bounce ohne Grafik/Audiogeraet
         eng.init(44100);
         if (getenv("GB_DEMO")) { buildDemo(eng); eng.songOn = true; eng.songStart(0); }   // Demo-Song rendern
-        else if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);
+        else if (eng.load(projPath)) { printf("Projekt geladen: %s\n", projPath); poolLoadForProject(projPath); }
         eng.start();
         int frames = (int)(renderSecs * 44100);
         float* buf = (float*)malloc(sizeof(float) * 2 * frames);
@@ -3995,6 +4075,7 @@ int main(int argc, char** argv) {
     }
 
     if (benchMode || selftestMode) {   // Leistungstest / Selbsttest ohne Anzeige (Zeichnen in den Speicher wie auf dem Geraet)
+        { char sd[600]; snprintf(sd, sizeof sd, "%ssamples", basePath); samplesLoad(sd); }
         eng.init(44100);
         SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_ARGB8888);
         ren = SDL_CreateSoftwareRenderer(surf);
@@ -4008,6 +4089,7 @@ int main(int argc, char** argv) {
     if (shot) {        // Screenshot (Software-Renderer) zum Testen
         eng.init(44100);
         eng.load(projPath);
+        { char sd[600]; snprintf(sd, sizeof sd, "%ssamples", basePath); samplesLoad(sd); }   // Screenshots: ganze Bibliothek in den Pool
         bool fbTest = getenv("GB_FB") != nullptr;   // Test der eigenen Zeichenfunktionen
         SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, fbTest ? SDL_PIXELFORMAT_ARGB8888 : SDL_PIXELFORMAT_RGBA32);
         ren = SDL_CreateSoftwareRenderer(surf);
@@ -4179,8 +4261,9 @@ int main(int argc, char** argv) {
     eng.init(44100);
     eng.audioThreads = eng.helperReady() && cfg.cores > 1 ? 2 : 1;
     printf("Audio-Rechenkerne: %d\n", eng.audioThreads);
-    if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);
-    else if (firstRun) { buildDemo(eng); eng.songOn = true; eng.songStart(0); printf("Erster Start: Demo-Song angelegt\n"); }   // Einsteiger: sofort etwas zum Hoeren
+    if (eng.load(projPath)) { printf("Projekt geladen: %s\n", projPath); poolLoadForProject(projPath); }
+    else if (firstRun) { buildDemo(eng); eng.songOn = true; eng.songStart(0); poolDefaults(); printf("Erster Start: Demo-Song angelegt\n"); }
+    else poolDefaults();   // Einsteiger: sofort etwas zum Hoeren
     memcpy(&lastSaved, &eng.proj, sizeof(Project));
     applyMidiSettings();
     eng.midiOut = midiOutHook;

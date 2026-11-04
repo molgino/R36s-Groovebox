@@ -683,7 +683,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             s *= 0.55f;
         } break;
         case M_CHOP: {
-            if (sDone || !smp) break;
+            if (sDone || !smp || !smp->data || smp->len < 2) break;   // Pool-Platz kann waehrend des Spielens geleert werden
             float rem = (float)(sRev ? spos - sEnd : sEnd - spos);
             float fade = rem < 64.f ? rem / 64.f : 1.f;           // kein Knacken am Scheibenende
             s = smpRead(smp, spos) * sGain * (fade < 0 ? 0 : fade);
@@ -691,7 +691,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             if (sRev ? spos <= sEnd : spos >= sEnd) sDone = true;
         } break;
         case M_GRAN: {
-            if (!smp) break;
+            if (!smp || !smp->data || smp->len < 4) break;
             grTimer -= 1.f;
             if (grTimer <= 0.f) {   // neues Korn
                 grTimer += grInterval * (0.75f + 0.5f * rng.uni());
@@ -717,7 +717,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             s = acc * sGain / sqrtf((float)(na > 1 ? na : 1)) * 1.2f;
         } break;
         case M_SAMPLE: {
-            if (sDone || !smp) break;
+            if (sDone || !smp || !smp->data || smp->len < 2) break;
             s = smpRead(smp, spos) * sGain;
             spos += sinc;
             bool past = sRev ? spos <= sEnd : spos >= sEnd;
@@ -1698,7 +1698,7 @@ bool Engine::load(const char* path) {
     // v5..v7: 72 bzw. 80 Parameter, 128 Steps, speed-Feld
     long nNp = ver == 5 ? 72 : (ver <= 7 ? 80 : 88);
     long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nSize = 20 + NPATTERNS * nPat + 16;
-    if (ok && (ver == PROJECT_VERSION || ver == 9 || ver == 10) && size == (long)sizeof(Project)) {   // v9/v10 = gleiches Layout
+    if (ok && (ver == PROJECT_VERSION || ver == 9 || ver == 10) && size >= (long)sizeof(Project)) {   // dahinter evtl. Sample-Namensliste   // v9/v10 = gleiches Layout
         memcpy(&proj, buf, sizeof(Project));
         proj.version = PROJECT_VERSION;
     } else if (ok && ver >= 5 && ver <= 8 && size == nSize) {

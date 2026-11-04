@@ -1,21 +1,42 @@
-// Sample-Bibliothek: WAV-Dateien aus dem Ordner samples/ (inkl. eine Unterordner-Ebene)
+// Samples: Bibliothek (alle WAV-Dateien unter samples/, nur Namen, beliebig viele) und
+// Pool (die vom Projekt benutzten Samples im Speicher; Spur-Parameter SMPL = Pool-Platz).
 #pragma once
 #include <stdint.h>
 
-enum { MAX_SAMPLES = 250, SAMPLE_DEPTH = 8 };   // Unterordner bis 8 Ebenen tief (Pfad max. 95 Zeichen)
+enum {
+    MAX_SAMPLES = 254,              // Pool-Plaetze (Parameterwert 0..253; 255 = kein Lock)
+    PREVIEW_SLOT = MAX_SAMPLES - 1, // Platz zum Vorhoeren im Explorer
+    MAX_LIB = 8192,                 // Dateien in der Bibliothek
+    SAMPLE_DEPTH = 8                // Unterordner-Ebenen
+};
 
 struct Sample {
-    char name[96];   // z.B. "drums/808/kick"
+    char name[96];   // Bibliotheksname ohne .wav, z.B. "drums/808/kick"
     float* data;     // mono
     int len;
     int rate;
+    long mtime, fsize;   // zum Erkennen geaenderter Dateien
 };
 
-int samplesLoad(const char* dir);  // liefert Anzahl geladener Samples
-int sampleCount();
-// Neu laden ohne Aussetzer: samplesPrepare (ohne Audio-Sperre) -> samplesSwap (unter Sperre) -> samplesFreeBack
-int samplesPrepare(const char* dir);
-void samplesSwap();
-void samplesFreeBack();
-const Sample* sampleGet(int i);   // nullptr, wenn nicht vorhanden
-const char* sampleName(int i);
+// Bibliothek
+int libScan(const char* dir);       // Liste neu einlesen (nur Namen), liefert Anzahl
+int libCount();
+const char* libName(int i);         // sortiert, ohne .wav
+int libFind(const char* name);      // -1 wenn nicht vorhanden
+int libSkipped();                   // Audiodateien in anderen Formaten (MP3, AIFF, FLAC ...): werden nicht gelesen
+const char* libDir();
+
+// Pool
+int sampleCount();                  // hoechster belegter Platz + 1 (ohne Vorhoer-Platz)
+const Sample* sampleGet(int slot);  // nullptr, wenn leer
+const char* sampleName(int slot);   // "" wenn leer
+int poolFind(const char* name);     // Platz mit diesem Sample oder -1
+int poolFreeSlot();                 // erster freier Platz (ohne Vorhoer-Platz) oder -1
+bool sampleRead(const char* name, Sample& out);   // Datei lesen (ohne Audio-Sperre); out.data mit malloc
+void poolSwap(int slot, Sample& s); // UNTER AUDIO-SPERRE: Platz <-> s tauschen (danach sampleFree(s))
+void sampleFree(Sample& s);
+const char* sampleLastError();      // Grund des letzten Lesefehlers
+
+// Tests/Benchmark: Bibliothek lesen und die ersten Dateien der Reihe nach in den Pool laden
+int samplesLoad(const char* dir);
+int libLegacyList(char (*out)[96], int max);   // Zuordnung alter Projekte (Nummer = Position)
