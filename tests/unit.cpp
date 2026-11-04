@@ -3,6 +3,7 @@
 //   make test SAN=1      -> mit AddressSanitizer/UBSan (Speicherfehler, undefiniertes Verhalten)
 #include "../src/engine.h"
 #include "../src/samples.h"
+#include "../src/factory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -174,6 +175,35 @@ static void testChord() {
     CHECK(act == 0, "Akkordstimmen klingen nach Stop weiter (%d)", act);
 }
 
+static void testFactory() {
+    curTest = "Werksklaenge";
+    for (int i = 0; i < NFACTORY; i++) {
+        fresh(120);
+        Pattern& P = E.proj.pat[0];
+        applyFactory(P, 0, i);
+        for (int s = 0; s < 16; s += 4) P.s[0][s].on = 1;
+        E.start();
+        bool bad = false;
+        float pk = run(44100, &bad);
+        printf("  %-18s Spitze %.2f\n", FACTORY[i].name, pk);
+        CHECK(!bad, "%s: NaN", FACTORY[i].name);
+        CHECK(pk > 0.05f, "%s zu leise (%.3f)", FACTORY[i].name, pk);
+        CHECK(pk < 0.999f, "%s uebersteuert (%.2f)", FACTORY[i].name, pk);
+    }
+    curTest = "Demo-Song";
+    E.stop();
+    buildDemo(E);
+    E.songOn = true; E.songStart(0);
+    E.start();
+    bool bad = false; float pk = 0; int seen = 0;
+    for (int bar = 0; bar < 12; bar++) { float p = run(barFrames(E.proj.bpm), &bad); if (p > pk) pk = p; seen |= 1 << E.curPat; }
+    printf("  Demo: Spitze %.2f, Patterns gespielt %x\n", pk, seen);
+    CHECK(!bad, "Demo: NaN");
+    CHECK(pk > 0.2f && pk < 1.01f, "Demo-Pegel %.2f", pk);
+    CHECK(seen == 0xF, "Demo spielt nicht alle 4 Patterns (%x)", seen);
+    E.songOn = false;
+}
+
 // alle Engines x alle Filtertypen x Extremwerte: endlich, begrenzt
 static void testStability() {
     curTest = "Stabilitaet";
@@ -268,6 +298,7 @@ int main(int argc, char** argv) {
     testSong();
     testArp();
     testChord();
+    testFactory();
     testStability();
     testDecay();
     testSaveLoad();

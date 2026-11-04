@@ -75,7 +75,7 @@ static inline float fastExp2(float x) {
     if (x > 120.f) x = 120.f;
     float xi = floorf(x), f = x - xi;
     float p = 1.f + f * (0.6931472f + f * (0.2402265f + f * (0.0555041f + f * (0.0096181f + f * 0.0013334f))));
-    union { float f; int32_t i; } u; u.f = p; u.i += (int32_t)xi << 23;
+    union { float f; int32_t i; } u; u.f = p; u.i += (int32_t)xi * (1 << 23);
     return u.f;
 }
 static inline float fastLog2(float x) {

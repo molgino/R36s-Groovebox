@@ -22,6 +22,7 @@
 #include "usbaudio.h"
 #include "remote.h"
 #include "paramhelp.h"
+#include "factory.h"
 
 static const int SW = 640, SH = 480;
 
@@ -816,11 +817,12 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
     } else if (page == PG_PRJ) {
         static const ParamDef PRJ_DEFS[8] = {
             {"SONG", K_SLOT, 0, 31}, {"LADEN", K_ACT, 0, 0}, {"SPEICHERN", K_ACT, 0, 0}, {"NEU", K_ACT, 0, 0},
-            {"PRESET", K_SLOT, 0, 31}, {"P.LADEN", K_ACT, 0, 0}, {"P.SPEICHERN", K_ACT, 0, 0}, {"INIT", K_ACT, 0, 0}};
+            {"PRESET", K_SLOT, 0, 31 + NFACTORY}, {"P.LADEN", K_ACT, 0, 0}, {"P.SPEICHERN", K_ACT, 0, 0}, {"INIT", K_ACT, 0, 0}};
         d = PRJ_DEFS[k];
         val = k == 0 ? prjSel : (k == 4 ? presetSel : 0);
         if (k == 0) snprintf(label, ln, "SONG %02d %s", prjSel + 1, prjSel == cfg.song ? "(AKTIV)" : (songExists(prjSel) ? "" : "(LEER)"));
-        if (k == 4) snprintf(label, ln, "%s %02d%s", MACHINE_NAMES[P.machine[track]], presetSel + 1, presetExists(P.machine[track], presetSel) ? "" : " (LEER)");
+        if (k == 4 && presetSel >= 32) snprintf(label, ln, "W:%.16s", FACTORY[presetSel - 32].name);
+        else if (k == 4) snprintf(label, ln, "%s %02d%s", MACHINE_NAMES[P.machine[track]], presetSel + 1, presetExists(P.machine[track], presetSel) ? "" : " (LEER)");
     } else if (page == PG_MIX) {
         d = PDEF_NONE;
         val = 0;
@@ -2847,6 +2849,14 @@ static void runAction(int act, int arg) {
     case ACT_LOAD: doLoadSong(arg); break;
     case ACT_SAVE: doSaveSong(arg); break;
     case ACT_NEW: doNewSong(); break;
+    case ACT_DEMO: {
+        int j = -1;
+        for (int i = 0; i < 32 && j < 0; i++) if (!songExists(i)) j = i;
+        if (j < 0) { toast("ALLE 32 PLÄTZE BELEGT"); break; }
+        lockA(); eng.stop(); buildDemo(eng); eng.songOn = true; eng.songStart(0); unlockA();
+        prjSel = j; doSaveSong(j);
+        toast("DEMO 'NEON NIGHTS' ALS SONG %02d - START DRÜCKEN", j + 1);
+    } break;
     case ACT_PSAVE: toast(savePreset(track, arg) ? "PRESET %02d GESPEICHERT" : "PRESET-FEHLER", arg + 1); break;
     case ACT_PASTE: lockA(); curP() = clip; unlockA(); toast("PATTERN EINGEFÜGT"); break;
     case ACT_CLEARTRK:
@@ -2882,11 +2892,17 @@ static void prjTrigger(int k) {   // Aktions-Regler auf der PRJ-Seite ausloesen
         break;
     case 3: askConfirm(ACT_NEW, 0, "NEUES LEERES PROJEKT ANLEGEN?"); break;
     case 5: {
+        if (presetSel >= 32) {   // Werksklang (setzt auch die Engine)
+            lockA(); applyFactory(curP(), track, presetSel - 32); unlockA();
+            toast("WERKSKLANG: %s", FACTORY[presetSel - 32].name);
+            break;
+        }
         int r = loadPreset(track, m, presetSel);
         if (r > 0) toast("%s %02d GELADEN", MACHINE_NAMES[m], presetSel + 1);
         else toast(r == 0 ? "PRESET %02d IST LEER" : "PRESET %02d DEFEKT", presetSel + 1);
     } break;
     case 6:
+        if (presetSel >= 32) { toast("WERKSKLÄNGE SIND SCHREIBGESCHÜTZT - PLATZ 1-32 WÄHLEN"); break; }
         if (presetExists(m, presetSel)) askConfirm(ACT_PSAVE, presetSel, "%s-PRESET %02d ÜBERSCHREIBEN?", MACHINE_NAMES[m], presetSel + 1);
         else runAction(ACT_PSAVE, presetSel);
         break;
@@ -2909,7 +2925,7 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
 // ---------------------------------------------------------------- Einstellungen (Liste, Seite SET)
 
 enum SetItem {
-    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_CLRTRK, SI_TMPL, SI_MUTATE, SI_UNDO, SI_REDO,
+    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_CLRTRK, SI_TMPL, SI_MUTATE, SI_UNDO, SI_REDO, SI_DEMO,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
@@ -2936,7 +2952,7 @@ static void applyRhythm(int k) {
 }
 static float setScroll = 0;
 static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SYS; }
-static bool setIsAction(int i) { return i == SI_UNDO || i == SI_REDO || i == SI_CLRTRK || i == SI_BENCH || i == SI_PCREC || i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
+static bool setIsAction(int i) { return i == SI_DEMO || i == SI_UNDO || i == SI_REDO || i == SI_CLRTRK || i == SI_BENCH || i == SI_PCREC || i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
 static bool runLearn();
 static char versionStr[32] = "";
 
@@ -2965,6 +2981,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_CLRTRK: snprintf(l, ln, "Spur %d leeren", track + 1); break;
     case SI_TMPL: snprintf(l, ln, "Rhythmus-Vorlage für Spur %d", track + 1); snprintf(v, vn, "< %s >", RHY_NAMES[tmplSel]); break;
     case SI_UNDO: snprintf(l, ln, "Rückgängig (SELECT + B)"); snprintf(v, vn, "%d Schritte", undoCnt); break;
+    case SI_DEMO: snprintf(l, ln, "Demo-Song 'Neon Nights' laden"); snprintf(v, vn, ">>"); break;
     case SI_REDO: snprintf(l, ln, "Wiederholen"); snprintf(v, vn, "%s", redoPat >= 0 ? ">>" : "(nichts)"); break;
     case SI_H_AUDIO: snprintf(l, ln, "AUDIO"); break;
     case SI_OUT: snprintf(l, ln, "Ausgang"); { int d = devIndex(); snprintf(v, vn, "%.26s", d ? devNames[d - 1] : "Standard (intern)"); } break;
@@ -3199,6 +3216,7 @@ static void setAction(int i) {
     case SI_TMPL: applyRhythm(tmplSel); break;
     case SI_UNDO: undoStep(); break;
     case SI_REDO: redoStep(); break;
+    case SI_DEMO: askConfirm(ACT_DEMO, 0, "DEMO-SONG IN EINEM FREIEN PLATZ ANLEGEN?"); break;
     case SI_LEARN: runLearn(); break;
     case SI_BENCH: {   // Messung auf dem Geraet, Bericht in logs/bench.txt (Browser: Logs)
         char bp[700];
@@ -3943,7 +3961,8 @@ int main(int argc, char** argv) {
 
     if (renderOut) {   // Offline-Bounce ohne Grafik/Audiogeraet
         eng.init(44100);
-        if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);
+        if (getenv("GB_DEMO")) { buildDemo(eng); eng.songOn = true; eng.songStart(0); }   // Demo-Song rendern
+        else if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);
         eng.start();
         int frames = (int)(renderSecs * 44100);
         float* buf = (float*)malloc(sizeof(float) * 2 * frames);
@@ -4126,13 +4145,17 @@ int main(int argc, char** argv) {
     refreshDevices();
     for (int i = 0; i < devCount; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, devNames[i]);
     eng.init(44100);
+    bool firstRun = true;
+    for (int i = 0; i < 32; i++) if (songExists(i)) firstRun = false;
     if (eng.load(projPath)) printf("Projekt geladen: %s\n", projPath);
+    else if (firstRun) { buildDemo(eng); eng.songOn = true; eng.songStart(0); printf("Erster Start: Demo-Song angelegt\n"); }   // Einsteiger: sofort etwas zum Hoeren
     memcpy(&lastSaved, &eng.proj, sizeof(Project));
     applyMidiSettings();
     eng.midiOut = midiOutHook;
     midiStart();
     openAudio();
-    toast("%d SAMPLES GELADEN", sampleCount());
+    toast(firstRun ? "WILLKOMMEN! START = DEMO ABSPIELEN, SELECT = MENÜ" : "%d SAMPLES GELADEN", sampleCount());
+    if (firstRun) msgUntil = SDL_GetTicks() + 6000;
     webStart(basePath);
     int webSeq = 0;
     if (cfg.usb && !usbMode) { usbMode = cfg.usb; usbApplyAt = SDL_GetTicks() + 1500; }   // PC-Modus nach Neustart wiederherstellen
