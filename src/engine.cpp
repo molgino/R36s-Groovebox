@@ -151,6 +151,8 @@ void ADSR::set(float a, float d, float sus, float r, float sr) {
 
 void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale, int gateSamples, float sr) {
     bool wasActive = active && machine == m;
+    if (!active) lastS = 0.f;   // verklungen: von Stille aus starten
+    dcArm = true;               // erster neuer Sample-Wert wird an den letzten alten angeschlossen
     machine = m;
     base = b;
     for (int i = 0; i < NPARAMS; i++) lk[i] = locks ? locks[i] : NO_LOCK;
@@ -508,6 +510,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     if (!active) return;
     static const float HAT_R[6] = {1.f, 1.4836f, 1.8016f, 2.5478f, 2.6321f, 3.8996f};
     const float inv = 1.f / sr;
+    const float dcCo = fastExpE(-1.f / (0.002f * sr));   // Knackschutz klingt in ~2 ms aus
     float fev = fCrvK == 1.f || fenv.v <= 0.f ? fenv.v : fastPow01(fenv.v, fCrvK);
     float units = fBase + fEnv * fev;
     bool bypassF = (ftype == FT_LP12 && units >= 126.f && reso < 0.01f);
@@ -718,7 +721,9 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         } break;
         case M_SAMPLE: {
             if (sDone || !smp || !smp->data || smp->len < 2) break;
-            s = smpRead(smp, spos) * sGain;
+            float rem = (float)(sRev ? spos - sEnd : sEnd - spos);
+            float fade = sLoop || rem >= 64.f ? 1.f : (rem > 0.f ? rem / 64.f : 0.f);   // Ende (z. B. END < Dateiende) ohne Knacken
+            s = smpRead(smp, spos) * sGain * fade;
             spos += sinc;
             bool past = sRev ? spos <= sEnd : spos >= sEnd;
             if (past) {
@@ -740,6 +745,11 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         if (drive > 0.f) s = fastTanh(s * (1.f + drive * 6.f)) * (1.f - drive * 0.3f);
         if (srrN > 1) { if (holdC <= 0) { hold = s; holdC = srrN; } holdC--; s = hold; }
         if (crushQ > 0.f) s = floorf(s * crushQ + 0.5f) / crushQ;
+        // Neuanschlag, waehrend die Stimme noch klingt (Kick in den Kick-Ausklang, Sample in Sample): ohne das
+        // springt die Wellenform -> Knacken auf dem Beat. Sprung als schnell abklingenden Versatz ausgleichen.
+        if (dcArm) { dcOff = lastS - s; dcArm = false; }
+        if (dcOff != 0.f) { s += dcOff; dcOff *= dcCo; if (dcOff > -1e-5f && dcOff < 1e-5f) dcOff = 0.f; }
+        lastS = s;
 
         // Insert-Effekt (mono rein, stereo raus)
         float sl = s, sr2 = s;
@@ -1565,6 +1575,11 @@ void Engine::processBlock(float* out, int n) {
     float mv = proj.mst[MS_VOL] / 100.f; mv *= mv;
     float mdrv = proj.mst[MS_DRIV] / 127.f;
     float outG = 0.6f * mv * (1.f + 3.f * mdrv), outC = 1.f - 0.25f * mdrv;
+    float cleanG = 0.6f * mv, satMix = mdrv * 8.f > 1.f ? 1.f : mdrv * 8.f;   // DRIVE 0 = sauber, ab ~16 voller Charakter
+    const float LIM_CEIL = 0.891f;                                      // -1 dBFS (Reserve fuer Wandler/Zwischenwerte)
+    const float limRelCo = 1.f - fastExpE(-1.f / (0.08f * sr));         // Rueckkehr ~80 ms
+    if (!limReady) { for (int k = 0; k < LIM_LA; k++) { limReq[k] = limR[k] = 1.f; } limReady = true; }
+    float limMin = 1.f;
 
     djSm += (dj - djSm) * 0.08f;
     int djMode = djSm < -0.03f ? 1 : (djSm > 0.03f ? 2 : 0);
@@ -1629,14 +1644,34 @@ void Engine::processBlock(float* out, int n) {
             djL.proc(oL, lo, bp, hp); oL = djMode == 1 ? lo : hp;
             djR.proc(oR, lo, bp, hp); oR = djMode == 1 ? lo : hp;
         }
-        oL = fastTanh(oL * outG) * outC;
-        oR = fastTanh(oR * outG) * outC;
+        if (satMix > 0.f) {   // MASTER DRIVE: gewollte Saettigung (wie frueher), sonst sauber
+            oL = oL * cleanG + (fastTanh(oL * outG) * outC - oL * cleanG) * satMix;
+            oR = oR * cleanG + (fastTanh(oR * outG) * outC - oR * cleanG) * satMix;
+        } else { oL *= cleanG; oR *= cleanG; }
+        {   // Limiter: Mindest-Verstaerkung der naechsten LIM_LA Samples halten, dann ueber LIM_LA mitteln ->
+            // die Kurve ist an jedem verzoegerten Sample <= Decke/Spitze (keine Uebersteuerung, kein Knacken)
+            float pk = fmaxf(fabsf(oL), fabsf(oR));
+            limXL[limPos] = oL; limXR[limPos] = oR;
+            limReq[limPos] = pk > LIM_CEIL ? LIM_CEIL / pk : 1.f;
+            float m = 1.f;
+            for (int k = 0; k < LIM_LA; k++) m = fminf(m, limReq[k]);
+            limRel += (1.f - limRel) * limRelCo;
+            if (m < limRel) limRel = m;
+            limR[limPos] = limRel;
+            float g = 0.f;
+            for (int k = 0; k < LIM_LA; k++) g += limR[k];
+            g *= 1.f / LIM_LA;
+            if (g < limMin) limMin = g;
+            limPos = (limPos + 1) & (LIM_LA - 1);
+            oL = limXL[limPos] * g; oR = limXR[limPos] * g;   // aeltester Wert = um LIM_LA-1 verzoegert
+        }
         out[2 * i] = oL; out[2 * i + 1] = oR;
         float al = fabsf(oL), ar = fabsf(oR);
         if (al > pl) pl = al;
         if (ar > pr) pr = ar;
     }
     peakL = pl; peakR = pr;
+    { float gr = limMin < 1.f ? -6.0206f * log2f(limMin) : 0.f; if (gr > limGr) limGr = gr; }
     if (grMax > grPeak) grPeak = grMax;
     // verklungen = kein Eingang und Ausgang unter -100 dB; erst nach einer vollen Pufferlaenge Stille abschalten
     if (dIn || dMax > 1e-5f) dQuiet = 0; else if (dQuiet < (1 << 30)) dQuiet += n;

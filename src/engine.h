@@ -110,6 +110,7 @@ struct Voice {
     float stepSec = 0.125f;   // Laenge eines 16tels (fuer synchrone LFOs)
     float hold = 0; int holdC = 0;
     float glideCo = 0;
+    float lastS = 0, dcOff = 0; bool dcArm = false;   // Knackschutz beim Neuanschlag einer klingenden Stimme
     // Sample-Wiedergabe
     const Sample* smp = nullptr;
     double spos = 0; float sinc = 0, sGain = 1; int sStart = 0, sEnd = 0; bool sRev = false, sLoop = false, sDone = false;
@@ -183,6 +184,11 @@ public:
     float djSm = 0;
     volatile float peakL = 0, peakR = 0;
     volatile float grPeak = 0;   // Gain-Reduktion in dB (fuer die Anzeige)
+    // Summe: Brickwall-Limiter mit Vorausschau (statt die Summe in die Saettigung zu fahren)
+    enum { LIM_LA = 64 };        // Vorausschau in Samples (1,5 ms), Zweierpotenz
+    float limXL[LIM_LA] = {0}, limXR[LIM_LA] = {0}, limReq[LIM_LA], limR[LIM_LA];
+    float limRel = 1.f; int limPos = 0; bool limReady = false;
+    volatile float limGr = 0;    // groesste Absenkung des Limiters in dB (Anzeige/Diagnose)
     Voice v[NTRACKS];
     Voice cv[NTRACKS][NCHORDV];   // Akkord-Zusatzstimmen (ARP-Modus AKKD)
 

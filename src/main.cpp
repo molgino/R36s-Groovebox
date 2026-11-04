@@ -4367,9 +4367,9 @@ int main(int argc, char** argv) {
                        sMax, (int)(cpuLoad * 100));
                 if (audLate || audGapMax > 0) {
                     audLateTotal += audLate;
-                    printf("Audio: %d verspaetete Aufrufe (gesamt %d), groesster Abstand %.1f ms, laengste Rechnung %.1f ms, Kerne %d\n",
-                           audLate, audLateTotal, audGapMax, audWorkMax, eng.audioThreads);
-                    audLate = 0; audGapMax = 0; audWorkMax = 0;
+                    printf("Audio: %d verspaetete Aufrufe (gesamt %d), groesster Abstand %.1f ms, laengste Rechnung %.1f ms, Kerne %d, Limiter max -%.1f dB\n",
+                           audLate, audLateTotal, audGapMax, audWorkMax, eng.audioThreads, (double)eng.limGr);
+                    audLate = 0; audGapMax = 0; audWorkMax = 0; eng.limGr = 0;
                 }
                 fflush(stdout);
                 sDraw = sPres = sMax = 0; nFr = 0; statAt = now;
