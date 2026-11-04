@@ -529,6 +529,12 @@ SSH startet die Groovebox selbst, „Enable Remote Services“ in ArkOS (das WLA
 
 Beim Aufspielen bleiben Projekte, Samples, Tastenbelegung und Einstellungen erhalten. Ersetzt werden nur Programm und Skripte.
 
+## Tests und Leistungstest
+
+* **Auf dem R36S:** SET → **Leistungstest** (ca. 30 s). Gemessen werden die Audio-Last je Engine (8 Stimmen, auch pro Stimme) und ein Worst Case mit allem an, die Zeichenzeit jeder Seite inkl. Ausgabe aufs Display und der Speicher. Den Bericht findest du im Browser unter **Logs → bench.txt** (Datei `/data/logs/bench.txt`). Die Wiedergabe läuft währenddessen weiter.
+* Am PC: `./groovebox --bench [datei]` (gleicher Bericht), `make test` (Unit-Tests: Timing, Polymetrie, Bedingungen, Euklid, Trigless, Song, Arp, Stabilität aller Engines × Filtertypen, Speichern/Laden, Migration), `./groovebox --selftest [sek]` (UI-Szenarien mit simulierten Tasten, Bedienweg-Report, UI-Monkey mit 20 000 Zufallsbildern, Engine-Stresstest). Mit `SAN=1` laufen Tests und App mit AddressSanitizer/UBSan.
+* GitHub Actions führt bei jedem Push alle Tests mit Sanitizern aus und hängt `bench-arm64.txt` (Messung auf einem ARM-Server) ans Release.
+
 ## Automatischer Build (GitHub Actions)
 
 Jeder Push auf `main` baut das Programm für den R36S und legt das Paket als Release **nightly** ab. Genau das holt `deploy.ps1`.

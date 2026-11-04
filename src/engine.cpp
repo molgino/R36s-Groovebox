@@ -69,6 +69,23 @@ static inline float sin01(float ph) {
     return SINT[i] + (SINT[i + 1] - SINT[i]) * f;
 }
 static inline float clampf(float x, float a, float b) { return x < a ? a : (x > b ? b : x); }
+// schnelle 2^x bzw. log2 (Fehler < 0,01 %, fuer Tonhoehen-Huellkurven und Wavetable-Warp pro Sample)
+static inline float fastExp2(float x) {
+    if (x < -120.f) return 0.f;
+    if (x > 120.f) x = 120.f;
+    float xi = floorf(x), f = x - xi;
+    float p = 1.f + f * (0.6931472f + f * (0.2402265f + f * (0.0555041f + f * (0.0096181f + f * 0.0013334f))));
+    union { float f; int32_t i; } u; u.f = p; u.i += (int32_t)xi << 23;
+    return u.f;
+}
+static inline float fastLog2(float x) {
+    union { float f; int32_t i; } u; u.f = x;
+    float e = (float)(((u.i >> 23) & 255) - 128);
+    u.i = (u.i & ~(255 << 23)) | (127 << 23);
+    float m = u.f;
+    return e + (-0.34484843f * m + 2.02466578f) * m - 0.67487759f;
+}
+static inline float fastPow01(float b, float e) { return b <= 0.f ? 0.f : fastExp2(e * fastLog2(b)); }
 static inline float fastTanh(float x) {
     if (x < -3.f) return -1.f;
     if (x > 3.f) return 1.f;
@@ -521,7 +538,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         switch (machine) {
         case M_KICK: {
             // 808/909: exponentieller Pitch-Abfall (SWEP bis 3 Oktaven), Sinus, Anschlag aus Puls + Rauschen
-            float f = pitchHz * exp2f(sweep * 0.5f * penv);
+            float f = pitchHz * fastExp2(sweep * 0.5f * penv);
             penv *= pco;
             ph1 += f * inv; if (ph1 >= 1.f) ph1 -= 1.f;
             s = sin01(ph1) * denv;
@@ -630,8 +647,8 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         case M_WTBL: {
             float pos = clampf(wtPos + wtPenv * fenv.v, 0.f, 1.f);
             float p1 = ph1, p2 = ph2;
-            if (wtWarp > 0.01f) { p1 = powf(p1, 1.f + wtWarp * 3.f); p2 = powf(p2, 1.f + wtWarp * 3.f); }
-            else if (wtWarp < -0.01f) { p1 = 1.f - powf(1.f - p1, 1.f - wtWarp * 3.f); p2 = 1.f - powf(1.f - p2, 1.f - wtWarp * 3.f); }
+            if (wtWarp > 0.01f) { p1 = fastPow01(p1, 1.f + wtWarp * 3.f); p2 = fastPow01(p2, 1.f + wtWarp * 3.f); }
+            else if (wtWarp < -0.01f) { p1 = 1.f - fastPow01(1.f - p1, 1.f - wtWarp * 3.f); p2 = 1.f - fastPow01(1.f - p2, 1.f - wtWarp * 3.f); }
             s = wtRead(wtTab, pos, p1);
             if (wtDet > 1.0001f) s = (s + wtRead(wtTab, pos, p2)) * 0.6f;
             ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
@@ -1324,7 +1341,21 @@ void Engine::doTick() {
     globalTick++;
 }
 
+// Denormals (winzige Zahlen beim Ausklingen) auf 0 setzen: sonst rechnet die CPU dort um ein Vielfaches langsamer
+static inline void flushDenormals() {
+#if defined(__aarch64__)
+    uint64_t fpcr;
+    __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+    if (!(fpcr & (1ull << 24))) { fpcr |= 1ull << 24; __asm__ volatile("msr fpcr, %0" : : "r"(fpcr)); }
+#elif defined(__x86_64__) || defined(__i386__)
+    unsigned csr;
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    if ((csr & 0x8040) != 0x8040) { csr |= 0x8040; __asm__ volatile("ldmxcsr %0" : : "m"(csr)); }
+#endif
+}
+
 void Engine::render(float* out, int frames) {
+    flushDenormals();
     const int BLK = 16;
     for (int i = 0; i < frames; i += BLK) {
         int m = frames - i < BLK ? frames - i : BLK;

@@ -11,6 +11,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
 #include "engine.h"
 #include "input.h"
 #include "font.h"
@@ -71,6 +72,7 @@ static Uint32 selDownAt = 0;
 static bool quitReq = false;
 static volatile float cpuLoad = 0;
 static char basePath[512] = "./", cfgPath[600], projPath[600];
+static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (USB, Lernmodus, Audio-Geraet)
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
@@ -393,6 +395,7 @@ static void setBacklight(bool on) {
 }
 static void drawAll(bool help);
 static void powerOff() {
+    if (selfTesting) return;
     toast("SPEICHERN UND AUSSCHALTEN ...");
     msgUntil = SDL_GetTicks() + 10000;
     if (screenOff) { setBacklight(true); screenOff = false; }
@@ -728,6 +731,9 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         } break;
         }
         if (k == SY_BUF && bufOverride) snprintf(label, ln, "--buffer %d", bufOverride);
+    } else if (sp() < 0) {   // globale Seite ohne Spurwerte
+        d = PDEF_NONE; val = 0; baseVal = 0;
+        return false;
     } else {
         int idx = sp() * 8 + k;
         d = paramDef(P.machine[track], idx);
@@ -2100,6 +2106,7 @@ static void drawSettings();
 static void drawSong();
 static void drawDrive();
 static bool isGrooveboxOS();
+static void runBench(const char* outPath, bool onDevice);
 static void drawAll(bool help) {
     animate();
     clearScreen(C_BG);
@@ -2293,6 +2300,7 @@ static void editValue(int delta) {
         else if (MST_DEFS[slot].kind != K_NONE) eng.proj.mst[slot] = (uint8_t)clampi(eng.proj.mst[slot] + delta, 0, MST_DEFS[slot].max);
         return;
     }
+    if (!trackPage(page) || sp() < 0) return;   // globale Seite ohne eigene Werte (z.B. SONG): nichts aendern
     Pattern& P = curP();
     int idx = sp() * 8 + slot;
     ParamDef d = paramDef(P.machine[track], idx);
@@ -2494,7 +2502,7 @@ enum SetItem {
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
-    SI_H_SYS, SI_DISP, SI_LEARN, SI_INFO, SI_QUIT, SI_COUNT
+    SI_H_SYS, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
 static float setScroll = 0;
@@ -2572,6 +2580,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else snprintf(v, vn, "nur Groovebox-OS");
         break;
     case SI_LEARN: snprintf(l, ln, "Tasten neu lernen"); break;
+    case SI_BENCH: snprintf(l, ln, "Leistungstest (ca. 30 s)"); snprintf(v, vn, "A = START"); break;
     case SI_INFO: snprintf(l, ln, "Info");
         snprintf(v, vn, "%s  %d Samples  %s", versionStr[0] ? versionStr : "dev", sampleCount(), midiBackend());
         break;
@@ -2674,7 +2683,8 @@ static void mutatePattern() {
 
 static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0; }
 static void reloadSamples();
-static bool usbScript(const char* args, char* okMsg, int n) {   // pc-modus.sh ausfuehren, OK:/FEHLER:-Zeile liefern
+static bool usbScript(const char* args, char* okMsg, int n) {
+    if (selfTesting) return false;   // pc-modus.sh ausfuehren, OK:/FEHLER:-Zeile liefern
     char cmd[800], lp[700], line[200];
     snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s", basePath, args);
     int rc = system(cmd);
@@ -2697,6 +2707,7 @@ static void openAudio();
 static char driveSavedDev[128] = "";
 static bool isUsbAudioDev(const char* n) { return strcasestr(n, "uac") || strcasestr(n, "gadget"); }
 static void startDrive() {
+    if (selfTesting) return;
     if (!isGrooveboxOS()) { toast("NUR IM GROOVEBOX-OS"); return; }
     saveProject();
     toast("USB-LAUFWERK WIRD VERBUNDEN ...");
@@ -2752,6 +2763,14 @@ static void setAction(int i) {
         break;
     case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, "ALLE STEPS VON PATTERN %02d LOESCHEN?", eng.curPat + 1); break;
     case SI_LEARN: runLearn(); break;
+    case SI_BENCH: {   // Messung auf dem Geraet, Bericht in logs/bench.txt (Browser: Logs)
+        char bp[700];
+        if (isGrooveboxOS()) { mkdir("/data/logs", 0755); snprintf(bp, sizeof bp, "/data/logs/bench.txt"); }
+        else snprintf(bp, sizeof bp, "%sbench.txt", basePath);
+        clearScreen(C_BG); textC(320, 220, "LEISTUNGSTEST LAEUFT ...", C_ACC, 2); present();
+        runBench(bp, true);
+        toast("LEISTUNGSTEST FERTIG: LOGS/BENCH.TXT");
+    } break;
     case SI_MUTATE: mutatePattern(); break;
     case SI_DRIVE: startDrive(); break;
     case SI_UNMUTATE:
@@ -3199,6 +3218,7 @@ static void handleInput(Uint32 now, float dt) {
 // ---------------------------------------------------------------- Lernmodus
 
 static bool runLearn() {
+    if (selfTesting) return false;
     SDL_Joystick* j = in.joy;
     if (!j) { printf("Kein Gamepad gefunden - Lernmodus uebersprungen\n"); return false; }
     static const char* prompts[BT_COUNT + 4] = {
@@ -3322,6 +3342,7 @@ static bool writeWav(const char* path, const float* data, int frames, int sr) {
 }
 
 static void openAudio() {
+    if (selfTesting) return;
     if (audioDev) { SDL_CloseAudioDevice(audioDev); audioDev = 0; }
     if (isUsbAudioDev(cfg.dev)) { cfg.dev[0] = 0; saveSettings(); }   // USB zum PC laeuft parallel, nie als Takt-Ausgang
     SDL_AudioSpec want, have;
@@ -3357,6 +3378,7 @@ static int detectUsbMode() {
 }
 
 static void applyUsbMode() {
+    if (selfTesting) return;
     usbAudioStop();   // Gadget wird gleich neu aufgebaut
     char cmd[800];
     static const char* args[3] = {"aus", "an", "an audio"};
@@ -3446,10 +3468,13 @@ static void reloadSamples() {
     printf("Samples neu geladen: %d\n", nn);
 }
 
+#include "selftest.inc"
+
 int main(int argc, char** argv) {
     if (argc >= 3 && !strcmp(argv[1], "--dhcpd")) return runDhcpd(argv[2]);   // Hilfsdienst fuer den PC-Modus
     bool learn = false, windowed = false;
     const char* shot = nullptr; const char* renderOut = nullptr; float renderSecs = 8; int shotPage = 0;
+    bool benchMode = false, selftestMode = false; const char* benchFile = nullptr; double stressSecs = 30;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--learn")) learn = true;
         else if (!strcmp(argv[i], "--windowed")) windowed = true;
@@ -3457,7 +3482,9 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--project") && i + 1 < argc) { snprintf(projPath, sizeof projPath, "%s", argv[++i]); projFromArg = true; }
         else if (!strcmp(argv[i], "--shot") && i + 1 < argc) { shot = argv[++i]; if (i + 1 < argc && argv[i + 1][0] != '-') shotPage = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "--render") && i + 1 < argc) { renderOut = argv[++i]; if (i + 1 < argc && argv[i + 1][0] != '-') renderSecs = (float)atof(argv[++i]); }
-        else { printf("Optionen: --learn --windowed --buffer FRAMES --project DATEI --render WAV [sek] --shot BMP [seite]\n"); return 0; }
+        else if (!strcmp(argv[i], "--bench")) { benchMode = true; if (i + 1 < argc && argv[i + 1][0] != '-') benchFile = argv[++i]; }
+        else if (!strcmp(argv[i], "--selftest")) { selftestMode = true; if (i + 1 < argc && argv[i + 1][0] != '-') stressSecs = atof(argv[++i]); }
+        else { printf("Optionen: --learn --windowed --buffer FRAMES --project DATEI --render WAV [sek] --shot BMP [seite] --bench [datei] --selftest [sek]\n"); return 0; }
     }
     setupPaths();
 
@@ -3474,6 +3501,17 @@ int main(int argc, char** argv) {
         bool ok = writeWav(renderOut, buf, frames, 44100);
         free(buf);
         return ok ? 0 : 1;
+    }
+
+    if (benchMode || selftestMode) {   // Leistungstest / Selbsttest ohne Anzeige (Zeichnen in den Speicher wie auf dem Geraet)
+        eng.init(44100);
+        SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, SW, SH, 32, SDL_PIXELFORMAT_ARGB8888);
+        ren = SDL_CreateSoftwareRenderer(surf);
+        if (!getenv("GB_SDLDRAW")) { fbPix = (uint32_t*)surf->pixels; fbPitch = surf->pitch / 4; }
+        SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+        makeFont();
+        if (benchMode) { selfTesting = true; runBench(benchFile, false); return 0; }
+        return runSelftest(stressSecs);
     }
 
     if (shot) {        // Screenshot (Software-Renderer) zum Testen
