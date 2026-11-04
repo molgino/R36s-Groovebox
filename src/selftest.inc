@@ -213,14 +213,23 @@ static int uiPass = 0, uiFail = 0;
 static const char* uiCase = "";
 #define UCHECK(c, ...) do { if (c) uiPass++; else { uiFail++; printf("  FEHLER [%s] Zeile %d: ", uiCase, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// kuerzester Weg zur Seite mit L2/R2 (zaehlt die Druecke)
+// Weg zur Seite wie in der Signalweg-Oberflaeche: Bloecke L1/R1, Modulation L2/R2, sonst SELECT-Menue
+static int sigIndex(const int* list, int n, int p) { for (int i = 0; i < n; i++) if (list[i] == p) return i; return -1; }
 static void goPage(int target) {
-    for (int guard = 0; guard < NUI_PAGES && page != target; guard++) {
-        int fwd = 0, p = page;
-        while (p != target && fwd < NUI_PAGES) { p = (p + 1) % NUI_PAGES; if (pageAvail(p)) fwd++; }
-        int bwd = 0; p = page;
-        while (p != target && bwd < NUI_PAGES) { p = (p - 1 + NUI_PAGES) % NUI_PAGES; if (pageAvail(p)) bwd++; }
-        tap(fwd <= bwd ? BT_R2 : BT_L2);
+    for (int guard = 0; guard < 24 && page != target; guard++) {
+        int ci = sigIndex(SIG_CHAIN, SIG_NCH, target), mi = sigIndex(SIG_MOD, SIG_NMOD, target);
+        if (trackPage(page) && (ci >= 0 || mi >= 0)) {
+            const int* list = ci >= 0 ? SIG_CHAIN : SIG_MOD;
+            int n = ci >= 0 ? SIG_NCH : SIG_NMOD, tgt = ci >= 0 ? ci : mi;
+            int cur = sigIndex(list, n, page);
+            int dir = (cur < 0 || cur < tgt) ? 1 : -1;
+            tap(ci >= 0 ? (dir > 0 ? BT_R1 : BT_L1) : (dir > 0 ? BT_R2 : BT_L2));
+        } else {   // Menue: SELECT, Gruppe/Seite mit dem Steuerkreuz, A
+            tap(BT_SELECT);
+            for (int k = 0; k < 6 && PG_GROUP[menuSel] != PG_GROUP[target]; k++) tap(PG_GROUP[menuSel] < PG_GROUP[target] ? BT_DOWN : BT_UP);
+            for (int k = 0; k < NUI_PAGES && menuSel != target; k++) tap(menuSel < target ? BT_RIGHT : BT_LEFT);
+            tap(BT_A);
+        }
     }
 }
 static void goSlot(int target) {   // linker Stick: je Antippen ein Feld
@@ -241,8 +250,11 @@ static void uiScenarios() {
     simReset();
     tap(BT_RIGHT); tap(BT_RIGHT); tap(BT_DOWN);
     UCHECK(cursor == 2 && track == 1, "Cursor %d Spur %d statt 2/1", cursor, track);
-    tap(BT_R2); UCHECK(page != PG_TRG, "R2 wechselt die Seite nicht");
+    tap(BT_R2); UCHECK(page == PG_SEQ, "R2: Modulationsreihe -> SEQ erwartet (Seite %d)", page);
     tap(BT_L2); UCHECK(page == PG_TRG, "L2 kehrt nicht zurueck (Seite %d)", page);
+    tap(BT_R1); UCHECK(page == PG_SRC, "R1: Signalweg -> QUELLE erwartet (Seite %d)", page);
+    tap(BT_R1); UCHECK(page == PG_FLT || page == PG_SRC2, "R1: naechster Block (Seite %d)", page);
+    page = PG_TRG; simWait(32);
     flickL(1, 0); UCHECK(slot == 1, "Linker Stick: Kachel %d statt 1", slot);
     flickL(0, -1); UCHECK(slot == 5, "Linker Stick runter: Kachel %d statt 5", slot);
 
@@ -335,7 +347,7 @@ static void uiTasks() {
     simReset(); combo(BT_SELECT, BT_START); rec("Projekt speichern", 1);
     simReset(); tap(BT_SELECT); simWait(50); rec("Seitenmenue oeffnen", 1);
     tap(BT_B); if (menuOpen) tap(BT_SELECT);
-    bout("\nBEDIENWEG (Bedienhandlungen je Aufgabe, Start: Spur 1, TRIG-Seite)\n");
+    bout("\nBEDIENWEG - Signalweg-Oberflaeche (Bedienhandlungen je Aufgabe, Start: Spur 1, TRIG-Seite)\n");
     bout("  %-32s %6s %9s\n", "Aufgabe", "Tasten", "ca. Zeit");
     int sum = 0;
     for (int i = 0; i < n; i++) {
