@@ -302,11 +302,11 @@ Klassisches Pumpen: SC = T1 (Kick), THR um −30 dB, RATIO 8:1 oder mehr, ATK ku
 
 ## Samples
 
-WAV-Dateien kommen in den Ordner `samples/`, gern mit **Unterordnern bis 3 Ebenen tief**, z. B. `samples/drums/808/kick.wav`.
+WAV-Dateien kommen in den Ordner `samples/`, gern mit **Unterordnern bis 8 Ebenen tief**, z. B. `samples/drums/808/kick.wav`.
 Erlaubt sind 8/16/24/32-Bit-PCM und 32-Bit-Float in jeder Samplerate. Stereo wird zu Mono gemischt.
 Gelesen wird beim Start, alphabetisch sortiert, höchstens 250 Dateien zu je höchstens 60 s. Der Ordner `samples/rec/` (WAV-Aufnahmen) wird nicht geladen.
 
-**Sample-Explorer:** Auf dem Regler **SMPL** (Seite QUELLE von SMPL, CHOP, GRAN) öffnet **X** den Explorer mit allen Ordnern und Unterordnern. Er startet im Ordner des aktuellen Samples. Steuerkreuz ↑/↓ wählt, **A** oder → öffnet einen Ordner bzw. übernimmt das Sample, **X** hört vorab hinein, **B** oder ← geht einen Ordner zurück, L1/R1 blättert seitenweise, SELECT bricht ab (das vorher eingestellte Sample bleibt). Im Lock-Modus (A lang halten) wird das gewählte Sample als **Lock auf den Step** gesetzt. Der rechte Stick blättert wie bisher direkt durch alle Samples.
+**Sample-Explorer:** Auf dem Regler **SMPL** (Seite QUELLE von SMPL, CHOP, GRAN) öffnet **X** den Explorer mit allen Ordnern und Unterordnern (bis 8 Ebenen). Er startet im Ordner des aktuellen Samples. Steuerkreuz ↑/↓ wählt, **A** oder → öffnet einen Ordner bzw. übernimmt das Sample, **X** hört vorab hinein, **B** oder ← geht einen Ordner zurück, L1/R1 blättert seitenweise, SELECT bricht ab (das vorher eingestellte Sample bleibt). Im Lock-Modus (A lang halten) wird das gewählte Sample als **Lock auf den Step** gesetzt. Der rechte Stick blättert wie bisher direkt durch alle Samples.
 
 ### Samples per Browser hochladen (ohne SD-Karte)
 

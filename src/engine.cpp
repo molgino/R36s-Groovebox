@@ -90,6 +90,18 @@ static inline float fastLog2(float x) {
     return e + (-0.34484843f * m + 2.02466578f) * m - 0.67487759f;
 }
 static inline float fastPow01(float b, float e) { return b <= 0.f ? 0.f : fastExp2(e * fastLog2(b)); }
+// Sample lesen mit 4-Punkt-Hermite-Interpolation (kubisch): deutlich weniger Spiegelfrequenzen ("Zischeln")
+// als linear, wenn ein Sample transponiert oder mit anderer Samplerate abgespielt wird
+static inline float smpRead(const Sample* sm, double pos) {
+    int n = sm->len, i = (int)pos;
+    if (i < 0) i = 0;
+    if (i > n - 1) i = n - 1;
+    float t = (float)(pos - i);
+    const float* d = sm->data;
+    float y0 = d[i > 0 ? i - 1 : 0], y1 = d[i], y2 = d[i + 1 < n ? i + 1 : n - 1], y3 = d[i + 2 < n ? i + 2 : n - 1];
+    float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.f * y2 - 0.5f * y3, c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
+    return ((c3 * t + c2) * t + c1) * t + y1;
+}
 static inline float fastTanh(float x) {
     if (x < -3.f) return -1.f;
     if (x > 3.f) return 1.f;
@@ -672,14 +684,9 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         } break;
         case M_CHOP: {
             if (sDone || !smp) break;
-            int ip = (int)spos;
-            if (ip < 0) ip = 0;
-            if (ip >= smp->len - 1) ip = smp->len - 2;
-            float fr = (float)(spos - ip);
-            float a = smp->data[ip], b = smp->data[ip + 1];
             float rem = (float)(sRev ? spos - sEnd : sEnd - spos);
             float fade = rem < 64.f ? rem / 64.f : 1.f;           // kein Knacken am Scheibenende
-            s = (a + (b - a) * fr) * sGain * (fade < 0 ? 0 : fade);
+            s = smpRead(smp, spos) * sGain * (fade < 0 ? 0 : fade);
             spos += sinc;
             if (sRev ? spos <= sEnd : spos >= sEnd) sDone = true;
         } break;
@@ -702,8 +709,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
                 if (!g.on) continue;
                 int ip = (int)g.pos;
                 if (ip < 0 || ip >= smp->len - 1) { g.on = false; continue; }
-                float fr = (float)(g.pos - ip);
-                float v2 = smp->data[ip] + (smp->data[ip + 1] - smp->data[ip]) * fr;
+                float v2 = smpRead(smp, g.pos);
                 acc += v2 * sin01(g.age / g.len * 0.5f);   // Halbsinus-Fenster
                 g.pos += g.inc; g.age += 1.f; na++;
                 if (g.age >= g.len) g.on = false;
@@ -712,12 +718,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         } break;
         case M_SAMPLE: {
             if (sDone || !smp) break;
-            int ip = (int)spos;
-            if (ip < 0) ip = 0;
-            if (ip >= smp->len) ip = smp->len - 1;
-            float fr = (float)(spos - ip);
-            float a = smp->data[ip], b = ip + 1 < smp->len ? smp->data[ip + 1] : a;
-            s = (a + (b - a) * fr) * sGain;
+            s = smpRead(smp, spos) * sGain;
             spos += sinc;
             bool past = sRev ? spos <= sEnd : spos >= sEnd;
             if (past) {
