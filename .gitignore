@@ -10,3 +10,5 @@ settings.cfg
 dist/
 os/work/
 os/out/
+tests/unit
+tests/unit-tsan
