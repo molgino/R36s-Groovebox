@@ -370,6 +370,20 @@ static void uiScenarios() {
     UCHECK(recDoneNo > 0, "Aufnahme nicht gespeichert (%d)", recDoneNo);
     recDoneNo = 0; eng.stop();
 
+    uiCase = "Speichern";
+    simReset();
+    curP().s[6][9].on = 1; curP().s[6][9].lock[P_VEL] = 77;
+    combo(BT_SELECT, BT_START);
+    {
+        char tmp[720]; snprintf(tmp, sizeof tmp, "%s.tmp", projPath);
+        struct stat st;
+        UCHECK(stat(projPath, &st) == 0 && st.st_size == (long)sizeof(Project), "Projektdatei fehlt oder hat falsche Groesse");
+        UCHECK(stat(tmp, &st) != 0, "Temp-Datei bleibt liegen");
+        static Engine chk; chk.audioThreads = 1;
+        UCHECK(chk.load(projPath) && chk.proj.pat[eng.curPat].s[6][9].lock[P_VEL] == 77, "gespeichertes Projekt nicht korrekt ladbar");
+    }
+    curP().s[6][9].on = 0; curP().s[6][9].lock[P_VEL] = NO_LOCK;
+
     uiCase = "Pattern wechseln";
     simReset();
     combo(BT_SELECT, BT_RIGHT); UCHECK(eng.curPat == 1, "SELECT+Rechts: Pattern %d statt 2", eng.curPat + 1);

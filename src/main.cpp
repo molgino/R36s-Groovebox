@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
+#include <sys/mman.h>
 #include "engine.h"
 #include "input.h"
 #include "font.h"
@@ -73,6 +74,8 @@ static bool confirmOpen = false; static char confirmText[80]; static int confirm
 static Uint32 selDownAt = 0;
 static bool quitReq = false;
 static volatile float cpuLoad = 0;
+static volatile double audGapMax = 0, audWorkMax = 0;   // Audio-Diagnose (ms) seit der letzten Log-Zeile
+static volatile int audLate = 0, audLateTotal = 0;     // verspaetete/zu lange Audio-Aufrufe
 static char basePath[512] = "./", cfgPath[600], projPath[600];
 static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (USB, Lernmodus, Audio-Geraet)
 static Project lastSaved;
@@ -105,9 +108,20 @@ static volatile int cbFrames = 256;
 static void lockA() { if (audioDev) SDL_LockAudioDevice(audioDev); }
 static void unlockA() { if (audioDev) SDL_UnlockAudioDevice(audioDev); }
 static bool driveOn = false;   // Groovebox-OS: Datenpartition gerade als USB-Laufwerk am PC
+// Speichern: unter der Audio-Sperre nur kopieren (~1 ms), Schreiben auf die SD-Karte ohne Sperre
+// (sonst steht der Audio-Thread waehrend des Schreibens -> Aussetzer beim automatischen Speichern).
+// Erst in eine Temp-Datei, dann umbenennen: ein Stromausfall beim Speichern zerstoert das Projekt nicht.
+static Project saveSnap;
 static bool saveProject() {
     if (driveOn) return false;
-    lockA(); bool ok = eng.save(projPath); if (ok) memcpy(&lastSaved, &eng.proj, sizeof(Project)); unlockA();
+    lockA(); memcpy(&saveSnap, &eng.proj, sizeof(Project)); unlockA();
+    char tmp[700]; snprintf(tmp, sizeof tmp, "%s.tmp", projPath);
+    FILE* f = fopen(tmp, "wb");
+    bool ok = f && fwrite(&saveSnap, sizeof(Project), 1, f) == 1;
+    if (f) { ok = fflush(f) == 0 && ok; ok = fsync(fileno(f)) == 0 && ok; fclose(f); }
+    ok = ok && rename(tmp, projPath) == 0;
+    if (ok) memcpy(&lastSaved, &saveSnap, sizeof(Project));
+    else remove(tmp);
     return ok;
 }
 static int clampi(int x, int a, int b) { return x < a ? a : (x > b ? b : x); }
@@ -3051,7 +3065,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_LEARN: snprintf(l, ln, "Tasten neu lernen"); break;
     case SI_BENCH: snprintf(l, ln, "Leistungstest (ca. 30 s)"); snprintf(v, vn, "A = START"); break;
     case SI_INFO: snprintf(l, ln, "Info");
-        snprintf(v, vn, "%s  %d Samples  %s", versionStr[0] ? versionStr : "dev", sampleCount(), midiBackend());
+        snprintf(v, vn, "%.12s  %d Smp  Aussetzer %d", versionStr[0] ? versionStr : "dev", sampleCount(), audLateTotal + audLate);
         break;
     case SI_QUIT: snprintf(l, ln, "Groovebox beenden"); break;
     case SI_DRIVE: snprintf(l, ln, "USB-Laufwerk (Samples vom PC)"); if (!isGrooveboxOS()) snprintf(v, vn, "nur Groovebox-OS"); break;
@@ -3811,6 +3825,16 @@ static void audioCb(void*, Uint8* stream, int len) {
     }
     Uint64 t0 = SDL_GetPerformanceCounter();
     int frames = len / (int)(sizeof(float) * 2);
+    {   // Diagnose: Abstand der Aufrufe (zu spaet = Aussetzer, z. B. durch eine Sperre der Oberflaeche)
+        static Uint64 lastCb = 0;
+        double per = (double)frames / eng.sr * 1000.0;
+        if (lastCb) {
+            double gap = (double)(t0 - lastCb) * 1000.0 / SDL_GetPerformanceFrequency();
+            if (gap > audGapMax) audGapMax = gap;
+            if (gap > per * 2.5) audLate++;
+        }
+        lastCb = t0;
+    }
     cbTime = midiNow();
     cbFrames = frames;
     MidiMsg mm;
@@ -3821,6 +3845,8 @@ static void audioCb(void*, Uint8* stream, int len) {
     recPush((const float*)stream, frames);
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
+    if (el * 1000.0 > audWorkMax) audWorkMax = el * 1000.0;
+    if (el > avail * 0.9) audLate++;
     cpuLoad = cpuLoad * 0.9f + 0.1f * (float)(el / avail);
 }
 
@@ -4173,6 +4199,7 @@ int main(int argc, char** argv) {
     }
     refreshDevices();
     for (int i = 0; i < devCount; i++) printf("Audio-Ausgang #%d: %s\n", i + 1, devNames[i]);
+    if (isGrooveboxOS() && mlockall(MCL_CURRENT | MCL_FUTURE) == 0) printf("Speicher im RAM gesperrt (keine Seitenfehler im Audio-Thread)\n");
     eng.init(44100);
     eng.audioThreads = eng.helperReady() && cfg.cores > 1 ? 2 : 1;
     printf("Audio-Rechenkerne: %d\n", eng.audioThreads);
@@ -4242,6 +4269,12 @@ int main(int argc, char** argv) {
                 printf("Bild: %.1f fps, zeichnen %.1f ms, ausgeben %.1f ms (kopieren %.1f, warten/flip %.1f%s) max %.1f ms, CPU Audio %d%%\n",
                        nFr * 1000.0 / (now - statAt), sDraw / nFr, sPres / nFr, cpy, flp, drmOutSingleBuffer() ? ", 1 Puffer" : "",
                        sMax, (int)(cpuLoad * 100));
+                if (audLate || audGapMax > 0) {
+                    audLateTotal += audLate;
+                    printf("Audio: %d verspaetete Aufrufe (gesamt %d), groesster Abstand %.1f ms, laengste Rechnung %.1f ms, Kerne %d\n",
+                           audLate, audLateTotal, audGapMax, audWorkMax, eng.audioThreads);
+                    audLate = 0; audGapMax = 0; audWorkMax = 0;
+                }
                 fflush(stdout);
                 sDraw = sPres = sMax = 0; nFr = 0; statAt = now;
             }

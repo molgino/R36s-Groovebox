@@ -41,7 +41,7 @@ Gemessen auf dem R36S (RK3326, Cortex-A35 1,3 GHz) mit SET → Leistungstest, An
 | Audio Leerlauf | 5,1 % | **0,7 %** |
 | Demo-Song (realistisch) | – | **9,9 %** (Spitze 24,5 %) |
 | 8× Kick / 8× Synth / 8× FM | 23,3 / 24,8 / 31,1 % | **16,2 / 19,0 / 25,9 %** |
-| Worst Case (16,5 Stimmen, alle LFOs/FX, 3 Akkord-Spuren) | 86,4 % (Spitze 94 %) | **70,5 %** (Spitze 79 %) |
+| Worst Case (16,5 Stimmen, alle LFOs/FX, 3 Akkord-Spuren) | 86,4 % (Spitze 94 %) | **70,5 %** (Spitze 79 %), mit 2 Kernen **40,7 %** (Spitze 49 %) |
 | Bild je Frame inkl. Ausgabe (davon Ausgabe 4,3 ms) | 10,3–13,2 ms | **8,5–11,0 ms** |
 | Seitenmenü / Hilfe | 17,5 / 20,6 ms | **12,5 / 14,0 ms** |
 | Speicher | 26 MB | 24 MB |
