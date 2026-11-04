@@ -28,7 +28,7 @@ struct Project {
     uint8_t songLen;
     uint8_t pad2[3];
 };
-enum { PROJECT_VERSION = 10, SONG_MAX = 64 };
+enum { PROJECT_VERSION = 11, SONG_MAX = 64 };
 
 struct Rng {
     uint32_t s = 0x9E3779B9u;
@@ -116,6 +116,7 @@ struct Voice {
     float pitchHz = 100, gainL = 0, gainR = 0, sendD = 0, sendR = 0, drive = 0, crushQ = 0;
     int srrN = 1, ftype = 0;
     float fBase = 127, fEnv = 0, reso = 0;
+    float fCrvK = 1, aCrvK = 1;   // Huellkurvenform: Wert^k (k = 1 linear wie bisher)
     SVF bwHp, bwLp;              // Base-Width-Filter
     float bwLo = 20, bwHi = 20000; bool bwOn = false;
     // Insert-Effekt

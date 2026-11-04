@@ -154,7 +154,7 @@ static void benchUi(int frames, bool withPresent) {
         sum += tot / frames; n++;
         if (tot / frames > worst) { worst = tot / frames; worstP = p; }
     }
-    bout("  -> Mittel ueber alle Seiten %.2f ms, langsamste: %s (%.2f ms)\n", sum / n,
+    bout("  -> Mittel über alle Seiten %.2f ms, langsamste: %s (%.2f ms)\n", sum / n,
          worstP < NUI_PAGES ? PAGE_LONG[worstP] : (worstP == NUI_PAGES ? "SEITENMENUE" : "HILFE"), worst);
     page = sp0; track = st0; slot = ss0; menuOpen = mo0;
 }
@@ -189,6 +189,7 @@ static void simFrame() {
     }
     in.lx = simLX; in.ly = simLY; in.rx = simRX; in.ry = simRY;
     handleInput(simNow, 0.016f);
+    undoTrack(simNow);
     if (simDraw) drawAll(false);
     simNow += 16;
 }
@@ -241,7 +242,7 @@ static void goStep(int s) { while (cursor != s) tap(cursor < s ? BT_RIGHT : BT_L
 
 static void uiScenarios() {
     Pattern& P = curP();
-    uiCase = "Trig setzen/loeschen";
+    uiCase = "Trig setzen/löschen";
     simReset(); P.s[0][0].on = 0;
     tap(BT_A); UCHECK(curP().s[0][0].on == 1, "A setzt keinen Trig");
     tap(BT_A); UCHECK(curP().s[0][0].on == 0, "A loescht den Trig nicht");
@@ -317,6 +318,24 @@ static void uiScenarios() {
     tap(BT_DOWN); tap(BT_DOWN);
     tap(BT_B); UCHECK(page != PG_SYS, "B verlaesst SET nicht");
 
+    uiCase = "Rückgängig";
+    simReset(); curP().s[0][0].on = 0; simWait(900);
+    tap(BT_A); simWait(900);
+    UCHECK(curP().s[0][0].on == 1, "Trig nicht gesetzt");
+    combo(BT_SELECT, BT_B);
+    UCHECK(curP().s[0][0].on == 0, "SELECT+B macht den Trig nicht rückgängig");
+    redoStep(); UCHECK(curP().s[0][0].on == 1, "Wiederholen stellt den Trig nicht her");
+    curP().s[0][0].on = 0; simWait(900);
+
+    uiCase = "Beat-Sprung";
+    simReset(); combo(BT_SELECT, BT_R1); UCHECK(cursor == 4, "SELECT+R1: Step %d statt 5", cursor + 1);
+    combo(BT_SELECT, BT_L1); UCHECK(cursor == 0, "SELECT+L1: Step %d statt 1", cursor + 1);
+
+    uiCase = "Rhythmus-Vorlage";
+    simReset(); track = 2; applyRhythm(0);
+    UCHECK(curP().s[2][0].on == 1 && curP().s[2][4].on == 1 && curP().s[2][1].on == 0, "Four on the Floor falsch");
+    applyRhythm(RHY_N - 1); simWait(900);
+
     uiCase = "Pattern wechseln";
     simReset();
     combo(BT_SELECT, BT_RIGHT); UCHECK(eng.curPat == 1, "SELECT+Rechts: Pattern %d statt 2", eng.curPat + 1);
@@ -329,7 +348,7 @@ struct Task { const char* name; int keys; int steps; };
 static void uiTasks() {
     Task T[16]; int n = 0;
     auto rec = [&](const char* nm, int steps) { T[n].name = nm; T[n].keys = simKeys; T[n].steps = steps; n++; };
-    simReset(); for (int s = 0; s < 16; s += 4) { goStep(s); tap(BT_A); } rec("Kick: 4 Trigs (1/5/9/13)", 4);
+    simReset(); for (int s = 0; s < 16; s += 4) { if (s) combo(BT_SELECT, BT_R1); tap(BT_A); } rec("Kick: 4 Trigs (1/5/9/13)", 4);
     UCHECK(curP().s[0][12].on == 1, "Aufgabe Kick");
     simReset(); goTrack(4); goPage(PG_FLT); goSlot(0); stickR(-1.f, 300); rec("Spur 5: Filter-Cutoff aendern", 4);
     simReset(); goTrack(4); goPage(PG_FLT); goSlot(0); goStep(6); holdDown(BT_A); stickR(-1.f, 300); release(BT_A); rec("Spur 5: Cutoff-Lock auf Step 7", 5);
@@ -343,7 +362,7 @@ static void uiTasks() {
     simReset(); goTrack(4); goPage(PG_LFO1); goSlot(LF_DEST); for (int i = 0; i < P_FREQ + 1; i++) tap(BT_X); goSlot(LF_DEPTH); stickR(1.f, 300); rec("Spur 5: LFO1 -> Filter", 5);
     simReset(); goTrack(4); goPage(PG_AMP); goSlot(0); stickR(1.f, 200); goSlot(3); stickR(1.f, 200); rec("Spur 5: Attack + Release", 5);
     simReset(); goTrack(4); goPage(PG_ARP); goSlot(0); tap(BT_X); rec("Spur 5: Arpeggiator an", 3);
-    simReset(); goTrack(4); goPage(PG_SEQ); goSlot(1); stickR(1.f, 200); rec("Spur 5: Spurlaenge", 3);
+    simReset(); goTrack(4); goPage(PG_SEQ); goSlot(1); stickR(1.f, 200); rec("Spur 5: Spurlänge", 3);
     simReset(); combo(BT_SELECT, BT_START); rec("Projekt speichern", 1);
     simReset(); tap(BT_SELECT); simWait(50); rec("Seitenmenue oeffnen", 1);
     tap(BT_B); if (menuOpen) tap(BT_SELECT);
@@ -423,7 +442,7 @@ static void engineStress(double secs) {
     eng.stop();
     remove(tmpPath);
     UCHECK(nan == 0, "Stress: %d NaN/Inf-Werte", nan);
-    UCHECK(pk <= 1.01f, "Stress: Ausgang %.2f ueber Vollaussteuerung", pk);
+    UCHECK(pk <= 1.01f, "Stress: Ausgang %.2f über Vollaussteuerung", pk);
     printf("  Engine-Stress: %.0f s Audio, Spitze %.2f, Last %.1f%%, laengster Block %.2f ms\n", secs, pk, tot / (secs * 1000) * 100, worst);
 }
 

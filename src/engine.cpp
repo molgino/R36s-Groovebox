@@ -268,6 +268,8 @@ void Voice::update(int n, float sr, float bpm) {
         if (bwHi > 20000.f) bwHi = 20000.f;
     }
     fEnv = (P(P_FENV) - 64) * 2.f;
+    fCrvK = exp2f((P(P_FCRV) - 64) / 32.f);
+    aCrvK = exp2f((P(P_ACRV) - 64) / 32.f);
     reso = clampf(P(P_RESO) / 127.f, 0.f, 1.f);
     ftype = P(P_FTYP) % FT_COUNT;
 
@@ -488,7 +490,8 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     if (!active) return;
     static const float HAT_R[6] = {1.f, 1.4836f, 1.8016f, 2.5478f, 2.6321f, 3.8996f};
     const float inv = 1.f / sr;
-    float units = fBase + fEnv * fenv.v;
+    float fev = fCrvK == 1.f || fenv.v <= 0.f ? fenv.v : fastPow01(fenv.v, fCrvK);
+    float units = fBase + fEnv * fev;
     bool bypassF = (ftype == FT_LP12 && units >= 126.f && reso < 0.01f);
     if (!bypassF) {
         float fcHz = 16.f * exp2f(units * (10.3f / 127.f));
@@ -723,7 +726,7 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             bwHp.proc(s, lo, bp, hp); s = hp;
             bwLp.proc(s, lo, bp, hp); s = lo;
         }
-        s *= aenv.tick();
+        { float av = aenv.tick(); s *= aCrvK == 1.f ? av : fastPow01(av, aCrvK); }
         if (drive > 0.f) s = fastTanh(s * (1.f + drive * 6.f)) * (1.f - drive * 0.3f);
         if (srrN > 1) { if (holdC <= 0) { hold = s; holdC = srrN; } holdC--; s = hold; }
         if (crushQ > 0.f) s = floorf(s * crushQ + 0.5f) / crushQ;
@@ -1559,7 +1562,7 @@ bool Engine::load(const char* path) {
     // v5..v7: 72 bzw. 80 Parameter, 128 Steps, speed-Feld
     long nNp = ver == 5 ? 72 : (ver <= 7 ? 80 : 88);
     long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nSize = 20 + NPATTERNS * nPat + 16;
-    if (ok && (ver == PROJECT_VERSION || ver == 9) && size == (long)sizeof(Project)) {   // v9 = gleiches Layout
+    if (ok && (ver == PROJECT_VERSION || ver == 9 || ver == 10) && size == (long)sizeof(Project)) {   // v9/v10 = gleiches Layout
         memcpy(&proj, buf, sizeof(Project));
         proj.version = PROJECT_VERSION;
     } else if (ok && ver >= 5 && ver <= 8 && size == nSize) {
@@ -1648,6 +1651,13 @@ bool Engine::load(const char* path) {
             if (m != M_SYNTH && m != M_WTBL) continue;
             if (P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;
             for (int st = 0; st < NSTEPS; st++) if (P.s[t][st].lock[P_FTYP] == FT_LP12) P.s[t][st].lock[P_FTYP] = FT_LP24;
+        }
+    }
+    if (ok && ver < 11) {   // bis v10: Huellkurvenform neu (F.KRV/A.KRV) -> neutral
+        for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {
+            Pattern& P = proj.pat[pi];
+            P.p[t][P_FCRV] = 64; P.p[t][P_ACRV] = 64;
+            for (int st = 0; st < NSTEPS; st++) { P.s[t][st].lock[P_FCRV] = NO_LOCK; P.s[t][st].lock[P_ACRV] = NO_LOCK; }
         }
     }
     if (ok) {   // Grundton getrennt merken (aeltere Projekte hatten ihn nur in SCALE)

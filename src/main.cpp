@@ -21,12 +21,13 @@
 #include "drmout.h"
 #include "usbaudio.h"
 #include "remote.h"
+#include "paramhelp.h"
 
 static const int SW = 640, SH = 480;
 
 struct Col { Uint8 r, g, b; };
 // SYNTH CITY: Neo-Noir-Palette (Nachtblau, Neon-Magenta/Cyan, Amber)
-static const Col C_BG = {8, 6, 18}, C_PANEL = {20, 16, 38}, C_SEL = {46, 24, 62}, C_DIM = {104, 94, 140},
+static const Col C_BG = {8, 6, 18}, C_PANEL = {20, 16, 38}, C_SEL = {46, 24, 62}, C_DIM = {140, 130, 182},
                  C_TEXT = {214, 238, 255}, C_ACC = {255, 46, 136}, C_TRIG = {255, 64, 96}, C_LOCK = {255, 184, 0},
                  C_OFF = {26, 22, 46}, C_OFF2 = {42, 36, 70}, C_PLAY = {236, 250, 255}, C_DARK = {12, 10, 24},
                  C_GREEN = {0, 255, 170}, C_KNOB = {50, 44, 80}, C_CYAN = {0, 224, 255};
@@ -214,9 +215,9 @@ static void fill(int x, int y, int w, int h, Col c, Uint8 a = 255) {
     setCol(c, a); SDL_Rect r = {x, y, w, h}; SDL_RenderFillRect(ren, &r);
 }
 static void makeFont() {
-    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, 95 * FONT_W, FONT_H, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, FONT_N * FONT_W, FONT_H, 32, SDL_PIXELFORMAT_RGBA32);
     Uint8* px = (Uint8*)s->pixels;
-    for (int c = 0; c < 95; c++)
+    for (int c = 0; c < FONT_N; c++)
         for (int y = 0; y < FONT_H; y++)
             for (int x = 0; x < FONT_W; x++) {
                 Uint8* p = px + y * s->pitch + (c * FONT_W + x) * 4;
@@ -226,14 +227,33 @@ static void makeFont() {
     SDL_SetTextureBlendMode(fontTex, SDL_BLENDMODE_BLEND);
     SDL_FreeSurface(s);
 }
-static int textW(const char* s, int sc = 1) { return (int)strlen(s) * FONT_W * sc; }
+// UTF-8 -> Glyph: ASCII direkt, Umlaute/ß/° als Zusatzglyphen (siehe genfont.py), sonst '?'
+static int nextGlyph(const char*& s) {
+    unsigned c = (unsigned char)*s++;
+    if (c < 0x80) return c >= 32 && c <= 126 ? (int)c - 32 : '?' - 32;
+    if (c == 0xC3 || c == 0xC2) {
+        unsigned d = (unsigned char)*s;
+        if (!d) return '?' - 32;
+        s++;
+        if (c == 0xC2) return d == 0xB0 ? 102 : '?' - 32;   // °
+        switch (d) {
+        case 0x84: return 95; case 0x96: return 96; case 0x9C: return 97;    // Ä Ö Ü
+        case 0xA4: return 98; case 0xB6: return 99; case 0xBC: return 100;   // ä ö ü
+        case 0x9F: return 101;                                                // ß
+        }
+        return '?' - 32;
+    }
+    while ((*s & 0xC0) == 0x80) s++;   // andere Mehrbyte-Zeichen ueberspringen
+    return '?' - 32;
+}
+static int textLen(const char* s) { int n = 0; while (*s) { nextGlyph(s); n++; } return n; }
+static int textW(const char* s, int sc = 1) { return textLen(s) * FONT_W * sc; }
 static void text(int x, int y, const char* s, Col c, int sc = 1) {
     if (fbPix) {   // Glyphen direkt mischen
-        for (; *s; s++, x += FONT_W * sc) {
-            int ch = (unsigned char)*s;
-            if (ch < 32 || ch > 126) ch = '?';
+        for (; *s; x += FONT_W * sc) {
+            int gi = nextGlyph(s);
             if (x >= SW || x + FONT_W * sc <= 0) continue;
-            const uint8_t* g = FONT_DATA[ch - 32];
+            const uint8_t* g = FONT_DATA[gi];
             for (int gy = 0; gy < FONT_H; gy++) {
                 int py = y + gy * sc;
                 if (py + sc <= 0 || py >= SH) continue;
@@ -256,10 +276,9 @@ static void text(int x, int y, const char* s, Col c, int sc = 1) {
     }
     SDL_SetTextureColorMod(fontTex, c.r, c.g, c.b);
     SDL_SetTextureAlphaMod(fontTex, textAlpha);
-    for (; *s; s++, x += FONT_W * sc) {
-        int ch = (unsigned char)*s;
-        if (ch < 32 || ch > 126) ch = '?';
-        SDL_Rect src = {(ch - 32) * FONT_W, 0, FONT_W, FONT_H}, dst = {x, y, FONT_W * sc, FONT_H * sc};
+    for (; *s; x += FONT_W * sc) {
+        int gi = nextGlyph(s);
+        SDL_Rect src = {gi * FONT_W, 0, FONT_W, FONT_H}, dst = {x, y, FONT_W * sc, FONT_H * sc};
         SDL_RenderCopy(ren, fontTex, &src, &dst);
     }
 }
@@ -324,11 +343,13 @@ static void rrect(int x, int y, int w, int h, int r, Col c, Uint8 a = 255) {
 // Hinweistext: [..] wird hervorgehoben
 static void hint(int x, int y, const char* s, Col key, Col norm) {
     bool k = false;
-    char ch[2] = {0, 0};
-    for (; *s; s++) {
-        if (*s == '[') { k = true; continue; }
-        if (*s == ']') { k = false; x += 3; continue; }
-        ch[0] = *s;
+    char ch[4] = {0, 0, 0, 0};
+    while (*s) {
+        if (*s == '[') { k = true; s++; continue; }
+        if (*s == ']') { k = false; x += 3; s++; continue; }
+        const char* a = s; nextGlyph(s);
+        int n = (int)(s - a); if (n > 3) n = 3;
+        memcpy(ch, a, n); ch[n] = 0;
         text(x, y, ch, k ? key : norm);
         x += FONT_W;
     }
@@ -417,7 +438,7 @@ static void pollVolumeKeys() {
             if (fd < 0) continue;
             char nm[64] = "";
             ioctl(fd, EVIOCGNAME(sizeof nm), nm);
-            if (strstr(nm, "vol") && volKeyFd < 0) { volKeyFd = fd; printf("Lautstaerketasten: %s (%s)\n", nm, p); }
+            if (strstr(nm, "vol") && volKeyFd < 0) { volKeyFd = fd; printf("Lautstärketasten: %s (%s)\n", nm, p); }
             else if (strstr(nm, "pwrkey") && pwrKeyFd < 0) { pwrKeyFd = fd; printf("Power-Taste: %s (%s)\n", nm, p); }
             else close(fd);
         }
@@ -434,7 +455,7 @@ static void pollVolumeKeys() {
         if (step) {
             cfg.hwVol = clampi(cfg.hwVol + step, 0, 100);
             if (intMuted) toast("INTERN %d%% (STUMM, USB-AUDIO AKTIV)", cfg.hwVol);
-            else { hwVolumeSet(cfg.hwVol); toast("LAUTSTAERKE %d%%", cfg.hwVol); }
+            else { hwVolumeSet(cfg.hwVol); toast("LAUTSTÄRKE %d%%", cfg.hwVol); }
             saveSettings();
         }
     }
@@ -553,6 +574,45 @@ static void animate() {
 static Pattern& curP() { return eng.proj.pat[eng.curPat]; }
 static Step& holdS() { return eng.proj.pat[holdPat].s[holdTrack][holdStep]; }
 
+// Rueckgaengig: Stapel von Pattern-Staenden; zusammenhaengende Aenderungen (bis 0,8 s Pause) = ein Schritt
+enum { UNDO_N = 12 };
+static Pattern undoBuf[UNDO_N], undoShadow, redoBuf;
+static int undoPat[UNDO_N], undoTop = 0, undoCnt = 0, undoShadowPat = -1, redoPat = -1;
+static bool undoDirty = false;
+static Uint32 undoLastChange = 0;
+static void toast(const char* fmt, ...);
+static void lockA();
+static void unlockA();
+static void undoTrack(Uint32 now) {   // einmal pro Bild nach der Eingabe
+    const Pattern& P = eng.proj.pat[eng.curPat];
+    if (eng.curPat != undoShadowPat) { undoShadow = P; undoShadowPat = eng.curPat; undoDirty = false; return; }
+    if (memcmp(&P, &undoShadow, sizeof(Pattern))) {
+        if (!undoDirty) {   // erster Schritt einer Aenderung: Stand davor sichern
+            undoBuf[undoTop] = undoShadow; undoPat[undoTop] = undoShadowPat;
+            undoTop = (undoTop + 1) % UNDO_N; if (undoCnt < UNDO_N) undoCnt++;
+            undoDirty = true; redoPat = -1;
+        }
+        undoLastChange = now;
+        undoShadow = P;
+    } else if (undoDirty && now - undoLastChange > 800) undoDirty = false;
+}
+static void undoStep() {
+    if (!undoCnt) { toast("NICHTS RÜCKGÄNGIG ZU MACHEN"); return; }
+    undoTop = (undoTop + UNDO_N - 1) % UNDO_N; undoCnt--;
+    int pi = undoPat[undoTop];
+    redoBuf = eng.proj.pat[pi]; redoPat = pi;
+    lockA(); eng.proj.pat[pi] = undoBuf[undoTop]; unlockA();
+    if (pi == eng.curPat) undoShadow = undoBuf[undoTop];
+    undoDirty = false;
+    toast("RÜCKGÄNGIG: PATTERN %02d (%d WEITERE)", pi + 1, undoCnt);
+}
+static void redoStep() {
+    if (redoPat < 0) { toast("NICHTS ZU WIEDERHOLEN"); return; }
+    lockA(); eng.proj.pat[redoPat] = redoBuf; unlockA();
+    toast("WIEDERHOLT: PATTERN %02d", redoPat + 1);
+    redoPat = -1;
+}
+
 // Seiten: Spurseiten haben eine Speicherseite (je 8 Parameter), globale nicht
 static bool trackPage(int p) { return p < FIRST_GLOBAL_PAGE; }
 static int sp() { return PG_STORE[page]; }
@@ -617,8 +677,8 @@ static void drawHeader() {
         Col c = on ? mix(C_ACC, C_PLAY, beatPulse * 0.6f) : C_OFF2;
         rrect(146 + i * 10 - grow / 2, 8 - grow / 2, 7 + grow, 7 + grow, 3, c);
     }
-    snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]);
-    text(84, 21, b, C_DIM);
+    if (eng.proj.mst[MS_SWNG]) { snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]); text(84, 21, b, C_DIM); }
+    else text(84, 21, eng.playing ? "PLAY" : "STOP", eng.playing ? C_GREEN : C_DIM);
     if (eng.songOn && eng.proj.songLen && !eng.recording && !eng.fill) {
         snprintf(b, sizeof b, "SNG %d/%d", eng.songPos + 1, eng.proj.songLen);
         text(140, 21, b, C_CYAN);
@@ -666,9 +726,9 @@ static void drawHeader() {
         snprintf(b, sizeof b, lockLatch ? "LOCK-MODUS STEP %02d" : "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
         text(332, 23, b, C_LOCK);
     } else {
-        text(334, 23, GROUP_NAMES[PG_GROUP[page]], dimC(C_ACC, 0.8f));
-        snprintf(b, sizeof b, "CPU %d%%", (int)(cpuLoad * 100));
-        text(334 + textW(GROUP_NAMES[PG_GROUP[page]]) + 10, 23, b, C_DIM);
+        int hx = 334;
+        if (!trackPage(page)) { text(hx, 23, GROUP_NAMES[PG_GROUP[page]], dimC(C_ACC, 0.8f)); hx += textW(GROUP_NAMES[PG_GROUP[page]]) + 10; }
+        if (cpuLoad > 0.6f) { snprintf(b, sizeof b, "CPU %d%%", (int)(cpuLoad * 100)); text(hx, 23, b, C_TRIG); }   // nur als Warnung
         if (strcmp(midiBackend(), "AUS")) {
             bool act = SDL_GetTicks() - midiActivity < 150;
             rrect(462, 27, 6, 6, 3, act ? C_GREEN : C_OFF2);
@@ -727,7 +787,7 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         case SY_MCH: val = cfg.chm; break;
         case SY_USB: val = usbMode;
             if (usbMode && netIp[0]) snprintf(label, ln, "IP %s", netIp);
-            else snprintf(label, ln, "%s", usbMode ? "R36S AM PC" : "GERAETE AM R36S");
+            else snprintf(label, ln, "%s", usbMode ? "R36S AM PC" : "GERÄTE AM R36S");
             break;
         default: {
             char nm[256]; val = midiPortInfo(nm, sizeof nm);
@@ -821,6 +881,7 @@ static void graphBox(int x, int y, int w, int h) {
 }
 
 // ADSR-Huellkurve mit Live-Punkt
+static float envShapeK = 1.f;   // Huellkurvenform fuer die Anzeige (Wert^k)
 static void envGraph(int gx, int gy, int gw, int gh, int a, int d, int s, int r, int sel, const ADSR* live, Col c) {
     graphBox(gx, gy, gw, gh);
     int x0 = gx + 10, top = gy + 8, bot = gy + gh - 8, H = bot - top;
@@ -837,13 +898,13 @@ static void envGraph(int gx, int gy, int gw, int gh, int a, int d, int s, int r,
         else if (i < wA + wD) { float t = (float)(i - wA) / wD; v = sv + (1.f - sv) * expf(-6.9f * t); seg = 1; }
         else if (i < wA + wD + wS) { v = sv; seg = 2; }
         else { float t = (float)(i - wA - wD - wS) / wR; v = sv * expf(-6.9f * t); seg = 3; }
-        ys[i] = bot - (int)(v * H);
+        ys[i] = bot - (int)(powf(v, envShapeK) * H);
         hi[i] = seg == sel;
     }
     curve(x0, ys, n, bot, c, 40, hi);
     handle(x0 + wA, top, c, sel == 0);
-    handle(x0 + wA + wD, bot - (int)(sv * H), c, sel == 1 || sel == 2);
-    handle(x0 + wA + wD + wS, bot - (int)(sv * H), c, sel == 2);
+    handle(x0 + wA + wD, bot - (int)(powf(sv, envShapeK) * H), c, sel == 1 || sel == 2);
+    handle(x0 + wA + wD + wS, bot - (int)(powf(sv, envShapeK) * H), c, sel == 2);
     handle(x0 + n - 1, bot, c, sel == 3);
     // Live: aktueller Huellkurvenwert der Stimme
     if (live && live->st) {
@@ -1120,7 +1181,7 @@ static void sampleGraph(int gx, int gy, int gw, int gh, int idx, int st, int en,
     fill(xs, gy + 4, 2, gh - 8, sel == 3 ? C_PLAY : C_GREEN);
     fill(xe, gy + 4, 2, gh - 8, C_TRIG);
     if (loop) text(lo + 4, gy + gh - 20, "LOOP", C_PLAY);
-    if (en < st) text(lo + 4, gy + 4, "<< RUECKWAERTS", C_PLAY);
+    if (en < st) text(lo + 4, gy + 4, "<< RÜCKWÄRTS", C_PLAY);
     const Voice& v = eng.v[track];
     if (v.active && v.machine == M_SAMPLE && v.smp == sm) {
         int px = x0 + (int)(v.spos / sm->len * (W - 1));
@@ -1188,7 +1249,7 @@ static void seqGraph(int gx, int gy, int gw, int gh, int sel, Col c) {
         float a = ((rot % len) / (float)len) * 6.2831853f - 1.5707963f;
         fill(cx + (int)((r + 6) * cosf(a)) - 1, cy + (int)((r + 6) * sinf(a)) - 1, 3, 3, sel == 0 + 4 ? C_PLAY : C_TEXT);
     }
-    static const char* dn[6] = {"VORWAERTS >>", "<< RUECKWAERTS", "PING <->", "PENDEL <=>", "ZUFALL ?", "BETRUNKEN ~"};
+    static const char* dn[6] = {"VORWÄRTS >>", "<< RÜCKWÄRTS", "PING <->", "PENDEL <=>", "ZUFALL ?", "BETRUNKEN ~"};
     char b[48];
     text(gx + 84, gy + 6, dn[dir], sel == 0 ? C_PLAY : c);
     if (puls > 0) snprintf(b, sizeof b, "EUKLID E(%d,%d) ROT %d", puls > len ? len : puls, len, rot % len);
@@ -1619,7 +1680,7 @@ static void wtGraph(int gx, int gy, int gw, int gh, int tab, int pos, Col c) {
     const float* fr = wavetableFrame(tab, cur);
     int ox = x0 + cur * 7, oy = base - cur * 20 / 31 - 10, px = ox, py = oy - (int)(fr[0] * 12);
     for (int i = 1; i < W; i++) { int nx = ox + i, ny = oy - (int)(fr[i * 256 / W] * 12); line(px, py, nx, ny, c, 2); px = nx; py = ny; }
-    static const char* tn[4] = {"BASIC: SIN > TRI > SAW > SQR", "PWM: 50 % > 5 %", "VOKAL: A > E > I > O > U", "OBERTOENE: 1 > 32"};
+    static const char* tn[4] = {"BASIC: SIN > TRI > SAW > SQR", "PWM: 50 % > 5 %", "VOKAL: A > E > I > O > U", "OBERTÖNE: 1 > 32"};
     text(gx + gw - 10 - textW(tn[tab & 3]), gy + 4, tn[tab & 3], dimC(c, 0.8f));
     char b[24]; snprintf(b, sizeof b, "FRAME %d/32", cur + 1);
     text(gx + gw - 10 - textW(b), gy + 22, b, c);
@@ -1788,7 +1849,7 @@ static void drawMixer(int ox) {
 static void drawMenu() {
     rrect(50, 40, 540, 360, 14, C_ACC);
     rrect(52, 42, 536, 356, 13, C_BG, 250);
-    textC(320, 50, "SEITE WAEHLEN", C_ACC, 2);
+    textC(320, 50, "SEITE WÄHLEN", C_ACC, 2);
     int y = 104;
     for (int g = 0; g < 3; g++) {
         text(72, y - 20, GROUP_NAMES[g], C_DIM);
@@ -1808,8 +1869,8 @@ static void drawMenu() {
     if (PG_STORE[menuSel] >= 0) {
         char hb[80];
         int cq = 0; for (int q = 0; q < NUI_PAGES; q++) if (PG_STORE[q] == pageClipStore) { cq = q; break; }
-        if (pageClipStore >= 0) snprintf(hb, sizeof hb, "[X] SEITE KOPIEREN  [Y] EINFUEGEN (%s VON T%d)", PAGE_NAMES[cq], pageClipTrack + 1);
-        else snprintf(hb, sizeof hb, "[X] SEITE DER SPUR KOPIEREN  [Y] EINFUEGEN");
+        if (pageClipStore >= 0) snprintf(hb, sizeof hb, "[X] SEITE KOPIEREN  [Y] EINFÜGEN (%s VON T%d)", PAGE_NAMES[cq], pageClipTrack + 1);
+        else snprintf(hb, sizeof hb, "[X] SEITE DER SPUR KOPIEREN  [Y] EINFÜGEN");
         hint(320 - textW(hb) / 2, 368, hb, C_ACC, C_DIM);
     }
 }
@@ -1829,6 +1890,7 @@ static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
     switch (gk) {
     case 1: {
         int base = page == PG_AMP ? P_AATK : P_FATK;
+        envShapeK = exp2f((pv(page == PG_AMP ? P_ACRV : P_FCRV) - 64) / 32.f);
         envGraph(gx, gy, gw, gh, pv(base), pv(base + 1), pv(base + 2), pv(base + 3), selRel,
                  v.active ? (page == PG_AMP ? &v.aenv : &v.fenv) : nullptr, tc);
     } break;
@@ -2082,11 +2144,11 @@ static void drawSteps() {
     }
     const char* h;
     if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [L1/R1]KOPIE/EINF [A]OK";
-    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LOESCHEN [L1]KOPIE [R1]EINFUEGEN  LANG = LOCK-MODUS";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
+    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN  LANG = LOCK-MODUS";
+    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE";
     else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
-    else if (page == PG_PRJ) h = "[L-STICK]WAEHLEN [R-STICK^v]PLATZ [A/X]AUSFUEHREN [SEL]MENUE";
-    else h = "[A]TRIG [B]HOER [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE";
+    else if (page == PG_PRJ) h = "[L-STICK]WÄHLEN [R-STICK^v]PLATZ [A/X]AUSFÜHREN [SEL]MENÜ";
+    else h = "[A]TRIG [B]HÖR [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE";
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -2094,24 +2156,24 @@ static void drawHelp() {
     rrect(30, 22, 580, 436, 12, C_ACC);
     rrect(32, 24, 576, 432, 11, C_BG, 245);
     static const char* lines[] = {
-        "SELECT (FUNC) GEHALTEN +",
+        "SELECT GEHALTEN +",
         "  LINKS/RECHTS   Pattern wechseln",
         "  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo",
-        "  A / B          Spur stumm / Spur loeschen",
+        "  A / B          Spur stumm / RÜCKGÄNGIG",
         "  X / Y          Engine wechseln",
-        "  L1 / R1        FILL an/aus / Pattern einfuegen",
-        "  L2 / R2        Spurlaenge -/+",
+        "  L1 / R1        Step-Cursor 1 Schlag (4 Steps) zurück/vor",
+        "  L2 / R2        Spurlänge -/+",
         "  START          Speichern (2s halten: Ende)",
         "",
-        "OHNE FUNC",
-        "  A              Trig setzen/loeschen",
-        "  A lang halten  LOCK-MODUS: R-Stick/X/Y lockt, </> Step",
-        "                 B Locks loeschen, A antippen = fertig",
-        "  A halten+L1/R1 Trig kopieren / einfuegen",
-        "  B              Spur vorhoeren",
-        "  Linker Stick   Kachel waehlen (je Antippen 1 Schritt)",
-        "  Rechter Stick  hoch/runter: Wert (nur Werte)",
-        "  SEL+R-Stick    links/rechts: Seite  hoch/runter: DJ-Filter",
+        "OHNE SELECT",
+        "  A / A lang     Trig / LOCK-MODUS (Stick, X/Y lockt)",
+        "  A halten+L1/R1 Trig kopieren / einfügen",
+        "  B              Spur vorhören",
+        "  HOCH / RUNTER  Spur wählen",
+        "  L1 / R1        Block im Signalweg (Quelle..Insert)",
+        "  L2 / R2        Reihe SEQ: Trig, Seq, Arp, LFOs",
+        "  L-Stick/R-St.  Regler wählen / Wert ändern",
+        "  SELECT tippen  Menü: LIVE, Mixer, FX, Song, Projekt",
         "  START          Play / Stop",
     };
     for (unsigned i = 0; i < sizeof lines / sizeof *lines; i++)
@@ -2126,7 +2188,7 @@ static const int SIG_MOD[] = {PG_TRG, PG_SEQ, PG_ARP, PG_LFO1, PG_LFO2, PG_LFO3}
 static const int SIG_NCH = 6, SIG_NMOD = 6;
 static const char* sigName(int p) {
     switch (p) {
-    case PG_SRC: return "QUELLE"; case PG_SRC2: return "QUELLE 2"; case PG_FLT: return "FILTER"; case PG_FLT2: return "BASE-W";
+    case PG_SRC: return "QUELLE"; case PG_SRC2: return "QUELLE 2"; case PG_FLT: return "FILTER 1"; case PG_FLT2: return "FILTER 2";
     case PG_AMP: return "AMP"; case PG_INS: return "INSERT"; case PG_TRG: return "TRIG"; case PG_SEQ: return "SEQ";
     case PG_ARP: return "ARP"; case PG_LFO1: return "LFO1"; case PG_LFO2: return "LFO2"; case PG_LFO3: return "LFO3";
     }
@@ -2220,22 +2282,36 @@ static void drawSigB() {
     snprintf(b, sizeof b, "SIGNALWEG  SPUR %d", track + 1);
     text(X0, 44, b, C_DIM);
     text(X0 + W - textW("L1/R1"), 44, "L1/R1", dimC(C_ACC, 0.8f));
-    int nb = 0, list[SIG_NCH];
-    for (int i = 0; i < SIG_NCH; i++) if (pageAvail(SIG_CHAIN[i])) list[nb++] = SIG_CHAIN[i];
-    int gap = 10, bw = (W - gap * (nb - 1)) / nb;
-    for (int i = 0; i < nb; i++) {
-        int p = list[i], x = X0 + i * (bw + gap), y = 62;
-        bool sel = p == page;
-        if (i) fill(x - gap, y + 20, gap, 2, tc);
-        rrect(x, y, bw, 42, 6, sel ? C_SEL : C_PANEL);
-        if (sel) { rrect(x, y, bw, 2, 1, tc); rrect(x, y + 40, bw, 2, 1, tc); rrect(x, y, 2, 42, 1, tc); rrect(x + bw - 2, y, 2, 42, 1, tc); }
-        text(x + 6, y + 3, sigName(p), sel ? tc : C_TEXT);
-        sigSummary(p, b, sizeof b);
-        char sb[16]; snprintf(sb, sizeof sb, "%.*s", (bw - 10) / FONT_W, b);
-        text(x + 6, y + 21, sb, C_DIM);
+    // Spalten: zusammengehoerige Seiten untereinander (QUELLE/QUELLE 2, FILTER 1/FILTER 2)
+    static const int COLS[4][2] = {{PG_SRC, PG_SRC2}, {PG_FLT, PG_FLT2}, {PG_AMP, -1}, {PG_INS, -1}};
+    int gap = 14, bw = (W - gap * 3) / 4;
+    for (int ci = 0; ci < 4; ci++) {
+        int x = X0 + ci * (bw + gap), y = 62;
+        int n = 0, items[2];
+        for (int k = 0; k < 2; k++) if (COLS[ci][k] >= 0 && pageAvail(COLS[ci][k])) items[n++] = COLS[ci][k];
+        if (ci) fill(x - gap, y + 20, gap, 2, tc);
+        int ih = n == 2 ? 20 : 42;
+        for (int k = 0; k < n; k++) {
+            int p = items[k], yy = y + k * 22;
+            bool sel = p == page;
+            rrect(x, yy, bw, ih, 5, sel ? C_SEL : C_PANEL);
+            if (sel) { rrect(x, yy, bw, 2, 1, tc); rrect(x, yy + ih - 2, bw, 2, 1, tc); rrect(x, yy, 2, ih, 1, tc); rrect(x + bw - 2, yy, 2, ih, 1, tc); }
+            sigSummary(p, b, sizeof b);
+            char sb[40];
+            if (n == 2) {   // eine Zeile: Name + Kurzinfo
+                snprintf(sb, sizeof sb, "%s", sigName(p));
+                text(x + 6, yy + 2, sb, sel ? tc : C_TEXT);
+                char vb[24]; snprintf(vb, sizeof vb, "%.*s", (bw - 16 - textW(sb)) / FONT_W > 0 ? (bw - 16 - textW(sb)) / FONT_W : 0, b);
+                text(x + bw - 6 - textW(vb), yy + 2, vb, C_DIM);
+            } else {
+                text(x + 6, yy + 3, sigName(p), sel ? tc : C_TEXT);
+                snprintf(sb, sizeof sb, "%.*s", (bw - 10) / FONT_W, b);
+                text(x + 6, yy + 21, sb, C_DIM);
+            }
+        }
     }
     // --- Modulation / Sequenz
-    text(X0, 108, "MOD", C_DIM);
+    text(X0, 108, "SEQ", C_DIM);
     text(X0 + W - textW("L2/R2"), 108, "L2/R2", dimC(C_ACC, 0.8f));
     int x = X0 + 34;
     for (int i = 0; i < SIG_NMOD; i++) {
@@ -2255,6 +2331,19 @@ static void drawSigB() {
     rrect(X0, py, W, ph, 6, C_PANEL);
     fill(X0, py, W, 2, tc);
     text(X0 + 8, py + 4, PAGE_LONG[page], tc);
+    {   // Erklaerung des gewaehlten Reglers
+        ParamDef hd; int hv, hb; bool hl; char hlab[24];
+        if (knobInfo(slot, hd, hv, hl, hb, hlab, sizeof hlab) && hd.kind != K_NONE) {
+            const char* ht = paramHelp(hd.name);
+            if (*ht) {
+                char hs[96]; snprintf(hs, sizeof hs, "%s: %s", hd.name, ht);
+                int maxw = W - 24 - textW(PAGE_LONG[page]);
+                while (textW(hs) > maxw && strlen(hs) > 4) hs[strlen(hs) - 1] = 0;
+                while (strlen(hs) && ((unsigned char)hs[strlen(hs) - 1] & 0xC0) == 0xC0) hs[strlen(hs) - 1] = 0;   // kein halbes UTF-8-Zeichen
+                text(X0 + W - 8 - textW(hs), py + 4, hs, C_TEXT);
+            }
+        }
+    }
     int gk = graphKind(0), grow = 0;
     if (!gk) { gk = graphKind(1); grow = 1; }
     int ty = py + 24;
@@ -2291,9 +2380,9 @@ static void drawSigB() {
     if (npg > 1) text(X0 - 40, sy + 12, b, C_DIM);
     const char* h;
     if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [A]OK";
-    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LOESCHEN [L1]KOPIE [R1]EINFUEGEN";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]CLR [L1]FILL [L2/R2]LAENGE";
-    else h = "[^v]SPUR [L1/R1]BLOCK [L2/R2]MOD [L-ST]REGLER [R-ST]WERT [SEL]MENUE";
+    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN";
+    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE";
+    else h = "[^v]SPUR [L1/R1]BLOCK [L2/R2]SEQ [L-ST]REGLER [R-ST]WERT [SEL]MENÜ";
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -2564,7 +2653,7 @@ static int curMax() {
 
 // ---------------------------------------------------------------- Projekte, Presets, Abfragen
 
-enum { ACT_LOAD = 1, ACT_SAVE, ACT_NEW, ACT_PSAVE, ACT_INIT, ACT_PASTE, ACT_CLEARPAT, ACT_QUIT };
+enum { ACT_LOAD = 1, ACT_SAVE, ACT_NEW, ACT_PSAVE, ACT_INIT, ACT_PASTE, ACT_CLEARPAT, ACT_QUIT, ACT_CLEARTRK, ACT_DEMO };
 
 static void songPath(int i, char* out, int n) { snprintf(out, n, "%sprojects/song%02d.gbx", basePath, i + 1); }
 static bool fileExists(const char* p) { struct stat st; return stat(p, &st) == 0; }
@@ -2585,7 +2674,7 @@ static bool savePreset(int t, int i) {
     char p[700]; presetPath(m, i, p, sizeof p);
     FILE* f = fopen(p, "wb");
     if (!f) return false;
-    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 1, 0};   // [6] = 1: Filtertypen FT_*
+    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 2, 0};   // [6]: 1 Filtertypen FT_*, 2 Huellkurvenform
     bool ok = fwrite(hdr, 8, 1, f) == 1 && fwrite(curP().p[t], NPARAMS, 1, f) == 1;
     fclose(f);
     return ok;
@@ -2605,6 +2694,7 @@ static int loadPreset(int t, int m, int i) {   // 1 ok, 0 leer, -1 Fehler
     Engine::initTrack(P, t, hdr[4]);
     memcpy(P.p[t], prm, np);
     if (hdr[6] == 0 && (hdr[4] == M_SYNTH || hdr[4] == M_WTBL) && P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;   // alte Presets
+    if (hdr[6] < 2) { P.p[t][P_FCRV] = 64; P.p[t][P_ACRV] = 64; }
     unlockA();
     return 1;
 }
@@ -2627,7 +2717,7 @@ static void doSaveSong(int i) {
 static void doNewSong() {
     int j = -1;
     for (int i = 0; i < 32 && j < 0; i++) if (!songExists(i)) j = i;
-    if (j < 0) { toast("ALLE 32 PLAETZE BELEGT"); return; }
+    if (j < 0) { toast("ALLE 32 PLÄTZE BELEGT"); return; }
     lockA(); eng.stop(); eng.defaultProject(false); unlockA();
     prjSel = j;
     doSaveSong(j);
@@ -2639,7 +2729,13 @@ static void runAction(int act, int arg) {
     case ACT_SAVE: doSaveSong(arg); break;
     case ACT_NEW: doNewSong(); break;
     case ACT_PSAVE: toast(savePreset(track, arg) ? "PRESET %02d GESPEICHERT" : "PRESET-FEHLER", arg + 1); break;
-    case ACT_PASTE: lockA(); curP() = clip; unlockA(); toast("PATTERN EINGEFUEGT"); break;
+    case ACT_PASTE: lockA(); curP() = clip; unlockA(); toast("PATTERN EINGEFÜGT"); break;
+    case ACT_CLEARTRK:
+        lockA();
+        for (int st = 0; st < NSTEPS; st++) { curP().s[arg][st].on = 0; memset(curP().s[arg][st].lock, NO_LOCK, NPARAMS); }
+        unlockA();
+        toast("SPUR %d GELEERT (SELECT+B = RÜCKGÄNGIG)", arg + 1);
+        break;
     case ACT_CLEARPAT:
         lockA();
         for (int t = 0; t < NTRACKS; t++) for (int st = 0; st < NSTEPS; st++) { curP().s[t][st].on = 0; memset(curP().s[t][st].lock, NO_LOCK, NPARAMS); }
@@ -2650,7 +2746,7 @@ static void runAction(int act, int arg) {
     case ACT_INIT: {
         int m = curP().machine[track];
         lockA(); Engine::initTrack(curP(), track, m); unlockA();
-        toast("SPUR %d: KLANG ZURUECKGESETZT", track + 1);
+        toast("SPUR %d: KLANG ZURÜCKGESETZT", track + 1);
     } break;
     }
 }
@@ -2662,7 +2758,7 @@ static void prjTrigger(int k) {   // Aktions-Regler auf der PRJ-Seite ausloesen
         else askConfirm(ACT_LOAD, prjSel, "SONG %02d LADEN? UNGESPEICHERTES GEHT VERLOREN", prjSel + 1);
         break;
     case 2:
-        if (songExists(prjSel) && cfg.song != prjSel) askConfirm(ACT_SAVE, prjSel, "SONG %02d UEBERSCHREIBEN?", prjSel + 1);
+        if (songExists(prjSel) && cfg.song != prjSel) askConfirm(ACT_SAVE, prjSel, "SONG %02d ÜBERSCHREIBEN?", prjSel + 1);
         else doSaveSong(prjSel);
         break;
     case 3: askConfirm(ACT_NEW, 0, "NEUES LEERES PROJEKT ANLEGEN?"); break;
@@ -2672,10 +2768,10 @@ static void prjTrigger(int k) {   // Aktions-Regler auf der PRJ-Seite ausloesen
         else toast(r == 0 ? "PRESET %02d IST LEER" : "PRESET %02d DEFEKT", presetSel + 1);
     } break;
     case 6:
-        if (presetExists(m, presetSel)) askConfirm(ACT_PSAVE, presetSel, "%s-PRESET %02d UEBERSCHREIBEN?", MACHINE_NAMES[m], presetSel + 1);
+        if (presetExists(m, presetSel)) askConfirm(ACT_PSAVE, presetSel, "%s-PRESET %02d ÜBERSCHREIBEN?", MACHINE_NAMES[m], presetSel + 1);
         else runAction(ACT_PSAVE, presetSel);
         break;
-    case 7: askConfirm(ACT_INIT, 0, "KLANG VON SPUR %d ZURUECKSETZEN?", track + 1); break;
+    case 7: askConfirm(ACT_INIT, 0, "KLANG VON SPUR %d ZURÜCKSETZEN?", track + 1); break;
     }
 }
 static bool prjIsAction(int k) { return k == 1 || k == 2 || k == 3 || k >= 5; }
@@ -2694,16 +2790,34 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
 // ---------------------------------------------------------------- Einstellungen (Liste, Seite SET)
 
 enum SetItem {
-    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_MUTATE, SI_UNMUTATE,
+    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_CLRTRK, SI_TMPL, SI_MUTATE, SI_UNDO, SI_REDO,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
     SI_H_SYS, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
+// Rhythmus-Vorlagen (Bit i = Step i+1 von 16), werden ueber die ganze Spurlaenge wiederholt
+static const char* const RHY_NAMES[] = {"Four on the Floor", "Backbeat (2+4)", "Offbeat", "Achtel", "Sechzehntel", "Breakbeat-Kick",
+                                        "Clave 3-2", "Tresillo", "Dembow-Snare", "Leer"};
+static const uint16_t RHY_MASK[] = {0x1111, 0x1010, 0x4444, 0x5555, 0xFFFF, 0x0441, 0x1449, 0x4949, 0x4848, 0x0000};
+enum { RHY_N = sizeof RHY_MASK / sizeof *RHY_MASK };
+static int tmplSel = 0;
+static void applyRhythm(int k) {
+    lockA();
+    Pattern& P = curP();
+    int len = P.len[track] < 1 ? 1 : P.len[track];
+    for (int st = 0; st < len; st++) {
+        bool on = (RHY_MASK[k] >> (st % 16)) & 1;
+        P.s[track][st].on = on ? 1 : 0;
+        if (!on) memset(P.s[track][st].lock, NO_LOCK, NPARAMS);
+    }
+    unlockA();
+    toast("SPUR %d: %s (SELECT+B = RÜCKGÄNGIG)", track + 1, RHY_NAMES[k]);
+}
 static float setScroll = 0;
 static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SYS; }
-static bool setIsAction(int i) { return i == SI_UNMUTATE || i == SI_PCREC || i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
+static bool setIsAction(int i) { return i == SI_UNDO || i == SI_REDO || i == SI_CLRTRK || i == SI_BENCH || i == SI_PCREC || i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
 static bool runLearn();
 static char versionStr[32] = "";
 
@@ -2713,8 +2827,8 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     switch (i) {
     case SI_H_PAT: snprintf(l, ln, "PATTERN"); break;
     case SI_PATTERN: snprintf(l, ln, "Pattern"); snprintf(v, vn, "P%02d%s", eng.curPat + 1, eng.nextPat >= 0 ? " >" : ""); break;
-    case SI_LEN: snprintf(l, ln, "Laenge Spur %d", track + 1); snprintf(v, vn, "%d Steps", P.len[track]); break;
-    case SI_LENALL: snprintf(l, ln, "Laenge alle Spuren"); snprintf(v, vn, "%d Steps", P.len[track]); break;
+    case SI_LEN: snprintf(l, ln, "Länge Spur %d", track + 1); snprintf(v, vn, "%d Steps", P.len[track]); break;
+    case SI_LENALL: snprintf(l, ln, "Länge alle Spuren"); snprintf(v, vn, "%d Steps", P.len[track]); break;
     case SI_SPEED: snprintf(l, ln, "Tempo-Faktor Spur %d", track + 1); snprintf(v, vn, "%s", SPEED_NAMES[P.speed[track] % 7]); break;
     case SI_FILL: snprintf(l, ln, "FILL-Modus (SELECT+L1)"); snprintf(v, vn, "%s", eng.fill ? "AN" : "AUS"); break;
     case SI_BPM: snprintf(l, ln, "Tempo"); snprintf(v, vn, "%d BPM", eng.proj.bpm); break;
@@ -2727,34 +2841,37 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_COPY: snprintf(l, ln, "Pattern kopieren"); break;
     case SI_MUTATE: { static const char* const AM[3] = {"LEICHT", "MITTEL", "STARK"};
         snprintf(l, ln, "Pattern mutieren (A = los)"); snprintf(v, vn, "%s", AM[mutAmt % 3]); } break;
-    case SI_UNMUTATE: snprintf(l, ln, "Mutation rueckgaengig"); snprintf(v, vn, "%s", haveMutUndo ? "" : "(nichts)"); break;
-    case SI_PASTE: snprintf(l, ln, "Pattern einfuegen"); snprintf(v, vn, "%s", haveClip ? "" : "(leer)"); break;
+    case SI_PASTE: snprintf(l, ln, "Pattern einfügen"); snprintf(v, vn, "%s", haveClip ? "" : "(leer)"); break;
     case SI_CLEAR: snprintf(l, ln, "Pattern leeren"); break;
+    case SI_CLRTRK: snprintf(l, ln, "Spur %d leeren", track + 1); break;
+    case SI_TMPL: snprintf(l, ln, "Rhythmus-Vorlage für Spur %d", track + 1); snprintf(v, vn, "< %s >", RHY_NAMES[tmplSel]); break;
+    case SI_UNDO: snprintf(l, ln, "Rückgängig (SELECT + B)"); snprintf(v, vn, "%d Schritte", undoCnt); break;
+    case SI_REDO: snprintf(l, ln, "Wiederholen"); snprintf(v, vn, "%s", redoPat >= 0 ? ">>" : "(nichts)"); break;
     case SI_H_AUDIO: snprintf(l, ln, "AUDIO"); break;
     case SI_OUT: snprintf(l, ln, "Ausgang"); { int d = devIndex(); snprintf(v, vn, "%.26s", d ? devNames[d - 1] : "Standard (intern)"); } break;
     case SI_BUF: snprintf(l, ln, "Puffer");
         if (bufOverride) snprintf(v, vn, "%d (Startoption)", bufOverride);
         else snprintf(v, vn, "%d  (%.1f ms)", BUF_SIZES[cfg.buf], BUF_SIZES[cfg.buf] * 1000.f / eng.sr);
         break;
-    case SI_VOL: snprintf(l, ln, "Lautstaerke"); snprintf(v, vn, "%d", eng.proj.mst[MS_VOL]); break;
+    case SI_VOL: snprintf(l, ln, "Lautstärke"); snprintf(v, vn, "%d", eng.proj.mst[MS_VOL]); break;
     case SI_H_MIDI: snprintf(l, ln, "MIDI"); break;
     case SI_MIN: snprintf(l, ln, "MIDI-Eingang"); snprintf(v, vn, "%s", cfg.midiIn ? "AN" : "AUS"); break;
     case SI_NOUT: snprintf(l, ln, "Noten ausgeben"); snprintf(v, vn, "%s", cfg.notesOut ? "AN (Spur = Kanal)" : "AUS"); break;
     case SI_CLK: snprintf(l, ln, "Clock"); snprintf(v, vn, "%s", cfg.clk == 1 ? "SENDEN" : (cfg.clk == 2 ? "EMPFANGEN" : "AUS")); break;
-    case SI_MCH: snprintf(l, ln, "Eingangskanaele"); snprintf(v, vn, "%s", cfg.chm ? "Kanal 1-8 = Spur 1-8" : "AUTO (gewaehlte Spur)"); break;
+    case SI_MCH: snprintf(l, ln, "Eingangskanäle"); snprintf(v, vn, "%s", cfg.chm ? "Kanal 1-8 = Spur 1-8" : "AUTO (gewählte Spur)"); break;
     case SI_H_USB: snprintf(l, ln, "USB"); break;
     case SI_USB: snprintf(l, ln, "USB-Modus");
-        snprintf(v, vn, "%s", usbMode == 0 ? "HOST (Geraete am R36S)" : (usbMode == 1 ? "PC (Netz-MIDI, SSH)" : "PC + AUDIO"));
+        snprintf(v, vn, "%s", usbMode == 0 ? "HOST (Geräte am R36S)" : (usbMode == 1 ? "PC (Netz-MIDI, SSH)" : "PC + AUDIO"));
         break;
     case SI_USBAUDIO: snprintf(l, ln, "Audio an PC (USB)");
         if (!cfg.usbAudio) snprintf(v, vn, "AUS");
         else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
-        else snprintf(v, vn, usbAudioStatus() == 2 ? "AN - PC LIEST MIT" : (usbAudioActive() ? "AN - WARTET AUF PC" : "AN - SUCHE GERAET"));
+        else snprintf(v, vn, usbAudioStatus() == 2 ? "AN - PC LIEST MIT" : (usbAudioActive() ? "AN - WARTET AUF PC" : "AN - SUCHE GERÄT"));
         break;
-    case SI_USBVOL: snprintf(l, ln, "USB-Lautstaerke"); snprintf(v, vn, "%d%%", cfg.usbVol); break;
+    case SI_USBVOL: snprintf(l, ln, "USB-Lautstärke"); snprintf(v, vn, "%d%%", cfg.usbVol); break;
     case SI_INTUSB: snprintf(l, ln, "Intern bei USB-Audio"); snprintf(v, vn, "%s", cfg.intUsb ? (intMuted ? "STUMM (AKTIV)" : "STUMM") : "AN"); break;
     case SI_USBTONE: snprintf(l, ln, "Testton an PC (5 s, 1 kHz)"); if (!usbAudioActive()) snprintf(v, vn, "erst Audio an PC"); break;
-    case SI_PCIN: snprintf(l, ln, "PC-Ton ueber R36S");
+    case SI_PCIN: snprintf(l, ln, "PC-Ton über R36S");
         if (!cfg.pcIn) snprintf(v, vn, "AUS");
         else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
         else snprintf(v, vn, pcInStatus() == 2 ? "AN - PC SPIELT" : "AN - STILL");
@@ -2788,6 +2905,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
 static void setChange(int i, int d) {
     Pattern& P = curP();
     switch (i) {
+    case SI_TMPL: tmplSel = ((tmplSel + d) % RHY_N + RHY_N) % RHY_N; break;
     case SI_PATTERN: {
         int to = (eng.curPat + d + NPATTERNS) % NPATTERNS;
         lockA(); if (eng.playing) eng.nextPat = to; else { eng.curPat = to; eng.nextPat = -1; } unlockA();
@@ -2947,32 +3065,32 @@ static void drawDrive() {
     textC(320, 182, "Am PC erscheint das Laufwerk GROOVEBOX.", C_TEXT);
     textC(320, 204, "Samples in den Ordner samples/ kopieren,", C_TEXT);
     textC(320, 226, "dann das Laufwerk am PC AUSWERFEN.", C_TEXT);
-    rrect(200, 270, 240, 36, 9, C_GREEN); textC(320, 280, "A = FERTIG, ZURUECK", C_BG);
+    rrect(200, 270, 240, 36, 9, C_GREEN); textC(320, 280, "A = FERTIG, ZURÜCK", C_BG);
 }
 
 static void setAction(int i) {
     switch (i) {
     case SI_COPY: clip = curP(); haveClip = true; toast("PATTERN %02d KOPIERT", eng.curPat + 1); break;
     case SI_PASTE:
-        if (haveClip) askConfirm(ACT_PASTE, 0, "PATTERN %02d MIT KOPIE UEBERSCHREIBEN?", eng.curPat + 1);
+        if (haveClip) askConfirm(ACT_PASTE, 0, "PATTERN %02d MIT KOPIE ÜBERSCHREIBEN?", eng.curPat + 1);
         else toast("ZWISCHENABLAGE LEER");
         break;
-    case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, "ALLE STEPS VON PATTERN %02d LOESCHEN?", eng.curPat + 1); break;
+    case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, "ALLE STEPS VON PATTERN %02d LÖSCHEN?", eng.curPat + 1); break;
+    case SI_CLRTRK: askConfirm(ACT_CLEARTRK, track, "ALLE STEPS VON SPUR %d LÖSCHEN?", track + 1); break;
+    case SI_TMPL: applyRhythm(tmplSel); break;
+    case SI_UNDO: undoStep(); break;
+    case SI_REDO: redoStep(); break;
     case SI_LEARN: runLearn(); break;
     case SI_BENCH: {   // Messung auf dem Geraet, Bericht in logs/bench.txt (Browser: Logs)
         char bp[700];
         if (isGrooveboxOS()) { mkdir("/data/logs", 0755); snprintf(bp, sizeof bp, "/data/logs/bench.txt"); }
         else snprintf(bp, sizeof bp, "%sbench.txt", basePath);
-        clearScreen(C_BG); textC(320, 220, "LEISTUNGSTEST LAEUFT ...", C_ACC, 2); present();
+        clearScreen(C_BG); textC(320, 220, "LEISTUNGSTEST LÄUFT ...", C_ACC, 2); present();
         runBench(bp, true);
         toast("LEISTUNGSTEST FERTIG: LOGS/BENCH.TXT");
     } break;
     case SI_MUTATE: mutatePattern(); break;
     case SI_DRIVE: startDrive(); break;
-    case SI_UNMUTATE:
-        if (!haveMutUndo) toast("NICHTS RUECKGAENGIG ZU MACHEN");
-        else { lockA(); eng.proj.pat[mutPat] = mutUndo; unlockA(); haveMutUndo = false; toast("MUTATION RUECKGAENGIG (P%02d)", mutPat + 1); }
-        break;
     case SI_PCREC:
         if (pcRecState() == 1 || pcRecState() == 2) { pcRecStop(); toast(pcRecState() ? "AUFNAHME BEENDET" : "ABGEBROCHEN"); }
         else if (usbMode != 2) toast("ERST USB = PC (MIDI + AUDIO)");
@@ -3013,7 +3131,7 @@ static void drawSong() {
     rrect(4, 46, 632, 398, 10, C_PANEL);
     char b[64];
     text(18, 54, "SONG", C_ACC, 2);
-    snprintf(b, sizeof b, "%d EINTRAEGE", J.songLen);
+    snprintf(b, sizeof b, "%d EINTRÄGE", J.songLen);
     text(100, 62, b, C_DIM);
     bool on = eng.songOn;
     rrect(440, 54, 186, 28, 8, on ? C_ACC : C_OFF2);
@@ -3023,7 +3141,7 @@ static void drawSong() {
     float target = songSel - visible / 2.f; if (target < 0) target = 0;
     if (target > J.songLen - visible) target = J.songLen > visible ? J.songLen - visible : 0;
     songScroll += (target - songScroll) * (1.f - expf(-animDt * 14.f));
-    if (J.songLen == 0) { textC(320, 200, "NOCH LEER - A FUEGT DAS AKTUELLE PATTERN EIN", C_DIM); }
+    if (J.songLen == 0) { textC(320, 200, "NOCH LEER - A FÜGT DAS AKTUELLE PATTERN EIN", C_DIM); }
     for (int i = 0; i < J.songLen; i++) {
         float yf = top + (i - songScroll) * rowH;
         if (yf < top - 4 || yf > top + (visible - 1) * rowH + 4) continue;
@@ -3042,7 +3160,7 @@ static void drawSong() {
         }
         if (play) text(600 - textW(">>"), y + 6, ">>", C_PLAY);
     }
-    hint(6, 452, "[^v]EINTRAG [</>]PATTERN [X/Y]WDH [A]NEU [B]LOESCHEN [R1]SONG AN/AUS [START]AB HIER", C_ACC, C_DIM);
+    hint(6, 452, "[^v]EINTRAG [</>]PATTERN [X/Y]WDH [A]NEU [B]LÖSCHEN [R1]SONG AN/AUS [START]AB HIER", C_ACC, C_DIM);
 }
 
 static void songInput(Input& I, Uint32 now) {
@@ -3079,7 +3197,7 @@ static void songInput(Input& I, Uint32 now) {
         if (songSel >= J.songLen && songSel > 0) songSel--;
     }
     if (I.pressed(BT_R1)) {
-        if (!J.songLen) toast("ERST EINTRAEGE ANLEGEN (A)");
+        if (!J.songLen) toast("ERST EINTRÄGE ANLEGEN (A)");
         else { lockA(); if (eng.songOn) eng.songOn = false; else eng.songStart(songSel); unlockA(); toast(eng.songOn ? "SONG-MODUS AN" : "SONG-MODUS AUS"); }
     }
     if (I.pressed(BT_START)) {
@@ -3122,7 +3240,7 @@ static void drawSettings() {
             if (sel) { text(604 - textW(v) - 16, y + 4, "<", C_DIM); text(608, y + 4, ">", C_DIM); }
         }
     }
-    hint(6, 452, "[^/v]WAEHLEN [</>]AENDERN [A]AUSFUEHREN [B]ZURUECK [SEL]MENUE", C_ACC, C_DIM);
+    hint(6, 452, "[^/v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [B]ZURÜCK [SEL]MENÜ", C_ACC, C_DIM);
 }
 
 // (frueher) Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
@@ -3170,14 +3288,14 @@ static void menuInput(Input& I, Uint32 now) {
         bool srcPage = menuSel == PG_SRC || menuSel == PG_SRC2;
         if (pageClipStore < 0) toast("SEITEN-ABLAGE LEER (X = KOPIEREN)");
         else if (pageClipStore != st) toast("ABLAGE IST EINE ANDERE SEITE");
-        else if (srcPage && pageClipMachine != curP().machine[track]) toast("ANDERE ENGINE (%s) - NICHT EINGEFUEGT", MACHINE_NAMES[pageClipMachine % M_COUNT]);
+        else if (srcPage && pageClipMachine != curP().machine[track]) toast("ANDERE ENGINE (%s) - NICHT EINGEFÜGT", MACHINE_NAMES[pageClipMachine % M_COUNT]);
         else {
             lockA();
             Pattern& P = curP();
             for (int i = 0; i < 8; i++) P.p[track][st * 8 + i] = pageClip[i];
             if (menuSel == PG_SEQ) { P.len[track] = (uint8_t)pageClipLen; P.speed[track] = (uint8_t)pageClipSpeed; }
             unlockA();
-            toast("SEITE %s EINGEFUEGT (T%d -> T%d)", PAGE_NAMES[menuSel], pageClipTrack + 1, track + 1);
+            toast("SEITE %s EINGEFÜGT (T%d -> T%d)", PAGE_NAMES[menuSel], pageClipTrack + 1, track + 1);
         }
     }
     if (I.pressed(BT_A) || I.pressed(BT_START)) { page = menuSel; menuOpen = false; }
@@ -3240,30 +3358,23 @@ static void handleInput(Uint32 now, float dt) {
             hs.on = hs.on == 2 ? 1 : 2; aEdited = true;
             toast(hs.on == 2 ? "STEP %d: TRIGLESS (NUR LOCKS)" : "STEP %d: TRIG", holdStep + 1);
         } else if (I.pressed(BT_A)) { funcUsed = true; eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
-        if (I.pressed(BT_B)) {
-            funcUsed = true;
-            lockA();
-            for (int s = 0; s < NSTEPS; s++) { curP().s[track][s].on = 0; memset(curP().s[track][s].lock, NO_LOCK, NPARAMS); }
-            unlockA();
-            toast("SPUR %d GELOESCHT", track + 1);
-        }
+        if (I.pressed(BT_B)) { funcUsed = true; undoStep(); }
         if (I.pressed(BT_X) || I.pressed(BT_Y)) {
             funcUsed = true;
             int m = (curP().machine[track] + (I.pressed(BT_X) ? 1 : M_COUNT - 1)) % M_COUNT;
             lockA(); Engine::setMachine(curP(), track, m); unlockA();
             toast("ENGINE: %s", MACHINE_NAMES[m]);
         }
-        if (I.pressed(BT_L1)) { funcUsed = true; eng.fill = !eng.fill; toast(eng.fill ? "FILL AN" : "FILL AUS"); }
-        if (I.pressed(BT_R1)) {
+        if (I.repeat(BT_L1, now) || I.repeat(BT_R1, now)) {   // Step-Cursor um einen Schlag (4 Steps)
             funcUsed = true;
-            if (haveClip) { lockA(); curP() = clip; unlockA(); toast("PATTERN EINGEFUEGT"); }
-            else toast("ZWISCHENABLAGE LEER");
+            int cl = curP().len[track] < 1 ? 1 : curP().len[track];
+            cursor = ((cursor + (I.down[BT_R1] ? 4 : -4)) % cl + cl) % cl;
         }
         if (I.repeat(BT_L2, now) || I.repeat(BT_R2, now)) {
             funcUsed = true;
             Pattern& P = curP();
             P.len[track] = (uint8_t)clampi(P.len[track] + (I.down[BT_R2] ? 1 : -1), 1, NSTEPS);
-            toast("SPURLAENGE %d", P.len[track]);
+            toast("SPURLÄNGE %d", P.len[track]);
         }
         if (I.pressed(BT_START)) {
             funcUsed = true;
@@ -3326,7 +3437,7 @@ static void handleInput(Uint32 now, float dt) {
             if (aHeld) {
                 Step& hs = holdS();
                 memset(hs.lock, NO_LOCK, NPARAMS); aEdited = true;
-                if (hs.on == 2) { hs.on = 0; toast("TRIGLESS LOCKS GELOESCHT"); } else toast("LOCKS GELOESCHT");
+                if (hs.on == 2) { hs.on = 0; toast("TRIGLESS LOCKS GELÖSCHT"); } else toast("LOCKS GELÖSCHT");
             }
             else if (mixP) { eng.solo[track] = !eng.solo[track]; toast(eng.solo[track] ? "SPUR %d SOLO" : "SPUR %d SOLO AUS", track + 1); }
             else { lockA(); eng.preview(track, &curP().s[track][cursor]); unlockA(); }
@@ -3351,7 +3462,7 @@ static void handleInput(Uint32 now, float dt) {
         }
         if (aHeld && I.pressed(BT_R1)) {   // Trig einfuegen in den gehaltenen Step
             if (!haveTrigClip) toast("TRIG-ABLAGE LEER (A HALTEN + L1)");
-            else { lockA(); holdS() = trigClip; unlockA(); aEdited = true; toast("TRIG EINGEFUEGT IN STEP %d", holdStep + 1); }
+            else { lockA(); holdS() = trigClip; unlockA(); aEdited = true; toast("TRIG EINGEFÜGT IN STEP %d", holdStep + 1); }
         }
         if (!aHeld) {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
@@ -3422,7 +3533,7 @@ static void handleInput(Uint32 now, float dt) {
 static bool runLearn() {
     if (selfTesting) return false;
     SDL_Joystick* j = in.joy;
-    if (!j) { printf("Kein Gamepad gefunden - Lernmodus uebersprungen\n"); return false; }
+    if (!j) { printf("Kein Gamepad gefunden - Lernmodus übersprungen\n"); return false; }
     static const char* prompts[BT_COUNT + 4] = {
         "STEUERKREUZ HOCH", "STEUERKREUZ RUNTER", "STEUERKREUZ LINKS", "STEUERKREUZ RECHTS",
         "A", "B", "X", "Y", "L1", "R1", "L2", "R2", "SELECT", "START",
@@ -3472,7 +3583,7 @@ static bool runLearn() {
 
             clearScreen(C_BG);
             textC(SW / 2, 40, "TASTEN LERNEN", C_ACC, 2);
-            textC(SW / 2, 150, "DRUECKE:", C_DIM);
+            textC(SW / 2, 150, "DRÜCKE:", C_DIM);
             textC(SW / 2, 190, prompts[item], C_TEXT, 2);
             char b[64];
             snprintf(b, sizeof b, "%d / %d", item + 1, BT_COUNT + 4);
@@ -3555,8 +3666,8 @@ static void openAudio() {
     const char* name = cfg.dev[0] ? cfg.dev : nullptr;
     audioDev = SDL_OpenAudioDevice(name, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
     if (!audioDev && name) {
-        printf("Audio: '%s' nicht verfuegbar (%s) - nehme Standardausgang\n", name, SDL_GetError());
-        toast("AUSGANG NICHT VERFUEGBAR");
+        printf("Audio: '%s' nicht verfügbar (%s) - nehme Standardausgang\n", name, SDL_GetError());
+        toast("AUSGANG NICHT VERFÜGBAR");
         audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
     }
     if (!audioDev) { printf("Audio: %s\n", SDL_GetError()); return; }
@@ -3592,7 +3703,7 @@ static void applyUsbMode() {
     printf("USB-Modus %d: rc=%d, erkannt=%d\n", usbMode, rc, now);
     if (usbMode && !now) {   // letzte Fehlerzeile aus dem Log anzeigen
         usbMode = 0;
-        char lp[700], line[200], err[200] = "PC-MODUS NICHT MOEGLICH (PC-MODUS.LOG)";
+        char lp[700], line[200], err[200] = "PC-MODUS NICHT MÖGLICH (PC-MODUS.LOG)";
         snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
         FILE* lf = fopen(lp, "r");
         if (lf) {
@@ -3899,6 +4010,7 @@ int main(int argc, char** argv) {
         float dt = (now - last) / 1000.f;
         last = now;
         handleInput(now, dt);
+        undoTrack(now);
         if (audioApplyAt && now >= audioApplyAt) { audioApplyAt = 0; openAudio(); }
         if (usbApplyAt && now >= usbApplyAt) { usbApplyAt = 0; applyUsbMode(); }
         {   // Browser-Upload: Meldung und Samples neu laden, sobald 1,5 s nichts mehr kommt

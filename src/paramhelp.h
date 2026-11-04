@@ -1,0 +1,55 @@
+// Kurze Erklaerung je Reglername (fuer Einsteiger, erscheint in der Kopfzeile des Bedienfelds)
+#pragma once
+#include <string.h>
+struct ParamHelp { const char* name; const char* text; };
+static const ParamHelp PARAM_HELP[] = {
+    {"NOTE", "Tonhöhe des Steps"}, {"VEL", "Anschlagstärke (Lautstärke des Trigs)"}, {"LEN", "Notenlänge"},
+    {"PROB", "Wahrscheinlichkeit, dass der Trig spielt"}, {"RTRG", "Wiederholungen innerhalb des Steps (Ratchet)"},
+    {"MTIM", "Mikrotiming: Trig etwas früher oder später"}, {"ENGINE", "Klangerzeuger der Spur"},
+    {"COND", "Bedingung: z. B. nur jeder 2. Durchlauf"},
+    {"FREQ", "Grenzfrequenz: wie hell der Klang ist"}, {"RESO", "Resonanz: betont die Grenzfrequenz"},
+    {"TYPE", "Art des Filters bzw. Effekts"}, {"ENV", "wie stark die Hüllkurve das Filter öffnet"},
+    {"F.ATK", "Filter-Hüllkurve: Einschwingzeit"}, {"F.DEC", "Filter-Hüllkurve: Abklingzeit"},
+    {"F.SUS", "Filter-Hüllkurve: Haltepegel"}, {"F.REL", "Filter-Hüllkurve: Ausklingzeit nach dem Loslassen"},
+    {"ATK", "Einschwingzeit der Lautstärke"}, {"DEC", "Abklingzeit der Lautstärke"}, {"SUS", "Haltepegel der Lautstärke"},
+    {"REL", "Ausklingzeit nach dem Loslassen"}, {"VOL", "Lautstärke der Spur"}, {"PAN", "Position links/rechts"},
+    {"DLY", "Anteil ins Echo (Delay)"}, {"REV", "Anteil in den Hall (Reverb)"},
+    {"RATE", "Tempo"}, {"SYNC", "an das Songtempo gekoppelt"}, {"DEST", "Ziel: welchen Regler der LFO bewegt"},
+    {"DEPTH", "Stärke der Modulation"}, {"WAVE", "Wellenform"}, {"MODE", "Verhalten bzw. Spielweise"},
+    {"PHASE", "Startpunkt der Welle"}, {"FADE", "LFO blendet ein oder aus"},
+    {"P1", "Effekt-Regler 1"}, {"P2", "Effekt-Regler 2"}, {"P3", "Effekt-Regler 3"}, {"MIX", "Mischung trocken/Effekt"},
+    {"CRSH", "Bitcrusher: grober, digitaler Klang"}, {"SRR", "niedrigere Abtastrate: Lo-Fi"}, {"DRIV", "Übersteuerung"},
+    {"DRIVE", "Übersteuerung"},
+    {"DIR", "Laufrichtung der Steps"}, {"SPD", "Tempo der Spur (z. B. doppelt)"}, {"PULS", "Euklid: Anzahl gleichmäßig verteilter Trigs"},
+    {"ROT", "Euklid: Muster verschieben"}, {"DENS", "Zufallsmuster: Dichte"}, {"CHNG", "Zufallsmuster: wie oft es sich ändert"},
+    {"RANGE", "Zufallsmuster: Tonumfang"},
+    {"BASE", "Hochpass: entfernt Bässe unterhalb"}, {"WDTH", "Breite des Frequenzbands"},
+    {"KEYT", "Filter folgt der Tonhöhe"}, {"VELF", "Anschlag öffnet das Filter"},
+    {"F.KRV", "Form der Filter-Hüllkurve: weich bis knackig"}, {"A.KRV", "Form der Lautstärke-Hüllkurve: weich bis knackig"},
+    {"CHRD", "Akkord für Arp/Akkord-Modus"}, {"OCT", "Oktavumfang"}, {"GATE", "Notenlänge im Arp"}, {"ACCT", "Akzent: betonte Noten"},
+    {"TUNE", "Stimmung"}, {"DCAY", "Abklingzeit"}, {"SWEP", "Tonhöhen-Abfall (Kick-Punch)"}, {"S.TIM", "Dauer des Tonhöhen-Abfalls"},
+    {"CLCK", "Anschlag-Klick"}, {"BODY", "Sättigung, mehr Druck"}, {"SNAP", "Rauschanteil (Snare-Teppich)"},
+    {"N.DEC", "Abklingzeit des Rauschens"}, {"TONE", "Klangfarbe hell/dunkel"}, {"METL", "metallisch oder rauschig"},
+    {"SPRD", "Abstand der Klatscher"}, {"RPTS", "Anzahl der Klatscher"}, {"NOIS", "Rauschanteil"}, {"GRIT", "Körnigkeit"},
+    {"WAV1", "Wellenform Oszillator 1"}, {"WAV2", "Wellenform Oszillator 2"}, {"DETN", "Verstimmung: breiter, schwebender Klang"},
+    {"SUB", "Sub-Oszillator: Oktave tiefer"}, {"PW", "Pulsbreite"}, {"GLID", "Gleiten zwischen Tönen"},
+    {"ALGO", "FM-Algorithmus: wie die Operatoren verbunden sind"}, {"FBK", "Rückkopplung (rauer Klang)"},
+    {"RAT1", "Frequenzverhältnis Operator 1"}, {"RAT2", "Frequenzverhältnis Operator 2"}, {"RAT3", "Frequenzverhältnis Operator 3"},
+    {"RAT4", "Frequenzverhältnis Operator 4"}, {"FINE", "Feinstimmung"}, {"LVL2", "Stärke Operator 2"}, {"LVL3", "Stärke Operator 3"},
+    {"LVL4", "Stärke Operator 4"}, {"DEC1", "Abklingzeit Operator 1"}, {"DEC2", "Abklingzeit Operator 2"}, {"DEC3", "Abklingzeit Operator 3"},
+    {"DEC4", "Abklingzeit Operator 4"}, {"VELO", "Anschlag beeinflusst die Klangfarbe"},
+    {"SMPL", "Sample auswählen"}, {"STRT", "Startpunkt im Sample"}, {"END", "Endpunkt (vor dem Start = rückwärts)"},
+    {"LOOP", "Sample in Schleife"}, {"GAIN", "Pegel"}, {"TABL", "Wavetable auswählen"}, {"POS", "Position in der Tabelle / im Sample"},
+    {"WARP", "Welle verbiegen"}, {"P.ENV", "Hüllkurve bewegt die Position"}, {"SLCS", "Anzahl der Scheiben"},
+    {"SLIC", "welche Scheibe spielt"}, {"SPRY", "Streuung der Körner"}, {"SIZE", "Größe"}, {"PTCH", "Tonhöhe"},
+    {"P.SPR", "Tonhöhen-Streuung der Körner"},
+    {"D.TIME", "Echo-Zeit im Takt"}, {"D.FBK", "Echo-Wiederholungen"}, {"D.TONE", "Echo-Klangfarbe"}, {"D.PING", "Echo springt links/rechts"},
+    {"R.SIZE", "Raumgröße des Halls"}, {"R.DAMP", "Hall-Dämpfung (dunkler)"}, {"R.PRE", "Verzögerung vor dem Hall"}, {"R.WIDE", "Stereobreite des Halls"},
+    {"THR", "Schwelle, ab der komprimiert wird"}, {"RATIO", "Stärke der Kompression"}, {"SC", "Sidechain: welche Spur pumpt"},
+    {"BPM", "Tempo in Schlägen pro Minute"}, {"SWNG", "Swing: jeder 2. Step später"}, {"SCALE", "Tonleiter für alle Spuren"},
+    {"ROOT", "Grundton der Tonleiter"},
+};
+static inline const char* paramHelp(const char* name) {
+    for (unsigned i = 0; i < sizeof PARAM_HELP / sizeof *PARAM_HELP; i++) if (!strcmp(PARAM_HELP[i].name, name)) return PARAM_HELP[i].text;
+    return "";
+}

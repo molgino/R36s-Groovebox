@@ -26,7 +26,7 @@ static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M
 inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
 inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
 static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "SNG", "MST", "SET"};
-static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 (BASE-WIDTH)", "VERSTAERKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
+static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 + KURVEN", "VERSTÄRKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
                                                  "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN"};
 
 // Filter-1-Typen (Werte nur hinten anfuegen: 0..2 = alte LP/BP/HP)
@@ -56,7 +56,7 @@ enum {
     P_X0 = 48, P_X1, P_X2, P_X3, P_X4, P_X5, P_X6, P_X7,      // SRC2 (maschinenabhaengig)
     P_L2 = 56, P_L3 = 64,                                        // LFO2, LFO3
     P_DIR = 72, P_QLEN, P_QSPD, P_PULS, P_EROT, P_DENS, P_CHNG, P_RANGE,  // SEQ: Richtung, Laenge, Tempo, Euklid, Generator
-    P_BASE = 80, P_WDTH, P_KEYT, P_VELF,                                   // FLT2: Base-Width-Filter, Key-/Velocity-Tracking
+    P_BASE = 80, P_WDTH, P_KEYT, P_VELF, P_FCRV, P_ACRV,                                   // FLT2: Base-Width-Filter, Key-/Velocity-Tracking
     P_AMOD = 88, P_ACHD, P_AOCT, P_ARAT, P_AGAT, P_AACC                    // ARP: Modus, Akkord, Oktaven, Tempo, Gate, Akzent
 };
 // Master-Seite
@@ -114,7 +114,7 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     {"ROT", K_NUM, 0, 127}, {"DENS", K_PCT, 0, 100}, {"CHNG", K_PCT, 0, 100}, {"RANGE", K_RANGE, 0, 48},
     // FLT2: Base-Width-Filter (Hochpass BASE, Tiefpass BASE+WDTH), Key-Tracking und Velocity fuer Filter 1
     {"BASE", K_NUM, 0, 127}, {"WDTH", K_NUM, 127, 127}, {"KEYT", K_PCT, 0, 100}, {"VELF", K_BIP, 64, 127},
-    PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
+    {"F.KRV", K_BIP, 64, 127}, {"A.KRV", K_BIP, 64, 127}, PDEF_NONE, PDEF_NONE,   // Huellkurvenform (ab v11)
     // ARP: spielt waehrend der Trig-Laenge die Akkordtoene ueber OCT Oktaven im Tempo RATE
     {"MODE", K_ARPM, 0, 4}, {"CHRD", K_ACHD, 2, 9}, {"OCT", K_CNT, 0, 3}, {"RATE", K_ARAT, 2, 5},
     {"GATE", K_PCT, 60, 100}, {"ACCT", K_PCT, 0, 100}, PDEF_NONE, PDEF_NONE,
