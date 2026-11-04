@@ -1,13 +1,42 @@
 # SYNTH CITY – Groovebox für den R36S
 
-Elektron-artige Groovebox für den R36S unter ArkOS 2.0 (läuft auch auf dem Linux-Desktop).
+Groovebox für die Hosentasche: Step-Sequencer mit Parameter-Locks, 13 Klangerzeuger und USB-Audio-Interface auf dem Handheld R36S (eigenes SYNTH CITY OS oder ArkOS 2.0; läuft auch auf dem Linux-Desktop).
 Neo-Noir-Optik in Neon-Magenta und Cyan; beim Start erscheint ein Splashscreen mit Synthwave-Skyline (beliebige Taste überspringt).
-8 Spuren, 16 Patterns mit bis zu 128 Steps pro Spur, Parameter-Locks, Sample-Spuren, USB-Audio, USB-MIDI, Ping-Pong-Delay, Reverb und ein DJ-Filter.
+8 Spuren, 16 Patterns mit bis zu 128 Steps pro Spur, Parameter-Locks, Akkorde, Sample-Spuren, LIVE-Seite mit WAV-Aufnahme, USB-Audio, USB-MIDI, Ping-Pong-Delay, Reverb und ein DJ-Filter. Technische Daten: [docs/SPECS.md](docs/SPECS.md).
 Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt EmulationStation.
 
-## Testversion B: Signalweg (Branch `ui-signalweg`)
+## Schnellstart
 
-Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke QUELLE → FILTER → BASE-W → AMP → INSERT (L1/R1), darunter die Modulationsreihe TRIG · SEQ · ARP · LFO1–3 (L2/R2). Der gewählte Block zeigt seine Grafik und 8 Regler, unten liegen die 16 Steps der Spur. Mixer, Effekte, Song und Projekt erreichst du über das SELECT-Menü.
+* Beim **ersten Start** ist der Demo-Song **„Neon Nights“** geladen: **START** spielt ihn ab (Song-Modus, 4 Patterns). Jederzeit wieder: SET → „Demo-Song laden“.
+* **SELECT antippen** öffnet das Menü mit allen Seiten (LIVE, Mixer, FX, Song, Projekt, SET). **SELECT halten** zeigt die Tastenhilfe.
+* Unten im Bedienfeld steht zu jedem Regler eine kurze Erklärung.
+* Fertige Klänge: Seite PRJ → **PRESET** über Platz 32 hinaus drehen → **Werksklänge** (z. B. „NIGHT DRIVE BASS“, „PUNCH KICK“, „HAZE PAD“) → **P.LADEN**. Ein Werksklang setzt auch die Engine.
+* Vertan? **SELECT + B** macht die letzte Änderung rückgängig (12 Schritte), SET → „Wiederholen“ stellt sie wieder her.
+
+## Oberfläche: Signalweg
+
+Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke **QUELLE → FILTER → AMP → INSERT** (zusammengehörige Seiten untereinander: QUELLE/QUELLE 2, FILTER 1/FILTER 2), Auswahl mit **L1/R1**. Darunter die Reihe **SEQ**: TRIG · SEQ · ARP · LFO1–3 (**L2/R2**). Der gewählte Block zeigt Grafik, 8 Regler und eine Erklärung des gewählten Reglers, unten liegen die 16 Steps der Spur.
+
+* **SELECT + L1/R1** springt einen Schlag (4 Steps) – vier Kicks auf 1/5/9/13 sind so in wenigen Tastendrücken gesetzt.
+* **Rhythmus-Vorlagen** für die gewählte Spur: SET → „Rhythmus-Vorlage“ (Four on the Floor, Backbeat, Offbeat, Achtel, Sechzehntel, Breakbeat, Clave, Tresillo, Dembow …), mit ←/→ wählen, A setzt sie.
+* **Hüllkurvenform:** Seite FILTER 2 + KURVEN, Regler **F.KRV** (Filter) und **A.KRV** (Lautstärke): Minus = weich/rund, 0 = Standard, Plus = knackig/schnell abfallend. Die Grafiken zeigen die Form.
+
+## LIVE-Seite (Menü → LIVE)
+
+Die 8 Spuren liegen auf dem Bildschirm genau so wie die Tasten: **Steuerkreuz ↑ → ↓ ←** = Spur 1–4, **X A B Y** = Spur 5–8 – jeder Druck schaltet die Spur stumm oder wieder an.
+
+| Taste | Funktion |
+|---|---|
+| L1 halten | FILL (Trig-Bedingungen FILL) |
+| R1 | **WAV-Aufnahme** der Summe starten/stoppen (max. 5 Min.), gespeichert als `samples/rec/rec-NNN.wav` – im Browser unter Samples herunterladen |
+| L2 / R2 | Pattern zurück/vor (beim Abspielen am Pattern-Ende) |
+| rechter Stick ↑/↓ | DJ-Filter (Hoch-/Tiefpass) |
+| linker Stick ↑/↓ | Tempo ±1 BPM |
+| START | Play / Stop |
+
+## Akkorde (ARP-Seite, MODE = AKKD)
+
+Im ARP-Modus **AKKD** spielt ein Trig alle Töne des gewählten Akkords (**CHRD**: Oktave, Quinte, Dur, Moll, sus4, Maj7, Min7, Dom7, Dim oder Skala = Terzschichtung der Projektskala) gleichzeitig – bis zu 4 Stimmen pro Spur, mit den Klangeinstellungen der Spur.
 
 ## Klangerzeugung
 
@@ -33,7 +62,7 @@ SYNTH und WTBL starten mit dem **24-dB-Tiefpass** (LP24) mit sanfter Sättigung;
 Die Engine wählst du pro Spur und Pattern: auf der TRG-Seite mit dem Regler ENGINE oder mit SELECT + X/Y.
 Beim Drehen erscheint der **Engine-Wähler** mit Symbolen für alle 13 Engines.
 
-Jede Spur ist monophon (wie bei Digitakt und Co.). Ihre **Engine** wählst du auf der TRG-Seite mit dem Regler **ENGINE**: KICK, SNARE, HAT, CLAP, SYNTH, FM oder SMPL. Beim Drehen erscheint eine Auswahlleiste.
+Jede Spur spielt eine Stimme; SYNTH, FM, WTBL und die Sample-Engines spielen im ARP-Modus **AKKD** bis zu 4 Akkordtöne gleichzeitig.
 Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regler auf die Grundwerte der neuen Engine gesetzt.
 
 Jede Spur hat diese Seiten:
@@ -55,7 +84,7 @@ Jede Spur hat diese Seiten:
   | CMB+ / CMB- | Kammfilter: FREQ = Grundton der Kammzähne, RESO = Rückkopplung (metallisch, Flanger-/Saitenklänge; mit KEYT spielt er die Tonhöhe mit) |
   | VOWL | Formantfilter: FREQ fährt durch die Vokale A-E-I-O-U, RESO = Schärfe |
 
-* **FL2**: Base-Width-Filter hinter dem ersten Filter (wie bei Elektron): **BASE** ist die untere Kante (Hochpass), **WDTH** die Breite des durchgelassenen Bandes (Tiefpass darüber). BASE 0 / WDTH 127 = aus. Dazu **KEYT** (Keytracking: Cutoff von Filter 1 folgt der Tonhöhe) und **VELF** (Anschlagstärke → Cutoff). Die Grafik zeigt Filter 1 (grau) und die Gesamtkurve mit dem Band.
+* **FL2**: Base-Width-Filter hinter dem ersten Filter: **BASE** ist die untere Kante (Hochpass), **WDTH** die Breite des durchgelassenen Bandes (Tiefpass darüber). BASE 0 / WDTH 127 = aus. Dazu **KEYT** (Keytracking: Cutoff von Filter 1 folgt der Tonhöhe) und **VELF** (Anschlagstärke → Cutoff). Die Grafik zeigt Filter 1 (grau) und die Gesamtkurve mit dem Band.
 * **Symbole statt Balken**: Jede Kachel zeigt ein Symbol, das sich mit dem Wert verändert – Tastatur bei NOTE, Torte bei PROB, Hüllkurvenbogen bei Attack/Decay, Lautsprecher bei Lautstärke, Echos bei Delay, Ringe bei Reverb, Würfel bei CHNG usw.
 * **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
 * **LF1 / LF2 / LF3**: drei LFOs pro Spur (siehe unten)
@@ -120,7 +149,7 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 |---|---|---|
 | **Trig** (mit allen Locks, auch trigless) | Step mit **A halten + L1** | Ziel-Step **A halten + R1** – geht auch auf anderen Spuren; im Lock-Modus mit ←/→ weiterspringen und mehrfach einfügen |
 | **Seite** (die 8 Werte einer Spurseite) | Seitenmenü (SELECT antippen), Seite markieren, **X** | Zur Ziel-Spur wechseln, Seitenmenü, gleiche Seite markieren, **Y** |
-| **Pattern** | SET → „Pattern kopieren“ | SET → „Pattern einfügen“ oder **SELECT + R1** |
+| **Pattern** | SET → „Pattern kopieren“ | SET → „Pattern einfügen“ |
 
 Die Seite SRC/SR2 lässt sich nur zwischen Spuren mit gleicher Engine übertragen (die Regler sind je Engine verschieden). Bei SEQ werden Länge und Tempo mitkopiert.
 
@@ -166,7 +195,7 @@ MTIM verschiebt einen Trig um bis zu ±23/24 eines Steps, vorgezogen oder versp�
 Vorgezogene Trigs werden einen Step im Voraus geplant. Die Spur läuft also nicht insgesamt später.
 Im Raster sitzen verschobene Trigs sichtbar versetzt, und beim Drehen zeigt ein Zeitlineal die Position.
 
-## Trig-Bedingungen (COND, Digitone-II-Stil)
+## Trig-Bedingungen (COND)
 
 COND auf der TRG-Seite gilt für die Spur. Meist lockst du COND aber pro Step: A halten und COND drehen. PROB gilt zusätzlich.
 
@@ -174,7 +203,7 @@ COND auf der TRG-Seite gilt für die Spur. Meist lockst du COND aber pro Step: A
 |---|---|
 | `A:B` | im A-ten von je B Durchläufen der Spur, z. B. `1:2` = jeder zweite Durchlauf, `4:4` = jeder vierte |
 | `!A:B` | in allen Durchläufen außer dem A-ten von je B, z. B. `!1:4` |
-| `FILL` / `!FILL` | nur bei eingeschaltetem bzw. ausgeschaltetem FILL-Modus (**SELECT + L1**, im Header blinkt FILL) |
+| `FILL` / `!FILL` | nur bei eingeschaltetem bzw. ausgeschaltetem FILL-Modus (LIVE-Seite: **L1 halten**, oder SET → FILL; im Header blinkt FILL) |
 | `PRE` / `!PRE` | die vorige Bedingung auf dieser Spur erfüllt war bzw. nicht |
 | `NEI` / `!NEI` | die letzte Bedingung der Nachbarspur (Spur davor) erfüllt war bzw. nicht |
 | `1ST` / `!1ST` | nur im ersten Durchlauf nach Start bzw. Pattern-Wechsel, bzw. in allen außer dem ersten |
@@ -280,7 +309,7 @@ Ein Start-Paket mit 13 selbst erzeugten Samples liegt bei: Drums, Keys, eine Vok
 Es wird mit `tools/gensamples.py` erzeugt.
 
 * Mit SELECT + X/Y stellst du eine Spur auf **SMPL** um.
-* Den Sample-Regler auf der SRC-Seite kannst du pro Step locken. So spielt eine einzige Spur verschiedene Samples, wie beim Digitakt.
+* Den Sample-Regler auf der SRC-Seite kannst du pro Step locken. So spielt eine einzige Spur verschiedene Samples.
 * NOTE C-4 ist die Originaltonhöhe.
 * Ohne LOOP läuft ein Sample als One-Shot bis zum Ende. Mit LOOP gilt die Trig-Länge (LEN) bzw. die Haltedauer der MIDI-Taste.
 * Das Projekt merkt sich die Sample-**Nummer**. Beim Upload per Browser werden die Nummern automatisch nachgeführt. Kopierst du Dateien von Hand auf die Karte, benenne sie so, dass sie hinten einsortiert werden, sonst verschieben sich die Nummern.
@@ -341,10 +370,9 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | SELECT + ↑ | Aufnahme an/aus (für MIDI-Eingabe) |
 | SELECT + ↓ | Tap-Tempo (mehrmals im Takt tippen) |
 | SELECT + A | Spur stummschalten |
-| SELECT + B | Spur löschen |
+| SELECT + B | **Rückgängig** (Spur leeren: SET → „Spur leeren“) |
 | SELECT + X/Y | Engine der Spur wechseln (alternativ: Regler ENGINE auf der TRG-Seite) |
-| SELECT + L1 | FILL-Modus an/aus |
-| SELECT + R1 | Pattern einfügen (kopieren: SET-Seite) |
+| SELECT + L1 / R1 | Step-Cursor einen Schlag (4 Steps) zurück/vor (FILL: LIVE-Seite oder SET) |
 | SELECT + L2/R2 | Spurlänge (Polymetrie, 1 bis 128) |
 | SELECT + START | Speichern (2 s halten: Speichern und Beenden) |
 

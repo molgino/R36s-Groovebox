@@ -9,14 +9,14 @@ struct FSound { uint8_t machine; const char* name; FSet set[16]; };
 
 static const FSound FACTORY[] = {
     // Drums
-    {M_KICK, "808 BOOM", {{P_S0, 28}, {P_S1, 105}, {P_S2, 60}, {P_S3, 55}, {P_S4, 25}, {P_S5, 10}, {P_VOL, 110}, {255, 0}}},
-    {M_KICK, "909 PUNCH", {{P_S0, 42}, {P_S1, 55}, {P_S2, 95}, {P_S3, 30}, {P_S4, 85}, {P_S5, 45}, {P_VOL, 105}, {255, 0}}},
+    {M_KICK, "BOOM KICK", {{P_S0, 28}, {P_S1, 105}, {P_S2, 60}, {P_S3, 55}, {P_S4, 25}, {P_S5, 10}, {P_VOL, 110}, {255, 0}}},
+    {M_KICK, "PUNCH KICK", {{P_S0, 42}, {P_S1, 55}, {P_S2, 95}, {P_S3, 30}, {P_S4, 85}, {P_S5, 45}, {P_VOL, 105}, {255, 0}}},
     {M_KICK, "TECHNO THUMP", {{P_S0, 34}, {P_S1, 70}, {P_S2, 80}, {P_S3, 40}, {P_S4, 60}, {P_S5, 90}, {P_VOL, 100}, {255, 0}}},
-    {M_SNARE, "909 SNARE", {{P_S0, 55}, {P_S1, 45}, {P_S2, 80}, {P_S3, 55}, {P_S4, 95}, {P_REV, 25}, {255, 0}}},
-    {M_SNARE, "808 SNARE", {{P_S0, 40}, {P_S1, 60}, {P_S2, 55}, {P_S3, 40}, {P_S4, 60}, {P_REV, 30}, {255, 0}}},
+    {M_SNARE, "CRISP SNARE", {{P_S0, 55}, {P_S1, 45}, {P_S2, 80}, {P_S3, 55}, {P_S4, 95}, {P_REV, 25}, {255, 0}}},
+    {M_SNARE, "DEEP SNARE", {{P_S0, 40}, {P_S1, 60}, {P_S2, 55}, {P_S3, 40}, {P_S4, 60}, {P_REV, 30}, {255, 0}}},
     {M_HAT, "CLOSED HAT", {{P_S0, 64}, {P_S1, 18}, {P_S2, 95}, {P_S3, 75}, {P_VOL, 80}, {255, 0}}},
     {M_HAT, "OPEN HAT", {{P_S0, 60}, {P_S1, 70}, {P_S2, 85}, {P_S3, 80}, {P_VOL, 110}, {255, 0}}},
-    {M_CLAP, "808 CLAP", {{P_S0, 60}, {P_S1, 60}, {P_S2, 55}, {P_S3, 3}, {P_REV, 40}, {P_VOL, 90}, {255, 0}}},
+    {M_CLAP, "CITY CLAP", {{P_S0, 60}, {P_S1, 60}, {P_S2, 55}, {P_S3, 3}, {P_REV, 40}, {P_VOL, 90}, {255, 0}}},
     {M_TOM, "SYN TOM", {{P_S0, 40}, {P_S1, 75}, {P_S2, 70}, {P_S3, 20}, {P_S4, 30}, {P_DLY, 30}, {255, 0}}},
     {M_RIM, "RIMSHOT", {{P_S0, 70}, {P_S1, 25}, {P_S2, 80}, {P_S3, 90}, {P_REV, 20}, {255, 0}}},
     {M_SHKR, "SHAKER", {{P_S0, 95}, {P_S1, 35}, {P_S2, 40}, {P_S3, 50}, {P_VOL, 50}, {255, 0}}},
@@ -63,7 +63,7 @@ static inline void buildDemo(Engine& E) {
     J.bpm = 112;
     J.mst[MS_SWNG] = 6;
     J.mst[MS_ROOT] = 9; J.mst[MS_SCALE] = (uint8_t)scaleCombine(2, 9);   // a-Moll
-    static const char* kit[NTRACKS] = {"909 PUNCH", "909 SNARE", "CLOSED HAT", "808 CLAP", "NIGHT DRIVE BASS", "NEON LEAD", "HAZE PAD", "OPEN HAT"};
+    static const char* kit[NTRACKS] = {"PUNCH KICK", "CRISP SNARE", "CLOSED HAT", "CITY CLAP", "NIGHT DRIVE BASS", "NEON LEAD", "HAZE PAD", "OPEN HAT"};
     for (int pi = 0; pi < 4; pi++) {
         Pattern& P = J.pat[pi];
         for (int t = 0; t < NTRACKS; t++) applyFactory(P, t, factoryByName(kit[t]));
