@@ -7,13 +7,13 @@
 // Speicher-Seiten je Spur (je 8 Parameter): 0 TRG, 1 SRC, 2 FLT, 3 AMP, 4 LFO1, 5 INS, 6 SRC2, 7 LFO2, 8 LFO3, 9 SEQ, 10 FLT2, 11 ARP
 enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 12, NPARAMS = NPAGES * 8, NLFO = 3 };
 // Oberflaechen-Seiten (Reihenfolge = Navigation). Spurseiten zuerst.
-enum UiPage { PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_SONG, PG_MST, PG_SYS, NUI_PAGES };
+enum UiPage { PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_SONG, PG_MST, PG_SYS, PG_LIVE, NUI_PAGES };
 enum { PG_LFO = PG_LFO1 };
 enum { PAGE_INS = PG_INS, PAGE_FX = PG_FX, PAGE_CMP = PG_CMP, PAGE_MST = PG_MST, PAGE_SYS = PG_SYS, PAGE_MIX = PG_MIX, PAGE_PRJ = PG_PRJ,
        FIRST_GLOBAL_PAGE = PG_MIX };
-static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
-static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2};
-static const char* const GROUP_NAMES[3] = {"SPUR", "MIX & FX", "PROJEKT"};
+static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
+static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 1};
+static const char* const GROUP_NAMES[3] = {"SPUR", "LIVE, MIX & FX", "PROJEKT"};
 enum { NO_LOCK = 255 };
 
 // Reihenfolge = gespeicherter Wert (neue Engines nur hinten anfuegen!)
@@ -25,9 +25,9 @@ static const char* const MACHINE_LONG[M_COUNT] = {"Bassdrum", "Snare", "Hi-Hat",
 static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_TOM, M_RIM, M_SHKR, M_SYNTH, M_FM, M_WTBL, M_SAMPLE, M_CHOP, M_GRAN};
 inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
 inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "SNG", "MST", "SET"};
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "SNG", "MST", "SET", "LIVE"};
 static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 + KURVEN", "VERSTÄRKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
-                                                 "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN"};
+                                                 "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN", "LIVE"};
 
 // Filter-1-Typen (Werte nur hinten anfuegen: 0..2 = alte LP/BP/HP)
 enum { FT_LP12, FT_BP, FT_HP12, FT_LP24, FT_LADR, FT_HP24, FT_NTCH, FT_PEAK, FT_CMBP, FT_CMBN, FT_VOWL, FT_COUNT };

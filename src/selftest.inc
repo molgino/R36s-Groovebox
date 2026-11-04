@@ -336,6 +336,22 @@ static void uiScenarios() {
     UCHECK(curP().s[2][0].on == 1 && curP().s[2][4].on == 1 && curP().s[2][1].on == 0, "Four on the Floor falsch");
     applyRhythm(RHY_N - 1); simWait(900);
 
+    uiCase = "LIVE-Seite";
+    simReset(); goPage(PG_LIVE);
+    UCHECK(page == PG_LIVE, "LIVE nicht erreichbar (Seite %d)", page);
+    bool m5 = eng.mute[4];
+    tap(BT_UP); UCHECK(eng.mute[0], "Steuerkreuz hoch schaltet Spur 1 nicht stumm");
+    tap(BT_X); UCHECK(eng.mute[4] != m5, "X schaltet Spur 5 nicht");
+    tap(BT_UP); tap(BT_X);
+    holdDown(BT_L1); UCHECK(eng.fill, "L1 halten = FILL"); release(BT_L1); UCHECK(!eng.fill, "FILL bleibt nach Loslassen");
+    eng.start();
+    tap(BT_R1); UCHECK(recOn, "R1 startet keine Aufnahme");
+    { static float tmpb[44100 * 2]; recPush(tmpb, 44100); }
+    tap(BT_R1); UCHECK(!recOn, "R1 stoppt die Aufnahme nicht");
+    for (int i = 0; i < 200 && recSaving; i++) SDL_Delay(10);
+    UCHECK(recDoneNo > 0, "Aufnahme nicht gespeichert (%d)", recDoneNo);
+    recDoneNo = 0; eng.stop();
+
     uiCase = "Pattern wechseln";
     simReset();
     combo(BT_SELECT, BT_RIGHT); UCHECK(eng.curPat == 1, "SELECT+Rechts: Pattern %d statt 2", eng.curPat + 1);

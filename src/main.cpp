@@ -606,6 +606,62 @@ static void undoStep() {
     undoDirty = false;
     toast("RÜCKGÄNGIG: PATTERN %02d (%d WEITERE)", pi + 1, undoCnt);
 }
+
+// WAV-Aufnahme der Summe (LIVE-Seite, R1): Puffer im Speicher, beim Stoppen in samples/rec/ schreiben (Thread)
+enum { REC_MAX_SEC = 300 };
+static int16_t* recBuf = nullptr;
+static volatile int recPos = 0, recCap = 0, recRate = 44100;
+static volatile bool recOn = false, recSaving = false;
+static volatile int recDoneNo = 0;   // > 0: gespeichert als rec-NN.wav (Meldung im Hauptthread)
+static void recPush(const float* in, int frames) {   // Audio-Thread
+    if (!recOn) return;
+    int n = frames * 2, room = recCap - recPos;
+    if (n > room) { n = room; recOn = false; }
+    int16_t* d = recBuf + recPos;
+    for (int i = 0; i < n; i++) { float x = in[i] * 32767.f; d[i] = (int16_t)(x > 32767.f ? 32767 : (x < -32768.f ? -32768 : x)); }
+    recPos += n;
+}
+static int recWriter(void* arg) {
+    char* path = (char*)arg;
+    FILE* f = fopen(path, "wb");
+    int n = recPos, bytes = n * 2;
+    if (f) {
+        auto w32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); }; auto w16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
+        fwrite("RIFF", 1, 4, f); w32(36 + bytes); fwrite("WAVEfmt ", 1, 8, f); w32(16); w16(1); w16(2);
+        w32(recRate); w32(recRate * 4); w16(4); w16(16); fwrite("data", 1, 4, f); w32(bytes);
+        fwrite(recBuf, 2, n, f);
+        fclose(f);
+    }
+    free(recBuf); recBuf = nullptr; recCap = 0;
+    const char* b = strrchr(path, '-');
+    recDoneNo = f && b ? atoi(b + 1) : -1;
+    free(path);
+    recSaving = false;
+    return 0;
+}
+static void recToggle() {
+    if (recSaving) { toast("AUFNAHME WIRD NOCH GESPEICHERT ..."); return; }
+    if (!recOn && !recBuf) {
+        recRate = eng.sr;
+        int cap = recRate * REC_MAX_SEC * 2;
+        recBuf = (int16_t*)malloc((size_t)cap * 2);
+        if (!recBuf) { toast("ZU WENIG SPEICHER FÜR DIE AUFNAHME"); return; }
+        recPos = 0; recCap = cap; recOn = true;
+        toast("AUFNAHME LÄUFT (MAX. %d MIN)", REC_MAX_SEC / 60);
+        return;
+    }
+    recOn = false;
+    if (recPos < recRate / 2) { free(recBuf); recBuf = nullptr; toast("AUFNAHME ZU KURZ - VERWORFEN"); return; }
+    char dir[700]; snprintf(dir, sizeof dir, "%ssamples", basePath); mkdir(dir, 0755);
+    snprintf(dir, sizeof dir, "%ssamples/rec", basePath); mkdir(dir, 0755);
+    char* path = (char*)malloc(800);
+    struct stat st;
+    for (int i = 1; i < 1000; i++) { snprintf(path, 800, "%s/rec-%03d.wav", dir, i); if (stat(path, &st)) break; }
+    recSaving = true;
+    SDL_Thread* th = SDL_CreateThread(recWriter, "rec", path);
+    if (th) SDL_DetachThread(th); else recWriter(path);
+    toast("AUFNAHME WIRD GESPEICHERT ...");
+}
 static void redoStep() {
     if (redoPat < 0) { toast("NICHTS ZU WIEDERHOLEN"); return; }
     lockA(); eng.proj.pat[redoPat] = redoBuf; unlockA();
@@ -2386,6 +2442,63 @@ static void drawSigB() {
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
+// ---------------------------------------------------------------- LIVE-Seite: 8 Mutes auf den Tasten (Lage wie am Geraet)
+static const int LIVE_BTN[NTRACKS] = {BT_UP, BT_RIGHT, BT_DOWN, BT_LEFT, BT_X, BT_A, BT_B, BT_Y};
+static const char* const LIVE_KEY[NTRACKS] = {"^", ">", "v", "<", "X", "A", "B", "Y"};
+static void drawLive() {
+    const Pattern& P = curP();
+    char b[48];
+    text(10, 48, "LIVE", C_ACC, 2);
+    snprintf(b, sizeof b, "PATTERN %02d", eng.curPat + 1);
+    text(120, 50, b, C_TEXT);
+    if (eng.nextPat >= 0) { snprintf(b, sizeof b, "> %02d", eng.nextPat + 1); text(120 + textW("PATTERN 00 "), 50, b, (SDL_GetTicks() / 250) % 2 ? C_ACC : C_DIM); }
+    snprintf(b, sizeof b, "%d BPM", eng.proj.bpm);
+    text(630 - textW(b, 2), 48, b, C_TEXT, 2);
+    static const int OX[4] = {0, 1, 0, -1}, OY[4] = {-1, 0, 1, 0};
+    for (int t = 0; t < NTRACKS; t++) {
+        int cx = t < 4 ? 160 : 480, cy = 232, k = t % 4;
+        int w = 100, h = 56, x = cx + OX[k] * 105 - w / 2, y = cy + OY[k] * 64 - h / 2;
+        bool m = eng.mute[t];
+        Col tc = TCOL[t];
+        Col bg = m ? C_DARK : mix(dimC(tc, 0.25f), dimC(tc, 0.7f), flash[t]);
+        rrect(x, y, w, h, 8, m ? C_OFF2 : tc);
+        rrect(x + 2, y + 2, w - 4, h - 4, 7, bg);
+        rrect(x + 6, y + 6, 18, 18, 5, m ? C_OFF2 : tc);
+        textC(x + 15, y + 7, LIVE_KEY[t], m ? C_DIM : C_BG);
+        drawIcon(P.machine[t] % M_COUNT, x + w - 26, y + 6, 18, m ? C_DIM : C_PLAY);
+        snprintf(b, sizeof b, "%d %.6s", t + 1, MACHINE_NAMES[P.machine[t] % M_COUNT]);
+        text(x + 8, y + 28, b, m ? C_DIM : C_PLAY);
+        if (m) text(x + w - 8 - textW("MUTE"), y + 28, "MUTE", C_TRIG);
+        int mw = clampi((int)(sqrtf(meterV[t]) * (w - 16)), 0, w - 16);
+        fill(x + 8, y + h - 9, w - 16, 3, C_OFF);
+        if (mw && !m) fill(x + 8, y + h - 9, mw, 3, C_GREEN);
+    }
+    textC(160, 226, "STEUERKREUZ", C_DIM);
+    textC(480, 226, "TASTEN", C_DIM);
+    // Statusleiste
+    int y = 340;
+    struct Chip { const char* key; const char* name; bool on; Col c; } ch[4] = {
+        {"L1", "FILL (HALTEN)", eng.fill, C_LOCK}, {"R1", recOn ? "REC LÄUFT" : (recSaving ? "SPEICHERT" : "WAV-AUFNAHME"), recOn, C_TRIG},
+        {"L2/R2", "PATTERN -/+", eng.nextPat >= 0, C_ACC}, {"START", eng.playing ? "STOP" : "PLAY", eng.playing, C_GREEN}};
+    for (int i = 0; i < 4; i++) {
+        int x = 6 + i * 158;
+        bool blink = ch[i].on && (i != 1 || (SDL_GetTicks() / 400) % 2);
+        rrect(x, y, 150, 40, 7, blink ? ch[i].c : C_PANEL);
+        text(x + 8, y + 3, ch[i].key, blink ? C_BG : ch[i].c);
+        text(x + 8, y + 20, ch[i].name, blink ? C_BG : C_TEXT);
+    }
+    if (recOn) { snprintf(b, sizeof b, "%d:%02d", recPos / 2 / recRate / 60, recPos / 2 / recRate % 60); text(6 + 158 + 150 - 8 - textW(b), y + 3, b, C_BG); }
+    // DJ-Filter (rechter Stick)
+    int fy = 392;
+    text(6, fy, "R-STICK DJ-FILTER", C_DIM);
+    fill(170, fy + 6, 300, 4, C_OFF2);
+    fill(319, fy + 2, 2, 12, C_DIM);
+    int dx = (int)(eng.dj * 150);
+    if (dx) fill(dx > 0 ? 320 : 320 + dx, fy + 6, dx > 0 ? dx : -dx, 4, eng.dj > 0 ? C_CYAN : C_ACC);
+    text(480, fy, "L-STICK TEMPO", C_DIM);
+    hint(6, 452, "[STEUERKREUZ/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PATTERN [R-ST]DJ [SEL]MENÜ", C_ACC, C_DIM);
+}
+
 static void drawSettings();
 static void drawSong();
 static void drawDrive();
@@ -2397,6 +2510,7 @@ static void drawAll(bool help) {
     drawHeader();
     if (page == PG_SYS) drawSettings();
     else if (page == PG_SONG) drawSong();
+    else if (page == PG_LIVE) { drawLive(); drawOverlays(); }
     else if (trackPage(page)) { drawSigB(); drawOverlays(); }
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
@@ -3302,6 +3416,25 @@ static void menuInput(Input& I, Uint32 now) {
     if (I.pressed(BT_B) || I.pressed(BT_SELECT)) menuOpen = false;
 }
 
+static void liveInput(Input& I, Uint32 now, float dt) {
+    for (int t = 0; t < NTRACKS; t++) if (I.pressed(LIVE_BTN[t])) eng.mute[t] = !eng.mute[t];
+    if (I.pressed(BT_L1)) eng.fill = true;
+    if (I.released(BT_L1)) eng.fill = false;
+    if (I.pressed(BT_R1)) recToggle();
+    if (I.pressed(BT_L2) || I.pressed(BT_R2)) {
+        int d = I.pressed(BT_R2) ? 1 : -1;
+        int from = eng.nextPat >= 0 ? eng.nextPat : eng.curPat, to = (from + d + NPATTERNS) % NPATTERNS;
+        lockA();
+        if (eng.playing) eng.nextPat = to; else { eng.curPat = to; eng.nextPat = -1; }
+        unlockA();
+    }
+    if (I.pressed(BT_START)) { lockA(); if (eng.playing) eng.stop(); else eng.start(); unlockA(); }
+    if (fabsf(I.ry) > 0.2f) { eng.dj = I.ry > 0 ? (I.ry - 0.2f) / 0.8f : (I.ry + 0.2f) / 0.8f; stickDj = true; }
+    else if (stickDj) { eng.dj = 0.f; stickDj = false; }
+    int f = flick(I.ly, flLY, flLYt, now);
+    if (f) eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + f, 30, 300);
+}
+
 static void handleInput(Uint32 now, float dt) {
     Input& I = in;
     if (confirmOpen) {
@@ -3323,6 +3456,7 @@ static void handleInput(Uint32 now, float dt) {
     if (page != lastPgSeen) { if (page == PG_SYS && lastPgSeen >= 0) prevPage = lastPgSeen; lastPgSeen = page; }
     if (page == PG_SYS && !func) { settingsInput(I, now, dt); return; }
     if (page == PG_SONG && !func) { songInput(I, now); return; }
+    if (page == PG_LIVE && !func) { liveInput(I, now, dt); return; }
 
     if (func) {
         if (I.pressed(BT_LEFT) || I.pressed(BT_RIGHT)) {
@@ -3632,6 +3766,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     eng.render((float*)stream, frames);
     usbAudioPush((const float*)stream, frames);   // parallel an den PC (falls aktiv)
     pcInMix((float*)stream, frames, pcInGain);    // PC-Ton dazumischen (nach dem Senden: kein Echo zum PC)
+    recPush((const float*)stream, frames);
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
     cpuLoad = cpuLoad * 0.9f + 0.1f * (float)(el / avail);
@@ -4011,6 +4146,7 @@ int main(int argc, char** argv) {
         last = now;
         handleInput(now, dt);
         undoTrack(now);
+        if (recDoneNo) { if (recDoneNo > 0) toast("GESPEICHERT: SAMPLES/REC/REC-%03d.WAV", recDoneNo); else toast("AUFNAHME: SPEICHERN FEHLGESCHLAGEN"); recDoneNo = 0; }
         if (audioApplyAt && now >= audioApplyAt) { audioApplyAt = 0; openAudio(); }
         if (usbApplyAt && now >= usbApplyAt) { usbApplyAt = 0; applyUsbMode(); }
         {   // Browser-Upload: Meldung und Samples neu laden, sobald 1,5 s nichts mehr kommt

@@ -98,7 +98,7 @@ static void scan(const char* root, const char* sub, Entry* out, int& n, int dept
         snprintf(full, sizeof full, "%s/%s", root, rel);
         struct stat st;
         if (stat(full, &st)) continue;
-        if (S_ISDIR(st.st_mode)) { if (depth < 1) scan(root, rel, out, n, depth + 1); }
+        if (S_ISDIR(st.st_mode)) { if (depth < 1 && strcmp(rel, "rec")) scan(root, rel, out, n, depth + 1); }   // rec/ = WAV-Aufnahmen (nur zum Herunterladen)
         else if (isWav(e->d_name)) { snprintf(out[n].rel, sizeof out[n].rel, "%s", rel); n++; }
     }
     closedir(d);
