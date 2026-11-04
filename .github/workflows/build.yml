@@ -19,13 +19,15 @@ jobs:
       - name: Abhaengigkeiten
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libsdl2-dev libasound2-dev libdrm-dev pkg-config
+          sudo apt-get install -y -qq libsdl2-dev libasound2-dev libdrm-dev pkg-config python3-numpy
       - name: Bauen
         run: |
           make -j4 DRM=1
           ./tools/os-update.sh groovebox
       - name: Leistungstest (arm64)
-        run: SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./groovebox --bench dist/bench-arm64.txt
+        run: |
+          python3 tools/gensamples.py
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./groovebox --bench dist/bench-arm64.txt
       - uses: actions/upload-artifact@v4
         with: { name: groovebox-os-update, path: dist/groovebox-os-update.tgz }
       - uses: actions/upload-artifact@v4
