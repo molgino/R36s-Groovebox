@@ -303,17 +303,21 @@ Klassisches Pumpen: SC = T1 (Kick), THR um −30 dB, RATIO 8:1 oder mehr, ATK ku
 ## Samples
 
 WAV-Dateien kommen in den Ordner `samples/`, gern mit **Unterordnern bis 8 Ebenen tief**, z. B. `samples/drums/808/kick.wav`.
-Erlaubt sind 8/16/24/32-Bit-PCM und 32-Bit-Float in jeder Samplerate. Stereo wird zu Mono gemischt.
-Gelesen wird beim Start, alphabetisch sortiert, höchstens 250 Dateien zu je höchstens 60 s. Der Ordner `samples/rec/` (WAV-Aufnahmen) wird nicht geladen.
+Erlaubt sind 8/16/24/32-Bit-PCM und 32-Bit-Float in jeder Samplerate. Stereo wird zu Mono gemischt. **Nur WAV:** MP3, AIFF, FLAC, OGG usw. werden nicht gelesen (SET → „Samples“ zeigt, wie viele solche Dateien im Ordner liegen). Der Ordner `samples/rec/` (WAV-Aufnahmen) erscheint nicht im Explorer.
 
-**Sample-Explorer:** Auf dem Regler **SMPL** (Seite QUELLE von SMPL, CHOP, GRAN) öffnet **X** den Explorer mit allen Ordnern und Unterordnern (bis 8 Ebenen). Er startet im Ordner des aktuellen Samples. Steuerkreuz ↑/↓ wählt, **A** oder → öffnet einen Ordner bzw. übernimmt das Sample, **X** hört vorab hinein, **B** oder ← geht einen Ordner zurück, L1/R1 blättert seitenweise, SELECT bricht ab (das vorher eingestellte Sample bleibt). Im Lock-Modus (A lang halten) wird das gewählte Sample als **Lock auf den Step** gesetzt. Der rechte Stick blättert wie bisher direkt durch alle Samples.
+**Bibliothek und Projekt-Pool:** Die Groovebox kennt alle WAV-Dateien im Ordner (die *Bibliothek*, bis 8192 Dateien), lädt aber nur die Samples in den Speicher, die das aktuelle Projekt benutzt (bis 253 pro Projekt, je höchstens 60 s). Das Projekt speichert die Samples **per Name** (z. B. `drums/808/kick`). Neue Dateien, Unterordner oder Umsortieren verändern ein Projekt deshalb nicht mehr. Fehlt beim Laden eine Datei, meldet die Groovebox „N SAMPLES FEHLEN“; die Namen stehen im Log. Auch gespeicherte Sounds (Presets) merken sich ihr Sample per Name.
+Ältere Projekte und Sounds (gespeichert mit Sample-Nummern) werden beim Laden über die frühere Reihenfolge zugeordnet und beim nächsten Speichern auf Namen umgestellt.
+
+SET → **Samples** zeigt: Dateien in der Bibliothek, Samples im Projekt, fehlende Samples und Dateien in anderen Formaten.
+
+**Sample-Explorer:** Auf dem Regler **SMPL** (Seite QUELLE von SMPL, CHOP, GRAN) öffnet **X** den Explorer mit allen Ordnern und Unterordnern (bis 8 Ebenen). Er startet im Ordner des aktuellen Samples. Steuerkreuz ↑/↓ wählt, **A** oder → öffnet einen Ordner bzw. übernimmt das Sample, **X** hört vorab hinein, **B** oder ← geht einen Ordner zurück, L1/R1 blättert seitenweise, SELECT bricht ab (das vorher eingestellte Sample bleibt). Im Lock-Modus (A lang halten) wird das gewählte Sample als **Lock auf den Step** gesetzt. Der rechte Stick blättert direkt durch die Samples des Projekts; „(leer)“ heißt, auf diesem Platz liegt kein Sample.
 
 ### Samples per Browser hochladen (ohne SD-Karte)
 
 1. R36S per USB-Kabel mit dem PC verbinden und **PC-Modus** einschalten (SET → USB = PC).
 2. Im Browser **http://192.168.77.1** öffnen. Die Adresse steht auch in SET unter „Samples per Browser“.
 3. Dateien in das Feld ziehen. **WAV, MP3, FLAC, AIFF, OGG …** wandelt der Browser automatisch in Mono-WAV mit 44,1 kHz um (abschaltbar, optional normalisieren). Mit „neuer Ordner“ legst du einen Unterordner an.
-4. Etwa 1,5 Sekunden nach dem letzten Upload lädt die Groovebox die Samples neu, ohne Aussetzer. Bestehende Spuren behalten ihr Sample, die Zuordnung läuft über den Namen.
+4. Etwa 1,5 Sekunden nach dem letzten Upload liest die Groovebox die Bibliothek neu, ohne Aussetzer. Spuren behalten ihr Sample; geänderte Dateien im Projekt werden neu geladen.
 
 Auf derselben Seite kannst du Samples anhören und löschen sowie Projekte (SONG 01–32) sichern und hochladen.
 
@@ -324,7 +328,7 @@ Es wird mit `tools/gensamples.py` erzeugt.
 * Den Sample-Regler auf der SRC-Seite kannst du pro Step locken. So spielt eine einzige Spur verschiedene Samples.
 * NOTE C-4 ist die Originaltonhöhe.
 * Ohne LOOP läuft ein Sample als One-Shot bis zum Ende. Mit LOOP gilt die Trig-Länge (LEN) bzw. die Haltedauer der MIDI-Taste.
-* Das Projekt merkt sich die Sample-**Nummer**. Beim Upload per Browser werden die Nummern automatisch nachgeführt. Kopierst du Dateien von Hand auf die Karte, benenne sie so, dass sie hinten einsortiert werden, sonst verschieben sich die Nummern.
+* Das Projekt merkt sich die Samples per **Name**. Dateien darfst du beliebig hinzufügen und Ordner anlegen. Benennst du eine benutzte Datei um oder verschiebst sie, findet das Projekt sie nicht mehr – dann im Explorer neu wählen.
 
 ## USB-Audio
 

@@ -186,7 +186,7 @@ static void handleList(int fd) {
     char ver[64] = "";
     { char vp[700]; snprintf(vp, sizeof vp, "%sVERSION", g_base); FILE* vf = fopen(vp, "r");
       if (vf) { if (fgets(ver, sizeof ver, vf)) ver[strcspn(ver, "\r\n\"\\")] = 0; fclose(vf); } }
-    snprintf(num, sizeof num, "],\"free\":%lld,\"max\":%d,\"os\":%s,\"version\":\"%s\"}", freeB, (int)MAX_SAMPLES, isOS() ? "true" : "false", ver);
+    snprintf(num, sizeof num, "],\"free\":%lld,\"max\":%d,\"os\":%s,\"version\":\"%s\"}", freeB, (int)MAX_LIB, isOS() ? "true" : "false", ver);
     bstr(b, num);
     reply(fd, 200, "application/json", b.p, b.n);
     free(b.p); free(f.p);

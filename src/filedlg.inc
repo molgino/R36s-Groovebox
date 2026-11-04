@@ -46,6 +46,14 @@ static bool savePresetFile(int t, const char* path) {
     if (!f) return false;
     uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 2, 0};
     bool ok = fwrite(hdr, 8, 1, f) == 1 && fwrite(curP().p[t], NPARAMS, 1, f) == 1;
+    int sl = curP().p[t][P_S0];
+    if (ok) {   // Sample-Name dahinter (wie im Projekt), damit der Sound in jedem Projekt passt; Anzahl 0 = kein Sample
+        bool has = machineUsesSample(m) && sampleGet(sl);
+        const char* sn = has ? sampleName(sl) : "";
+        uint16_t n = has ? 1 : 0; uint8_t eh[2] = {(uint8_t)sl, (uint8_t)strlen(sn)};
+        ok = fwrite("SPL1", 4, 1, f) == 1 && fwrite(&n, 2, 1, f) == 1;
+        if (ok && has) ok = fwrite(eh, 2, 1, f) == 1 && fwrite(sn, eh[1], 1, f) == 1;
+    }
     fclose(f);
     return ok;
 }
@@ -186,10 +194,10 @@ static void drawKeyboard() {
 
 enum { FB_SAMPLE = 1, FB_PROJECT, FB_PRESET };
 struct FbEnt { char name[96]; bool dir; int idx; };
-static int fbMode = 0, fbSel = 0, fbN = 0, fbOrig = -1;
+static int fbMode = 0, fbSel = 0, fbN = 0, fbOrig = -1, fbOrigLib = -1;   // Samples: Pool-Platz bzw. Bibliotheksindex beim Oeffnen
 static float fbScroll = 0;
 static char fbDir[128];
-static FbEnt fbEnt[MAX_SAMPLES + 64];
+static FbEnt fbEnt[MAX_LIB + 64];
 static const char* FB_FACTORY = "WERK";   // Ordnername der Werksklaenge im Sound-Explorer (Anzeige uebersetzt)
 
 static int fbCmp(const void* a, const void* b) {
@@ -199,7 +207,7 @@ static int fbCmp(const void* a, const void* b) {
 }
 static void fbAdd(const char* name, bool dir, int idx) {
     if (fbN >= (int)(sizeof fbEnt / sizeof *fbEnt)) return;
-    if (dir) for (int i = 0; i < fbN; i++) if (fbEnt[i].dir && !strcmp(fbEnt[i].name, name)) return;
+    if (dir && fbN && fbEnt[fbN - 1].dir && !strcmp(fbEnt[fbN - 1].name, name)) return;   // sortierte Bibliothek: Dateien eines Ordners folgen aufeinander
     snprintf(fbEnt[fbN].name, sizeof fbEnt[fbN].name, "%s", name);
     fbEnt[fbN].dir = dir; fbEnt[fbN].idx = idx; fbN++;
 }
@@ -219,9 +227,9 @@ static void fbBuild() {
     fbN = 0;
     if (fbMode == FB_SAMPLE) {
         size_t pl = strlen(fbDir);
-        for (int i = 0; i < sampleCount(); i++) {
-            const char* n = sampleName(i);
-            if (!n || strncmp(n, fbDir, pl)) continue;
+        for (int i = 0; i < libCount(); i++) {
+            const char* n = libName(i);
+            if (strncmp(n, fbDir, pl)) continue;
             const char* rest = n + pl;
             const char* sl = strchr(rest, '/');
             if (sl) { char dn[96]; snprintf(dn, sizeof dn, "%.*s", (int)(sl - rest), rest); fbAdd(dn, true, -1); }
@@ -257,14 +265,18 @@ static void fbBuild() {
 }
 static void openBrowser(int mode) {
     fbOpen = true; fbMode = mode; fbSel = 0; fbScroll = 0; fbDir[0] = 0;
-    fbOrig = -1;
+    fbOrig = -1; fbOrigLib = -1;
     if (mode == FB_SAMPLE) {   // im Ordner des aktuellen Samples starten und es markieren
         int cur = aHeld && holdS().lock[P_S0] != NO_LOCK ? holdS().lock[P_S0] : curP().p[track][P_S0];
         fbOrig = curP().p[track][P_S0];
-        const char* n = cur < sampleCount() ? sampleName(cur) : nullptr;
-        if (n) { const char* sl = strrchr(n, '/'); if (sl) snprintf(fbDir, sizeof fbDir, "%.*s/", (int)(sl - n + 0), n); }
+        const char* n = sampleGet(cur) ? sampleName(cur) : nullptr;
+        if (n) {
+            fbOrigLib = libFind(n);
+            const char* sl = strrchr(n, '/');
+            if (sl && fbOrigLib >= 0) snprintf(fbDir, sizeof fbDir, "%.*s/", (int)(sl - n), n);
+        }
         fbBuild();
-        for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir && fbEnt[i].idx == cur) fbSel = i;
+        for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir && fbEnt[i].idx == fbOrigLib) fbSel = i;
     } else if (mode == FB_PROJECT) {
         fbBuild();
         for (int i = 0; i < fbN; i++) if (!strcmp(fbEnt[i].name, cfg.project)) fbSel = i;
@@ -276,6 +288,7 @@ static void openBrowser(int mode) {
 }
 static void fbClose(bool cancel) {
     if (cancel && fbMode == FB_SAMPLE && fbOrig >= 0) { lockA(); curP().p[track][P_S0] = (uint8_t)fbOrig; unlockA(); }   // Vorhoeren zuruecknehmen
+    if (fbMode == FB_SAMPLE && sampleName(PREVIEW_SLOT)[0]) poolSetSlot(PREVIEW_SLOT, "");   // Speicher des Vorhoer-Platzes freigeben
     fbOpen = false;
 }
 static void fbUp() {
@@ -296,14 +309,17 @@ static void fbPick() {
         return;
     }
     switch (fbMode) {
-    case FB_SAMPLE:
+    case FB_SAMPLE: {
+        lockA(); curP().p[track][P_S0] = (uint8_t)fbOrig; unlockA();   // Vorhoer-Platz nicht stehen lassen
+        int sl = poolAssign(libName(e.idx));
+        if (sl < 0) return;   // Pool voll oder Datei nicht lesbar (Meldung kommt von poolAssign)
         lockA();
-        if (aHeld || lockLatch) { holdS().lock[P_S0] = (uint8_t)e.idx; aEdited = true; curP().p[track][P_S0] = (uint8_t)fbOrig; }
-        else curP().p[track][P_S0] = (uint8_t)e.idx;
+        if (aHeld || lockLatch) { holdS().lock[P_S0] = (uint8_t)sl; aEdited = true; }
+        else curP().p[track][P_S0] = (uint8_t)sl;
         unlockA();
-        fbOpen = false;
-        toast("%s%s", aHeld || lockLatch ? "LOCK: " : "", sampleName(e.idx));
-        break;
+        fbClose(false);
+        toast("%s%s", aHeld || lockLatch ? "LOCK: " : "", libName(e.idx));
+    } break;
     case FB_PROJECT:
         snprintf(pendingName, sizeof pendingName, "%s", e.name);
         fbOpen = false;
@@ -325,8 +341,14 @@ static void fbPick() {
 }
 static void fbPreview() {
     if (fbN == 0 || fbEnt[fbSel].dir) return;
-    if (fbMode == FB_SAMPLE) {
-        lockA(); curP().p[track][P_S0] = (uint8_t)fbEnt[fbSel].idx; eng.preview(track, nullptr); unlockA();
+    if (fbMode == FB_SAMPLE) {   // schon im Pool: diesen Platz spielen, sonst in den Vorhoer-Platz laden
+        const char* n = libName(fbEnt[fbSel].idx);
+        int sl = poolFind(n);
+        if (sl < 0) {
+            if (strcmp(sampleName(PREVIEW_SLOT), n) && !poolSetSlot(PREVIEW_SLOT, n)) { toast(TR("NICHT LESBAR: %s", "CANNOT READ: %s"), sampleLastError()); return; }
+            sl = PREVIEW_SLOT;
+        }
+        lockA(); curP().p[track][P_S0] = (uint8_t)sl; eng.preview(track, nullptr); unlockA();
     }
 }
 static void fbInput(Input& I, Uint32 now) {
@@ -366,7 +388,7 @@ static void drawBrowser() {
         int i = first + r, y = ly + r * rh;
         FbEnt& e = fbEnt[i];
         bool sel = i == fbSel;
-        bool cur = (fbMode == FB_PROJECT && !strcmp(e.name, cfg.project)) || (fbMode == FB_SAMPLE && !e.dir && e.idx == fbOrig);
+        bool cur = (fbMode == FB_PROJECT && !strcmp(e.name, cfg.project)) || (fbMode == FB_SAMPLE && !e.dir && e.idx == fbOrigLib);
         if (sel) rrect(x0 + 10, y - 2, w - 20, rh, 5, C_SEL);
         if (e.dir) {   // Ordnersymbol
             fill(x0 + 20, y + 4, 7, 3, C_LOCK); fill(x0 + 20, y + 6, 14, 10, C_LOCK);

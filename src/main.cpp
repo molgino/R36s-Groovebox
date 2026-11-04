@@ -922,7 +922,10 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         if (d.kind == K_ROOT) snprintf(label, ln, TR("GRUNDTON", "ROOT"));
         if (d.kind == K_SMPL) {
             d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
-            snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : TR("KEINE SAMPLES", "NO SAMPLES"));
+            const char* sn = sampleGet(val) ? sampleName(val) : nullptr;
+            const char* sl = sn ? strrchr(sn, '/') : nullptr;   // nur der Dateiname, Ordner zeigt der Explorer
+            if (sn) snprintf(label, ln, "%.19s", sl ? sl + 1 : sn);
+            else snprintf(label, ln, "%s", libCount() ? TR("(leer)", "(empty)") : TR("KEINE SAMPLES", "NO SAMPLES"));
         }
     }
     baseVal = (trackPage(page) && d.kind != K_MACH && d.kind != K_TLEN && d.kind != K_TSPD) ? P.p[track][sp() * 8 + k] : val;
@@ -2837,14 +2840,36 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
     bool ok = fread(hdr, 8, 1, f) == 1 && !memcmp(hdr, "GBP1", 4) && hdr[4] < M_COUNT;
     int np = ok ? (hdr[5] > NPARAMS ? NPARAMS : hdr[5]) : 0;
     ok = ok && np > 0 && fread(prm, np, 1, f) == 1;
+    if (ok && np < hdr[5]) fseek(f, hdr[5] - np, SEEK_CUR);
+    char sname[96] = "";   // Sample-Name (Trailer wie im Projekt: "SPL1", Anzahl, Platz, Laenge, Name)
+    bool hasName = false;
+    if (ok) {
+        char mg[4]; uint16_t n = 0; uint8_t eh[2];
+        if (fread(mg, 1, 4, f) == 4 && !memcmp(mg, "SPL1", 4) && fread(&n, 2, 1, f) == 1) {
+            hasName = true;
+            if (n > 0 && fread(eh, 1, 2, f) == 2 && eh[1] < sizeof sname && fread(sname, 1, eh[1], f) == eh[1]) sname[eh[1]] = 0;
+            else sname[0] = 0;
+        }
+    }
     fclose(f);
     if (!ok) return -1;
+    int slot = -1;
+    if (machineUsesSample(hdr[4]) && np > P_S0) {
+        if (!hasName) {   // alter Sound: Nummer = Position in der frueheren Sample-Liste
+            static char legacy[128][96];
+            int n = libLegacyList(legacy, 128);
+            if (prm[P_S0] < n) snprintf(sname, sizeof sname, "%s", legacy[prm[P_S0]]);
+        }
+        if (sname[0]) slot = poolAssign(sname);
+        if (slot < 0) slot = curP().p[t][P_S0];   // Sample fehlt: bisheriges behalten
+    }
     lockA();
     Pattern& P = curP();
     Engine::initTrack(P, t, hdr[4]);
     memcpy(P.p[t], prm, np);
     if (hdr[6] == 0 && (hdr[4] == M_SYNTH || hdr[4] == M_WTBL) && P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;   // alte Presets
     if (hdr[6] < 2) { P.p[t][P_FCRV] = 64; P.p[t][P_ACRV] = 64; }
+    if (slot >= 0) P.p[t][P_S0] = (uint8_t)slot;
     unlockA();
     return 1;
 }
@@ -2919,10 +2944,11 @@ enum SetItem {
     SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_CLRTRK, SI_TMPL, SI_MUTATE, SI_UNDO, SI_REDO, SI_DEMO,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE, SI_SAMPLES,
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
+static int poolMissing = 0;   // beim letzten Projekt-Laden nicht gefundene Samples
 // Rhythmus-Vorlagen (Bit i = Step i+1 von 16), werden ueber die ganze Spurlaenge wiederholt
 static const char* const RHY_NAMES_DE[] = {"Four on the Floor", "Backbeat (2+4)", "Offbeat", "Achtel", "Sechzehntel", "Breakbeat-Kick",
                                            "Clave 3-2", "Tresillo", "Dembow-Snare", "Leer"};
@@ -3031,6 +3057,13 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         break;
     case SI_QUIT: snprintf(l, ln, TR("Groovebox beenden", "Quit groovebox")); break;
     case SI_DRIVE: snprintf(l, ln, TR("USB-Laufwerk (Samples vom PC)", "USB drive (samples from PC)")); if (!isGrooveboxOS()) snprintf(v, vn, TR("nur Groovebox-OS", "Groovebox OS only")); break;
+    case SI_SAMPLES: {   // Bibliothek / im Projekt geladen / fehlend / nicht lesbare Formate
+        int inPool = 0; for (int k = 0; k < PREVIEW_SLOT; k++) if (sampleGet(k)) inPool++;
+        snprintf(l, ln, "Samples");
+        int o = snprintf(v, vn, TR("%d in Bibliothek, %d im Projekt", "%d in library, %d in project"), libCount(), inPool);
+        if (poolMissing && o < vn) o += snprintf(v + o, vn - o, TR(", %d fehlen", ", %d missing"), poolMissing);
+        if (libSkipped() && o < vn) snprintf(v + o, vn - o, TR(", %d kein WAV", ", %d not WAV"), libSkipped());
+    } break;
     }
 }
 
@@ -3936,7 +3969,6 @@ int runDhcpd(const char* ifname);
 
 // ---------------------------------------------------------------- Sample-Pool des Projekts
 // Spur-Parameter SMPL = Pool-Platz; das Projekt speichert zu jedem benutzten Platz den Bibliotheksnamen.
-static int poolMissing = 0;   // beim letzten Projekt-Laden nicht gefundene Samples
 static bool poolSetSlot(int slot, const char* name) {   // Datei in den Platz laden (leerer Name = Platz leeren)
     Sample s; memset(&s, 0, sizeof s);
     if (name && name[0] && !sampleRead(name, s)) { printf("Sample nicht lesbar: %s (%s)\n", name, sampleLastError()); return false; }
@@ -3944,10 +3976,15 @@ static bool poolSetSlot(int slot, const char* name) {   // Datei in den Platz la
     sampleFree(s);
     return true;
 }
+static void poolUsed(const Project& J, bool* used);
 static int poolAssign(const char* name) {   // Platz fuer ein Bibliotheks-Sample: vorhandenen nutzen oder neu laden
     int sl = poolFind(name);
     if (sl >= 0) return sl;
     sl = poolFreeSlot();
+    if (sl < 0) {   // Pool voll: Platz nehmen, den das Projekt nicht mehr benutzt (z.B. nach vielem Ausprobieren im Explorer)
+        static bool used[MAX_SAMPLES]; poolUsed(eng.proj, used);
+        for (int i = 0; i < PREVIEW_SLOT && sl < 0; i++) if (!used[i]) sl = i;
+    }
     if (sl < 0) { toast(TR("SAMPLE-POOL VOLL (%d)", "SAMPLE POOL FULL (%d)"), (int)PREVIEW_SLOT); return -1; }
     if (!poolSetSlot(sl, name)) { toast(TR("NICHT LESBAR: %s", "CANNOT READ: %s"), sampleLastError()); return -1; }
     return sl;
@@ -4035,6 +4072,7 @@ static void reloadSamples() {
         if (stat(full, &st)) continue;   // Datei weg: geladene Daten behalten (Projekt klingt weiter)
         if ((long)st.st_mtime != sm->mtime || (long)st.st_size != sm->fsize) { char nm[96]; snprintf(nm, sizeof nm, "%s", sm->name); if (poolSetSlot(i, nm)) re++; }
     }
+    if (fbOpen && fbMode == FB_SAMPLE) fbBuild();   // offener Explorer: Eintraege zeigen auf Bibliotheksindizes
     printf("Bibliothek: %d Samples (%d andere Formate), %d im Pool neu geladen\n", n, libSkipped(), re);
 }
 

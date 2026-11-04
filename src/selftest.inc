@@ -377,7 +377,7 @@ static void uiScenarios() {
     {
         char tmp[720]; snprintf(tmp, sizeof tmp, "%s.tmp", projPath);
         struct stat st;
-        UCHECK(stat(projPath, &st) == 0 && st.st_size == (long)sizeof(Project), "Projektdatei fehlt oder hat falsche Groesse");
+        UCHECK(stat(projPath, &st) == 0 && st.st_size >= (long)sizeof(Project) + 6, "Projektdatei fehlt oder hat falsche Groesse (ohne Sample-Liste?)");
         UCHECK(stat(tmp, &st) != 0, "Temp-Datei bleibt liegen");
         static Engine chk; chk.audioThreads = 1;
         UCHECK(chk.load(projPath) && chk.proj.pat[eng.curPat].s[6][9].lock[P_VEL] == 77, "gespeichertes Projekt nicht korrekt ladbar");
@@ -422,7 +422,7 @@ static void uiScenarios() {
     UCHECK(!fbOpen && curP().p[4][P_FREQ] == freq0, "Sound nicht geladen (FREQ %d statt %d)", curP().p[4][P_FREQ], freq0);
 
     uiCase = "Sample-Explorer";
-    if (sampleCount() > 1) {
+    if (libCount() > 1) {
         simReset(); goTrack(7); Engine::setMachine(curP(), 7, M_SAMPLE); goPage(PG_SRC); goSlot(0);
         tap(BT_X);
         UCHECK(fbOpen && fbMode == FB_SAMPLE, "X auf SMPL oeffnet keinen Explorer");
@@ -432,7 +432,49 @@ static void uiScenarios() {
         fbSel = 0; tap(BT_A);   // in den ersten Ordner
         int want = -1; for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir) { fbSel = i; want = fbEnt[i].idx; break; }
         tap(BT_A);
-        UCHECK(!fbOpen && want >= 0 && curP().p[7][P_S0] == want, "Sample nicht gewaehlt (%d statt %d)", curP().p[7][P_S0], want);
+        int got = curP().p[7][P_S0];
+        UCHECK(!fbOpen && want >= 0 && sampleGet(got) && !strcmp(sampleName(got), libName(want)), "Sample nicht gewaehlt ('%s' statt '%s')", sampleName(got), libName(want));
+        tap(BT_X);   // oeffnet im Ordner des gewaehlten Samples
+        for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir) { fbSel = i; break; }
+        tap(BT_X);   // Vorhoeren laedt in den Vorhoer-Platz (oder nutzt den Pool-Platz) ...
+        tap(BT_SELECT);   // ... Abbruch stellt das alte Sample wieder her
+        UCHECK(!fbOpen && curP().p[7][P_S0] == got && !sampleName(PREVIEW_SLOT)[0], "Abbruch nach Vorhoeren: Platz %d statt %d", curP().p[7][P_S0], got);
+    }
+
+    uiCase = "Sample-Pool";
+    if (libCount() > 1) {
+        simReset(); Engine::setMachine(curP(), 7, M_SAMPLE);
+        char want[96]; snprintf(want, sizeof want, "%s", libName(libCount() - 1));
+        int sl = poolAssign(want);
+        UCHECK(sl >= 0 && !strcmp(sampleName(sl), want), "poolAssign laedt '%s' nicht", want);
+        if (sl >= 0) {
+            curP().p[7][P_S0] = (uint8_t)sl;
+            doSaveProjectAs("PoolTest");
+            poolSetSlot(sl, "");   // Pool leeren: Laden muss das Sample per Name wiederfinden
+            doLoadProject("PoolTest");
+            int s2 = curP().p[7][P_S0];
+            UCHECK(sampleGet(s2) && !strcmp(sampleName(s2), want), "nach Projekt-Laden '%s' statt '%s'", sampleName(s2), want);
+            char pp[700]; presetFile(M_SAMPLE, "PoolSound", pp, sizeof pp);
+            UCHECK(savePresetFile(7, pp), "Sound mit Sample nicht gespeichert");
+            poolSetSlot(s2, "");
+            UCHECK(loadPresetPath(7, pp) == 1, "Sound mit Sample nicht ladbar");
+            int s3 = curP().p[7][P_S0];
+            UCHECK(sampleGet(s3) && !strcmp(sampleName(s3), want), "Sound: Sample '%s' statt '%s'", sampleName(s3), want);
+            remove(pp);
+        }
+        static char legacy[128][96];   // altes Projekt ohne Namensliste: Nummer = Position in der frueheren Liste
+        int ln = libLegacyList(legacy, 128);
+        if (ln > 1) {
+            curP().p[7][P_S0] = 1;
+            char lp[700]; projectPath("PoolAlt", lp, sizeof lp);
+            FILE* f = fopen(lp, "wb"); if (f) { fwrite(&eng.proj, sizeof(Project), 1, f); fclose(f); }
+            doLoadProject("PoolAlt");
+            int s4 = curP().p[7][P_S0];
+            UCHECK(sampleGet(s4) && !strcmp(sampleName(s4), legacy[1]), "altes Projekt: '%s' statt '%s'", sampleName(s4), legacy[1]);
+            remove(lp);
+        }
+        char p2[700]; projectPath("PoolTest", p2, sizeof p2); remove(p2);
+        doLoadProject("Ab1");
     }
 
     uiCase = "Pattern wechseln";
