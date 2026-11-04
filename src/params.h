@@ -17,21 +17,29 @@ enum { PAGE_INS = PG_INS, PAGE_FX = PG_FX, PAGE_CMP = PG_CMP, PAGE_MST = PG_MST,
        FIRST_GLOBAL_PAGE = PG_MIX };
 static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
 static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 1};
-static const char* const GROUP_NAMES[3] = {"SPUR", "LIVE, MIX & FX", "PROJEKT"};
+static const char* const GROUP_NAMES_DE[3] = {"SPUR", "LIVE, MIX & FX", "PROJEKT"};
+static const char* const GROUP_NAMES_EN[3] = {"TRACK", "LIVE, MIX & FX", "PROJECT"};
+#define GROUP_NAMES (g_lang ? GROUP_NAMES_EN : GROUP_NAMES_DE)
 enum { NO_LOCK = 255 };
 
 // Reihenfolge = gespeicherter Wert (neue Engines nur hinten anfuegen!)
 enum Machine { M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_SAMPLE, M_TOM, M_RIM, M_SHKR, M_WTBL, M_CHOP, M_GRAN, M_COUNT };
 static const char* const MACHINE_NAMES[M_COUNT] = {"KICK", "SNARE", "HAT", "CLAP", "SYNTH", "FM", "SMPL", "TOM", "RIM", "SHKR", "WTBL", "CHOP", "GRAN"};
-static const char* const MACHINE_LONG[M_COUNT] = {"Bassdrum", "Snare", "Hi-Hat", "Clap", "Analog-Synth", "FM-Synth (4 OP)", "Sample-Player",
-                                                  "Tom", "Rimshot", "Shaker", "Wavetable-Synth", "Sample-Chopper", "Granulator"};
+static const char* const MACHINE_LONG_DE[M_COUNT] = {"Bassdrum", "Snare", "Hi-Hat", "Clap", "Analog-Synth", "FM-Synth (4 OP)", "Sample-Player",
+                                                     "Tom", "Rimshot", "Shaker", "Wavetable-Synth", "Sample-Chopper", "Granulator"};
+static const char* const MACHINE_LONG_EN[M_COUNT] = {"Bass drum", "Snare", "Hi-hat", "Clap", "Analog synth", "FM synth (4 OP)", "Sample player",
+                                                     "Tom", "Rimshot", "Shaker", "Wavetable synth", "Sample chopper", "Granulator"};
+#define MACHINE_LONG (g_lang ? MACHINE_LONG_EN : MACHINE_LONG_DE)
 // Anzeige-Reihenfolge im Engine-Waehler: Drums, Synths, Samples
 static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_TOM, M_RIM, M_SHKR, M_SYNTH, M_FM, M_WTBL, M_SAMPLE, M_CHOP, M_GRAN};
 inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
 inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
 static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "SNG", "MST", "SET", "LIVE"};
-static const char* const PAGE_LONG[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 + KURVEN", "VERSTÄRKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
-                                                 "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN", "LIVE"};
+static const char* const PAGE_LONG_DE[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 + KURVEN", "VERSTÄRKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
+                                                    "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN", "LIVE"};
+static const char* const PAGE_LONG_EN[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "SOUND", "SOUND 2", "FILTER", "FILTER 2 + CURVES", "AMPLIFIER", "LFO 1", "LFO 2", "LFO 3", "INSERT FX",
+                                                    "MIXER", "EFFECTS", "COMPRESSOR", "PROJECT", "SONG", "MASTER", "SETTINGS", "LIVE"};
+#define PAGE_LONG (g_lang ? PAGE_LONG_EN : PAGE_LONG_DE)
 
 // Filter-1-Typen (Werte nur hinten anfuegen: 0..2 = alte LP/BP/HP)
 enum { FT_LP12, FT_BP, FT_HP12, FT_LP24, FT_LADR, FT_HP24, FT_NTCH, FT_PEAK, FT_CMBP, FT_CMBN, FT_VOWL, FT_COUNT };
@@ -124,9 +132,13 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     {"GATE", K_PCT, 60, 100}, {"ACCT", K_PCT, 0, 100}, PDEF_NONE, PDEF_NONE,
 };
 // Arpeggiator: Akkord-Intervalle (Halbtoene), Tempo in Steps
-static const char* const ARP_MODES[6] = {"AUS", "UP", "DOWN", "UPDN", "RAND", "AKKD"};   // AKKD = Akkordtoene gleichzeitig
+static const char* const ARP_MODES_DE[6] = {"AUS", "UP", "DOWN", "UPDN", "RAND", "AKKD"};   // AKKD = Akkordtoene gleichzeitig
+static const char* const ARP_MODES_EN[6] = {"OFF", "UP", "DOWN", "UPDN", "RAND", "CHRD"};
+#define ARP_MODES (g_lang ? ARP_MODES_EN : ARP_MODES_DE)
 enum { ARP_CHORD = 5, NCHORDV = 3 };   // Zusatzstimmen je Spur fuer Akkorde
-static const char* const ARP_CHORDS[10] = {"OKT", "5TH", "MAJ", "MIN", "SUS4", "MAJ7", "MIN7", "DOM7", "DIM", "SKALA"};
+static const char* const ARP_CHORDS_DE[10] = {"OKT", "5TH", "MAJ", "MIN", "SUS4", "MAJ7", "MIN7", "DOM7", "DIM", "SKALA"};
+static const char* const ARP_CHORDS_EN[10] = {"OCT", "5TH", "MAJ", "MIN", "SUS4", "MAJ7", "MIN7", "DOM7", "DIM", "SCALE"};
+#define ARP_CHORDS (g_lang ? ARP_CHORDS_EN : ARP_CHORDS_DE)
 static const int8_t ARP_IV[10][5] = {{0, -1}, {0, 7, -1}, {0, 4, 7, -1}, {0, 3, 7, -1}, {0, 5, 7, -1},
                                      {0, 4, 7, 11, -1}, {0, 3, 7, 10, -1}, {0, 4, 7, 10, -1}, {0, 3, 6, 9, -1}, {-1}};
 static const char* const ARP_RATES[6] = {"1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4"};
@@ -134,8 +146,11 @@ static const float ARP_STEPS[6] = {0.5f, 2.f / 3.f, 1.f, 4.f / 3.f, 2.f, 4.f};
 // Tonskalen pro Spur: Wert 0 = chromatisch, sonst 1 + Skala*12 + Grundton
 enum { NSCALES = 10 };
 static const char* const SCALE_NAMES[NSCALES] = {"MAJ", "MIN", "DOR", "PHR", "LYD", "MIX", "HMI", "PMA", "PMI", "BLU"};
-static const char* const SCALE_LONG[NSCALES] = {"DUR", "MOLL", "DORISCH", "PHRYGISCH", "LYDISCH", "MIXOLYDISCH",
-                                                "HARM. MOLL", "PENTA DUR", "PENTA MOLL", "BLUES"};
+static const char* const SCALE_LONG_DE[NSCALES] = {"DUR", "MOLL", "DORISCH", "PHRYGISCH", "LYDISCH", "MIXOLYDISCH",
+                                                   "HARM. MOLL", "PENTA DUR", "PENTA MOLL", "BLUES"};
+static const char* const SCALE_LONG_EN[NSCALES] = {"MAJOR", "MINOR", "DORIAN", "PHRYGIAN", "LYDIAN", "MIXOLYDIAN",
+                                                   "HARM. MINOR", "PENTA MAJOR", "PENTA MINOR", "BLUES"};
+#define SCALE_LONG (g_lang ? SCALE_LONG_EN : SCALE_LONG_DE)
 static const uint16_t SCALE_MASK[NSCALES] = {   // Bit n = Halbton n ueber dem Grundton
     0xAB5, 0x5AD, 0x6AD, 0x5AB, 0xAD5, 0x6B5, 0x9AD, 0x295, 0x4A9, 0x4E9};
 static const char* const NOTE_NAMES[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -315,9 +330,9 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_ARPM: snprintf(buf, n, "%s", ARP_MODES[v % 6]); break;
     case K_ACHD: snprintf(buf, n, "%s", ARP_CHORDS[v % 10]); break;
     case K_ARAT: snprintf(buf, n, "%s", ARP_RATES[v % 6]); break;
-    case K_RANGE: if (v) snprintf(buf, n, "+%d", v); else snprintf(buf, n, "AUS"); break;
+    case K_RANGE: if (v) snprintf(buf, n, "+%d", v); else snprintf(buf, n, "%s", TR("AUS", "OFF")); break;
     case K_MTIM: if (v == 23) snprintf(buf, n, "0"); else snprintf(buf, n, "%+d/24", v - 23); break;
-    case K_WTAB: { static const char* wt[4] = {"BASIC", "PWM", "VOKAL", "OBERT"}; snprintf(buf, n, "%s", wt[v & 3]); } break;
+    case K_WTAB: { const char* wt[4] = {"BASIC", "PWM", TR("VOKAL", "VOWEL"), TR("OBERT", "HARM")}; snprintf(buf, n, "%s", wt[v & 3]); } break;
     case K_SLICE: if (v) snprintf(buf, n, "%d", v); else snprintf(buf, n, "AUTO"); break;
     case K_FBK: snprintf(buf, n, "%d%%", v * 120 / 127); break;
     case K_COND:

@@ -545,6 +545,57 @@ static void engineStress(double secs) {
     printf("  Engine-Stress: %.0f s Audio, Spitze %.2f, Last %.1f%%, laengster Block %.2f ms\n", secs, pk, tot / (secs * 1000) * 100, worst);
 }
 
+// Sprachtest: alles auf Englisch zeichnen und angezeigte Texte auf deutsche Reste pruefen
+static char langSeen[1500][100]; static int langN = 0;
+static void langHook(const char* t) {
+    if (strlen(t) < 2 || langN >= 1500) return;
+    for (int i = 0; i < langN; i++) if (!strcmp(langSeen[i], t)) return;
+    snprintf(langSeen[langN++], 100, "%s", t);
+}
+static bool looksGerman(const char* t) {
+    if (strstr(t, "Sprache / Language") || !strcmp(t, "Deutsch")) return false;
+    for (const unsigned char* c = (const unsigned char*)t; *c; c++) if (*c == 0xC3) return true;   // Umlaut/ß
+    static const char* const W[] = {"SPUR", "SPUREN", "WAEHLEN", "LADEN", "SPEICHERN", "STUMM", "LOESCHEN", "ZURUECK", "KLANG", "AUS", "AN", "LEER",
+        "SEITE", "QUELLE", "WERT", "REGLER", "NEU", "UND", "DER", "DIE", "DAS", "MIT", "VON", "IST", "EIN", "EINE", "NICHT", "ALLE", "PROJEKT",
+        "EINSTELLUNGEN", "TASTEN", "ABBRUCH", "AKTIV", "GELADEN", "GESPEICHERT", "SCHLAG", "STEUERKREUZ", "AUFNAHME", "SCHRITTE", "AUSSETZER",
+        "EFFEKTE", "KOMPRESSOR", "MEHR", "INTERN", "AUSGANG", "PUFFER", "OHNE", "HALTEN", "ZIEL", "SENDEN", "SUMME", "BEREIT", "KANAL", "ZEILE", "EINTRAG", 0};
+    char tok[64]; int k = 0;
+    for (const char* c = t;; c++) {
+        if (isalpha((unsigned char)*c) && k < 63) { tok[k++] = (char)toupper((unsigned char)*c); continue; }
+        tok[k] = 0;
+        if (k >= 2) for (int i = 0; W[i]; i++) if (!strcmp(tok, W[i])) return true;
+        k = 0;
+        if (!*c) break;
+    }
+    return false;
+}
+static void langCheck() {
+    int saveLang = g_lang;
+    g_lang = 1; langN = 0; textHook = langHook; msgUntil = 0; msg[0] = 0;
+    simReset();
+    static const int engs[] = {M_KICK, M_SYNTH, M_FM, M_WTBL, M_SAMPLE, M_CHOP, M_GRAN};
+    for (int e : engs) {
+        Engine::setMachine(curP(), 4, e); track = 4;
+        for (int p = 0; p < NUI_PAGES; p++) {
+            if (!pageAvail(p)) continue;
+            page = p;
+            for (int sl = 0; sl < 8; sl++) { slot = sl; drawAll(false); }
+        }
+    }
+    page = PG_SYS; for (int i = 0; i < SI_COUNT; i++) { setSel = i; setScroll = i - 7.5f; drawAll(false); }
+    page = PG_TRG; drawAll(true);                                     // Hilfe
+    menuOpen = true; drawAll(false); menuOpen = false;
+    for (int m = KB_SAVEAS; m <= KB_PSAVE; m++) { openKeyboard(m, "x"); drawAll(false); kbOpen = false; }
+    for (int m = FB_SAMPLE; m <= FB_PRESET; m++) { openBrowser(m); drawAll(false); fbClose(true); }
+    eng.recording = true; drawAll(false); eng.recording = false;
+    textHook = nullptr; g_lang = saveLang;
+    int bad = 0;
+    for (int i = 0; i < langN; i++) if (looksGerman(langSeen[i])) { if (bad++ < 40) printf("  DEUTSCH IN ENGLISCH: '%s'\n", langSeen[i]); }
+    printf("  Sprachtest: %d verschiedene Texte, %d mit deutschen Resten\n", langN, bad);
+    UCHECK(bad == 0, "Englische Oberflaeche enthaelt %d deutsche Texte", bad);
+    Engine::setMachine(curP(), 4, M_SYNTH);
+}
+
 static int runSelftest(double stressSecs) {
     selfTesting = true;
     char tmp[600]; snprintf(tmp, sizeof tmp, "/tmp/gb-selftest-%d/", (int)getpid());
@@ -560,6 +611,9 @@ static int runSelftest(double stressSecs) {
     printf("UI-Szenarien\n");
     uiScenarios();
     uiTasks();
+    printf("Sprachtest\n");
+    uiCase = "Sprache";
+    langCheck();
     printf("UI-Monkey\n");
     uiMonkey(20000);
     printf("Engine-Stress\n");

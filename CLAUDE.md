@@ -18,7 +18,7 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 - Arpeggiator: `Engine::Arp ar[]` in trigger() (fromSeq, nicht bei Drums), Timer im render-Block wie Retrig, `playNote()`; Song: `songOn/songPos/songRep`, Wechsel am Pattern-Ende in doTick, Seite SNG (`drawSong/songInput`); Pattern-Mutation `mutatePattern()` mit Undo (SET)
 - Trigless Locks: `Step.on` 0 leer / 1 Trig / 2 trigless; stepTrack schreibt die Locks von on==2 in `v[t].lk`/`ar[t].lk` (ohne Note/LEN/COND/PROB), gelten bis zum nächsten Trig; UI: `aPrevOn` (A antippen auf Trig mit Locks → 2, auf 2 → 1), Lock-Modus SELECT+A toggelt, B löscht (2 → 0); Raster zeichnet 2 als Umriss
 - Kopieren: Trig `trigClip` (A halten + L1/R1, Zustand `aPrevOn`), Seite `pageClip[8]`/`pageClipStore` im Seitenmenü (X/Y, SRC/SR2 nur gleiche Engine, SEQ inkl. len/speed), Pattern `clip` (SET, SELECT+R1); Seitenmenü bricht Zeilen um
-- Projekte `projects/songNN.gbx` (32 Plätze, aktiver Platz in settings.cfg `song`), Presets `presets/<ENGINE>/NN.gbp`
+- Projekte `projects/<Name>.gbx` (aktives in settings.cfg `project`), Presets `presets/<ENGINE>/<Name>.gbp`
 
 ## Groovebox-OS (`os/`)
 - Eigenes Image statt ArkOS: Linux `LINUX_VERSION` (gregkh/linux-Tag) + ROCKNIX-Patches/DTS (gepinnt `ROCKNIX_COMMIT`, `os/versions.env`), Panel aus ArkOS-DTB als Overlay `os/dts/panel-arkos.dtso` (generic-dsi), eigener Tree `rk3326-groovebox-r36s.dts` (OTG-Port an, usb-role-switch)
@@ -36,6 +36,10 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 - Akkorde: ARP-Modus `ARP_CHORD` (5) → `Engine::cv[t][NCHORDV]` Zusatzstimmen; Hüllkurvenform `P_FCRV/P_ACRV` (FLT2-Slots 84/85, v11, Preset hdr[6]=2)
 - Werksklänge + Demo `factory.h` (`FACTORY`, `applyFactory`, `buildDemo`; PRJ PRESET-Slot ≥ 32; erster Start ohne Songs lädt Demo; `GB_DEMO=1 --render`)
 - Docs: `docs/SPECS.md`, `docs/THIRD_PARTY.md` (GPL-Pflichten fürs Image, keine Fremdmarken)
+
+## Sprache und Datei-Dialoge
+- Sprache: `g_lang` (main.cpp, settings `language`, SET „Sprache / Language“), `TR(de, en)` in params.h; Listen als `X_DE`/`X_EN` + `#define X (g_lang ? …)` (PAGE_LONG, GROUP_NAMES, MACHINE_LONG, SCALE_LONG, ARP_MODES, ARP_CHORDS, RHY_NAMES); lokale Listen ohne `static`; `paramhelp.h` mit en-Spalte; Log-Ausgaben (printf) bleiben deutsch. Neue Texte immer mit TR schreiben – Selbsttest `langCheck` zeichnet alles auf Englisch und meldet deutsche Reste (Umlaute/Wortliste)
+- Datei-Dialoge `src/filedlg.inc`: Tastatur `openKeyboard(KB_SAVEAS|KB_NEW|KB_PSAVE)`, Explorer `openBrowser(FB_SAMPLE|FB_PROJECT|FB_PRESET)` (Samples hierarchisch aus `sampleName` „ordner/unter/name“, Presets: Wurzel = Werksklänge + Engine-Ordner); Projekte per Name (`cfg.project`, settings `project`, alt `song N` → „songNN“), `projectPath/presetFile`, Rückfragen über `pendingName` + ACT_SAVEAS/NEWNAME/PSAVENAME/LOADNAME; Samples bis `SAMPLE_DEPTH` 3 Ebenen, `MAX_SAMPLES` 250, Name 96 Zeichen (Web gleiches Limit)
 
 ## Tests
 - `make test [SAN=1]` → `tests/unit.cpp` (Engine ohne UI); `./groovebox --selftest [sek]` und `--bench [datei]` aus `src/selftest.inc` (am Ende von main.cpp eingebunden; `selfTesting` blockiert USB/Lernmodus/Audio-Gerät; UI-Simulation `simFrame/tap/combo/flickL/stickR`, `goPage/goSlot` zählen Tasten → Bedienweg-Report); SET „Leistungstest“ → /data/logs/bench.txt; CI-Job `tests` mit Sanitizern, bench-arm64.txt im Release

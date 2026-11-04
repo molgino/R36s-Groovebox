@@ -41,6 +41,7 @@ bool webTakeChange(Uint32 now, Uint32 quietMs) {
 }
 int webLastEvent(char* out, int n) { snprintf(out, n, "%s", g_last); return g_lastSeq; }
 
+extern int g_lang;   // Sprache der Oberflaeche (main.cpp)
 static void note(const char* fmt, const char* a) {
     snprintf(g_last, sizeof g_last, fmt, a);
     g_lastSeq++;
@@ -304,7 +305,7 @@ static void handle(int fd) {
         if (!ok || mg[0] != 0x1f || mg[1] != 0x8b) { unlink(tmp); replyText(fd, 400, "Keine gueltige Update-Datei (.tgz)"); return; }
         sync();
         rename(tmp, fin);
-        note("UPDATE: %.60s", "WIRD INSTALLIERT");
+        note("UPDATE: %.60s", g_lang ? "INSTALLING" : "WIRD INSTALLIERT");
         replyText(fd, 200, "ok - Groovebox startet neu und installiert das Update");
         g_updateReady = 1;
         return;
@@ -357,7 +358,7 @@ static void handle(int fd) {
         sync();
         if (rename(tmp, full)) { unlink(tmp); replyText(fd, 400, "Umbenennen fehlgeschlagen"); return; }
         if (isS) { g_changedAt = SDL_GetTicks(); g_changed = 1; }
-        note(isS ? "SAMPLE: %.60s" : "PROJEKT: %.60s", rel);
+        note(isS ? "SAMPLE: %.60s" : (g_lang ? "PROJECT: %.60s" : "PROJEKT: %.60s"), rel);
         replyText(fd, 200, "ok");
         return;
     }
@@ -368,7 +369,7 @@ static void handle(int fd) {
         if (sl) { char sub[700]; snprintf(sub, sizeof sub, "%s/%.*s", dir, (int)(sl - rel), rel); rmdir(sub); }
         sync();
         if (isS) { g_changedAt = SDL_GetTicks(); g_changed = 1; }
-        note("GELOESCHT: %.60s", rel);
+        note(g_lang ? "DELETED: %.60s" : "GELÖSCHT: %.60s", rel);
         replyText(fd, 200, "ok");
         return;
     }

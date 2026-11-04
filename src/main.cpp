@@ -182,7 +182,7 @@ static void refreshDevices() {
     devCount = 0;
     for (int i = 0; i < n && devCount < 16; i++) {
         const char* nm = SDL_GetAudioDeviceName(i, 0);
-        if (nm && (strcasestr(nm, "uac2") || strcasestr(nm, "gadget"))) continue;   // USB zum PC: eigener Schalter "Audio an PC"
+        if (nm && (strcasestr(nm, "uac2") || strcasestr(nm, "gadget"))) continue;   // USB zum PC: eigener Schalter TR("Audio an PC", "Audio to PC")
         if (nm) snprintf(devNames[devCount++], 128, "%s", nm);
     }
 }
@@ -271,7 +271,9 @@ static int nextGlyph(const char*& s) {
 }
 static int textLen(const char* s) { int n = 0; while (*s) { nextGlyph(s); n++; } return n; }
 static int textW(const char* s, int sc = 1) { return textLen(s) * FONT_W * sc; }
+static void (*textHook)(const char*) = nullptr;   // Selbsttest: angezeigte Texte mitschneiden
 static void text(int x, int y, const char* s, Col c, int sc = 1) {
+    if (textHook) textHook(s);
     if (fbPix) {   // Glyphen direkt mischen
         uint32_t srb = ((uint32_t)c.r << 16) | c.b, sg = (uint32_t)c.g << 8;
         uint32_t solid = 0xff000000u | srb | sg;
@@ -431,9 +433,9 @@ static void savePcRecording(const int16_t* d, int frames) {
         sync();
     }
     pcRecDone();
-    if (!f) { toast("AUFNAHME: SPEICHERN FEHLGESCHLAGEN"); return; }
+    if (!f) { toast(TR("AUFNAHME: SPEICHERN FEHLGESCHLAGEN", "RECORDING: SAVING FAILED")); return; }
     reloadSamples();
-    toast("SAMPLE pc/pc-%02d GESPEICHERT (%.1f s)", no, frames / 44100.f);
+    toast(TR("SAMPLE pc/pc-%02d GESPEICHERT (%.1f s)", "SAMPLE pc/pc-%02d SAVED (%.1f s)"), no, frames / 44100.f);
     printf("PC-Aufnahme gespeichert: %s (%d Frames)\n", path, frames);
 }
 
@@ -455,7 +457,7 @@ static void setBacklight(bool on) {
 static void drawAll(bool help);
 static void powerOff() {
     if (selfTesting) return;
-    toast("SPEICHERN UND AUSSCHALTEN ...");
+    toast(TR("SPEICHERN UND AUSSCHALTEN ...", "SAVING AND POWERING OFF ..."));
     msgUntil = SDL_GetTicks() + 10000;
     if (screenOff) { setBacklight(true); screenOff = false; }
     drawAll(false); present();
@@ -492,8 +494,8 @@ static void pollVolumeKeys() {
             }
         if (step) {
             cfg.hwVol = clampi(cfg.hwVol + step, 0, 100);
-            if (intMuted) toast("INTERN %d%% (STUMM, USB-AUDIO AKTIV)", cfg.hwVol);
-            else { hwVolumeSet(cfg.hwVol); toast("LAUTSTÄRKE %d%%", cfg.hwVol); }
+            if (intMuted) toast(TR("INTERN %d%% (STUMM, USB-AUDIO AKTIV)", "INTERNAL %d%% (MUTED, USB AUDIO ACTIVE)"), cfg.hwVol);
+            else { hwVolumeSet(cfg.hwVol); toast(TR("LAUTSTÄRKE %d%%", "VOLUME %d%%"), cfg.hwVol); }
             saveSettings();
         }
     }
@@ -635,14 +637,14 @@ static void undoTrack(Uint32 now) {   // einmal pro Bild nach der Eingabe
     } else if (undoDirty && now - undoLastChange > 800) undoDirty = false;
 }
 static void undoStep() {
-    if (!undoCnt) { toast("NICHTS RÜCKGÄNGIG ZU MACHEN"); return; }
+    if (!undoCnt) { toast(TR("NICHTS RÜCKGÄNGIG ZU MACHEN", "NOTHING TO UNDO")); return; }
     undoTop = (undoTop + UNDO_N - 1) % UNDO_N; undoCnt--;
     int pi = undoPat[undoTop];
     redoBuf = eng.proj.pat[pi]; redoPat = pi;
     lockA(); eng.proj.pat[pi] = undoBuf[undoTop]; unlockA();
     if (pi == eng.curPat) undoShadow = undoBuf[undoTop];
     undoDirty = false;
-    toast("RÜCKGÄNGIG: PATTERN %02d (%d WEITERE)", pi + 1, undoCnt);
+    toast(TR("RÜCKGÄNGIG: PATTERN %02d (%d WEITERE)", "UNDO: PATTERN %02d (%d MORE)"), pi + 1, undoCnt);
 }
 
 // WAV-Aufnahme der Summe (LIVE-Seite, R1): Puffer im Speicher, beim Stoppen in samples/rec/ schreiben (Thread)
@@ -678,18 +680,18 @@ static int recWriter(void* arg) {
     return 0;
 }
 static void recToggle() {
-    if (recSaving) { toast("AUFNAHME WIRD NOCH GESPEICHERT ..."); return; }
+    if (recSaving) { toast(TR("AUFNAHME WIRD NOCH GESPEICHERT ...", "STILL SAVING RECORDING ...")); return; }
     if (!recOn && !recBuf) {
         recRate = eng.sr;
         int cap = recRate * REC_MAX_SEC * 2;
         recBuf = (int16_t*)malloc((size_t)cap * 2);
-        if (!recBuf) { toast("ZU WENIG SPEICHER FÜR DIE AUFNAHME"); return; }
+        if (!recBuf) { toast(TR("ZU WENIG SPEICHER FÜR DIE AUFNAHME", "NOT ENOUGH MEMORY FOR RECORDING")); return; }
         recPos = 0; recCap = cap; recOn = true;
-        toast("AUFNAHME LÄUFT (MAX. %d MIN)", REC_MAX_SEC / 60);
+        toast(TR("AUFNAHME LÄUFT (MAX. %d MIN)", "RECORDING (MAX. %d MIN)"), REC_MAX_SEC / 60);
         return;
     }
     recOn = false;
-    if (recPos < recRate / 2) { free(recBuf); recBuf = nullptr; toast("AUFNAHME ZU KURZ - VERWORFEN"); return; }
+    if (recPos < recRate / 2) { free(recBuf); recBuf = nullptr; toast(TR("AUFNAHME ZU KURZ - VERWORFEN", "RECORDING TOO SHORT - DISCARDED")); return; }
     char dir[700]; snprintf(dir, sizeof dir, "%ssamples", basePath); mkdir(dir, 0755);
     snprintf(dir, sizeof dir, "%ssamples/rec", basePath); mkdir(dir, 0755);
     char* path = (char*)malloc(800);
@@ -698,12 +700,12 @@ static void recToggle() {
     recSaving = true;
     SDL_Thread* th = SDL_CreateThread(recWriter, "rec", path);
     if (th) SDL_DetachThread(th); else recWriter(path);
-    toast("AUFNAHME WIRD GESPEICHERT ...");
+    toast(TR("AUFNAHME WIRD GESPEICHERT ...", "SAVING RECORDING ..."));
 }
 static void redoStep() {
-    if (redoPat < 0) { toast("NICHTS ZU WIEDERHOLEN"); return; }
+    if (redoPat < 0) { toast(TR("NICHTS ZU WIEDERHOLEN", "NOTHING TO REDO")); return; }
     lockA(); eng.proj.pat[redoPat] = redoBuf; unlockA();
-    toast("WIEDERHOLT: PATTERN %02d", redoPat + 1);
+    toast(TR("WIEDERHOLT: PATTERN %02d", "REDONE: PATTERN %02d"), redoPat + 1);
     redoPat = -1;
 }
 
@@ -796,7 +798,7 @@ static void drawHeader() {
         text(310, 2, b, C_DIM);
     }
     if (trackPage(page)) {   // Signalweg-Oberflaeche: Pfad statt Reiter
-        snprintf(b, sizeof b, "SPUR %d > %s", track + 1, PAGE_LONG[page]);
+        snprintf(b, sizeof b, TR("SPUR %d > %s", "TRACK %d > %s"), track + 1, PAGE_LONG[page]);
         text(334, 4, b, C_TEXT);
     } else
     {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
@@ -817,7 +819,7 @@ static void drawHeader() {
         }
     }
     if (aHeld) {
-        snprintf(b, sizeof b, lockLatch ? "LOCK-MODUS STEP %02d" : "TRIG %02d HALTEN: P-LOCK", holdStep + 1);
+        snprintf(b, sizeof b, lockLatch ? TR("LOCK-MODUS STEP %02d", "LOCK MODE STEP %02d") : TR("TRIG %02d HALTEN: P-LOCK", "HOLD TRIG %02d: P-LOCK"), holdStep + 1);
         text(332, 23, b, C_LOCK);
     } else {
         int hx = 334;
@@ -851,8 +853,8 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         val = k == MS_BPM ? eng.proj.bpm : eng.proj.mst[k];
     } else if (page == PG_PRJ) {
         static const ParamDef PRJ_DE[8] = {
-            {"LADEN...", K_ACT, 0, 0}, {"SPEICHERN", K_ACT, 0, 0}, {"SPEICH. ALS", K_ACT, 0, 0}, {"NEU...", K_ACT, 0, 0},
-            {"SOUND LADEN", K_ACT, 0, 0}, {"SOUND SPEICH.", K_ACT, 0, 0}, {"INIT SOUND", K_ACT, 0, 0}, {"DEMO-SONG", K_ACT, 0, 0}};
+            {TR("LADEN...", "LOAD..."), K_ACT, 0, 0}, {TR("SPEICHERN", "SAVE"), K_ACT, 0, 0}, {TR("SPEICH. ALS", "SAVE AS..."), K_ACT, 0, 0}, {TR("NEU...", "NEW..."), K_ACT, 0, 0},
+            {TR("SOUND LADEN", "LOAD SOUND"), K_ACT, 0, 0}, {TR("SOUND SPEICH.", "SAVE SOUND"), K_ACT, 0, 0}, {"INIT SOUND", K_ACT, 0, 0}, {"DEMO-SONG", K_ACT, 0, 0}};
         static const ParamDef PRJ_EN[8] = {
             {"LOAD...", K_ACT, 0, 0}, {"SAVE", K_ACT, 0, 0}, {"SAVE AS...", K_ACT, 0, 0}, {"NEW...", K_ACT, 0, 0},
             {"LOAD SOUND", K_ACT, 0, 0}, {"SAVE SOUND", K_ACT, 0, 0}, {"INIT SOUND", K_ACT, 0, 0}, {"DEMO SONG", K_ACT, 0, 0}};
@@ -870,7 +872,7 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         d = CMP_DEFS[k];
         val = k == CM_GR ? 0 : eng.proj.cmp[k];
         if (k == CM_SRC && val) snprintf(label, ln, "SC: T%d %s", val, MACHINE_NAMES[P.machine[val - 1]]);
-        if (k == CM_THR && val >= 127 && eng.proj.cmp[CM_GAIN] == 0) snprintf(label, ln, "THR (AUS)");
+        if (k == CM_THR && val >= 127 && eng.proj.cmp[CM_GAIN] == 0) snprintf(label, ln, TR("THR (AUS)", "THR (OFF)"));
     } else if (page == PAGE_SYS) {
         d = SYS_DEFS[k];
         switch (k) {
@@ -882,7 +884,7 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         case SY_MCH: val = cfg.chm; break;
         case SY_USB: val = usbMode;
             if (usbMode && netIp[0]) snprintf(label, ln, "IP %s", netIp);
-            else snprintf(label, ln, "%s", usbMode ? "R36S AM PC" : "GERÄTE AM R36S");
+            else snprintf(label, ln, "%s", usbMode ? "R36S AM PC" : TR("GERÄTE AM R36S", "DEVICES ON R36S"));
             break;
         default: {
             char nm[256]; val = midiPortInfo(nm, sizeof nm);
@@ -909,12 +911,12 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
         if (idx == P_NOTE) {   // Note in die Skala der Spur einrasten
             val = quantizeNote(val, curScale());
         }
-        if (d.kind == K_LDEST) snprintf(label, ln, "%s", val > 0 ? "ZIEL" : "DEST");
+        if (d.kind == K_LDEST) snprintf(label, ln, "%s", val > 0 ? TR("ZIEL", "TARGET") : "DEST");
         if (d.kind == K_SCALE && val > 0) snprintf(label, ln, "%s", SCALE_LONG[((val - 1) / 12) % NSCALES]);
-        if (d.kind == K_ROOT) snprintf(label, ln, "GRUNDTON");
+        if (d.kind == K_ROOT) snprintf(label, ln, TR("GRUNDTON", "ROOT"));
         if (d.kind == K_SMPL) {
             d.max = (uint8_t)(sampleCount() > 0 ? sampleCount() - 1 : 0);
-            snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : "KEINE SAMPLES");
+            snprintf(label, ln, "%.19s", sampleCount() ? sampleName(val) : TR("KEINE SAMPLES", "NO SAMPLES"));
         }
     }
     baseVal = (trackPage(page) && d.kind != K_MACH && d.kind != K_TLEN && d.kind != K_TSPD) ? P.p[track][sp() * 8 + k] : val;
@@ -1085,8 +1087,8 @@ static void filterGraph(int gx, int gy, int gw, int gh, int freq, int res, int t
         fill(xl, top, 2, H, C_PLAY, 90);
         glowDot(xl, ys[clampi(xl - x0, 0, W - 1)], c);
     }
-    static const char* tn[FT_COUNT] = {"LOWPASS 12DB", "BANDPASS", "HIGHPASS 12DB", "LOWPASS 24DB", "LADDER 24DB", "HIGHPASS 24DB",
-                                       "NOTCH", "PEAK", "KAMM +", "KAMM -", "VOKAL A-E-I-O-U"};
+    const char* tn[FT_COUNT] = {"LOWPASS 12DB", "BANDPASS", "HIGHPASS 12DB", "LOWPASS 24DB", "LADDER 24DB", "HIGHPASS 24DB",
+                                       "NOTCH", "PEAK", TR("KAMM +", "COMB +"), TR("KAMM -", "COMB -"), TR("VOKAL A-E-I-O-U", "VOWEL A-E-I-O-U")};
     const char* tt = tn[type % FT_COUNT];
     text(gx + gw - 10 - textW(tt), gy + 6, tt, sel == 2 ? C_PLAY : dimC(c, 0.8f));
 }
@@ -1118,7 +1120,7 @@ static void bwGraph(int gx, int gy, int gw, int gh, int freq, int res, int type,
     curve(x0, ys, W, bot, c, 45);
     handle(xl, ys[clampi(xl - x0, 0, W - 1)], c, sel == 0);
     handle(xh - 1, ys[clampi(xh - 1 - x0, 0, W - 1)], c, sel == 1);
-    const char* t = on ? "BASE-WIDTH" : "BASE-WIDTH AUS";
+    const char* t = on ? "BASE-WIDTH" : TR("BASE-WIDTH AUS", "BASE-WIDTH OFF");
     text(gx + gw - 10 - textW(t), gy + 6, t, dimC(c, 0.8f));
 }
 
@@ -1176,7 +1178,7 @@ static void lfoGraph(int gx, int gy, int gw, int gh, int k, int base, float live
     else snprintf(b, sizeof b, "%.2f HZ  %s", hz, mn[mode % 5]);
     text(gx + gw - 10 - textW(b), gy + 4, b, dimC(c, 0.8f));
     if (dest > 0) snprintf(b, sizeof b, "-> %s", paramDef(curP().machine[track], dest - 1).name);
-    else snprintf(b, sizeof b, "KEIN ZIEL");
+    else snprintf(b, sizeof b, TR("KEIN ZIEL", "NO TARGET"));
     text(gx + 10, gy + 4, b, dest > 0 && dep != 64 ? c : C_DIM);
 }
 
@@ -1186,7 +1188,7 @@ static void oscGraph(int gx, int gy, int gw, int gh, int w1, int w2, int det, in
     int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 18) / 2;
     float pw = 0.5f + (pwv - 64) / 140.f, m = mixv / 127.f, sub = subv / 127.f * 0.8f;
     float ratio = exp2f((det - 64) / 64.f * 0.5f / 12.f);
-    float drift = oscDrift * (ratio - 1.f) * 40.f;   // sichtbares "Wandern" von OSC2
+    float drift = oscDrift * (ratio - 1.f) * 40.f;   // sichtbares TR("Wandern", "Wander") von OSC2
     static float v[700]; static int ys[700];
     if (W > 690) W = 690;
     float mx = 0.001f;
@@ -1252,7 +1254,7 @@ static void fmGraph(int gx, int gy, int gw, int gh, int algo, const int* rat, co
 static void sampleGraph(int gx, int gy, int gw, int gh, int idx, int st, int en, bool loop, int sel, Col c) {
     graphBox(gx, gy, gw, gh);
     const Sample* sm = sampleGet(idx);
-    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, "KEINE SAMPLES IM ORDNER samples/", C_DIM); return; }
+    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, TR("KEINE SAMPLES IM ORDNER samples/", "NO SAMPLES IN FOLDER samples/"), C_DIM); return; }
     int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 16) / 2;
     static int cIdx = -1, cW = 0; static float pk[700];
     if (W > 690) W = 690;
@@ -1276,7 +1278,7 @@ static void sampleGraph(int gx, int gy, int gw, int gh, int idx, int st, int en,
     fill(xs, gy + 4, 2, gh - 8, sel == 3 ? C_PLAY : C_GREEN);
     fill(xe, gy + 4, 2, gh - 8, C_TRIG);
     if (loop) text(lo + 4, gy + gh - 20, "LOOP", C_PLAY);
-    if (en < st) text(lo + 4, gy + 4, "<< RÜCKWÄRTS", C_PLAY);
+    if (en < st) text(lo + 4, gy + 4, TR("<< RÜCKWÄRTS", "<< BACKWARD"), C_PLAY);
     const Voice& v = eng.v[track];
     if (v.active && v.machine == M_SAMPLE && v.smp == sm) {
         int px = x0 + (int)(v.spos / sm->len * (W - 1));
@@ -1326,7 +1328,7 @@ static void arpGraph(int gx, int gy, int gw, int gh, Col c) {
         int w = (int)(bw * gate); if (w < 2) w = 2;
         rrect(x0 + (int)(i * bw), y - 3, w, 6, 2, mode ? c : C_OFF2, (Uint8)(mode ? 120 + 135 * acc : 255));
     }
-    const char* t = mode ? ARP_MODES[mode % 6] : "ARP AUS";
+    const char* t = mode ? ARP_MODES[mode % 6] : TR("ARP AUS", "ARP OFF");
     text(gx + gw - 10 - textW(t), gy + 6, t, dimC(c, 0.8f));
 }
 
@@ -1349,14 +1351,14 @@ static void seqGraph(int gx, int gy, int gw, int gh, int sel, Col c) {
         float a = ((rot % len) / (float)len) * 6.2831853f - 1.5707963f;
         fill(cx + (int)((r + 6) * cosf(a)) - 1, cy + (int)((r + 6) * sinf(a)) - 1, 3, 3, sel == 0 + 4 ? C_PLAY : C_TEXT);
     }
-    static const char* dn[6] = {"VORWÄRTS >>", "<< RÜCKWÄRTS", "PING <->", "PENDEL <=>", "ZUFALL ?", "BETRUNKEN ~"};
+    const char* dn[6] = {TR("VORWÄRTS >>", "FORWARD >>"), TR("<< RÜCKWÄRTS", "<< BACKWARD"), "PING <->", TR("PENDEL <=>", "PENDULUM <=>"), TR("ZUFALL ?", "RANDOM ?"), TR("BETRUNKEN ~", "DRUNK ~")};
     char b[48];
     text(gx + 84, gy + 6, dn[dir], sel == 0 ? C_PLAY : c);
     if (puls > 0) snprintf(b, sizeof b, "EUKLID E(%d,%d) ROT %d", puls > len ? len : puls, len, rot % len);
     else snprintf(b, sizeof b, "%d STEPS  %s", len, SPEED_NAMES[P.speed[track] % 7]);
     text(gx + 84, gy + 24, b, puls > 0 ? c : C_DIM);
     if (dens > 0 || range > 0) snprintf(b, sizeof b, "GEN %d%%  MUT %d%%  MEL +%d", dens, chng, range);
-    else snprintf(b, sizeof b, "GENERATOR AUS");
+    else snprintf(b, sizeof b, TR("GENERATOR AUS", "GENERATOR OFF"));
     text(gx + 84, gy + 42, b, dens > 0 || range > 0 ? c : C_DIM);
     // Turing-Register: naechste 16 Bits (links = naechster Step), Balken = erzeugte Tonhoehe
     uint32_t reg = eng.tmReg[track];
@@ -1677,7 +1679,7 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     }
     if (d.kind == K_THR) { fill(x, y + h - (int)(fr * h), w, 2, c); symCurve(x, y, w, h, cd, [&](float t) { return 0.5f + 0.4f * sinf(t * 18.f) * expf(-t); }, false); return; }
     if (d.kind == K_CRAT) { float r2 = val >= 8 ? 100.f : CMP_RATIOS[val]; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < 0.5f ? t : 0.5f + (t - 0.5f) / r2; }, false); return; }
-    if (d.kind == K_SCSRC) { if (val) drawIcon(curP().machine[(val - 1) % NTRACKS], cx - h / 2, y, h, c); else text(cx - 24, cy - 8, "SUMME", c); return; }
+    if (d.kind == K_SCSRC) { if (val) drawIcon(curP().machine[(val - 1) % NTRACKS], cx - h / 2, y, h, c); else text(cx - 24, cy - 8, TR("SUMME", "MASTER"), c); return; }
     if (d.kind == K_GR) { int gh = clampi((int)(grDisp / 24.f * h), 0, h); rrect(cx - 8, y, 16, h, 4, C_OFF); if (gh) rrect(cx - 8, y, 16, gh, 4, C_TRIG); return; }
     if (d.kind == K_FBK) { int nn = 1 + (int)(fr * 4.f); for (int i = 0; i < nn; i++) ring(cx, cy, 4 + i * (h / 2 - 4) / 4, 1, val > 106 && i == nn - 1 ? C_TRIG : c); return; }
     if (d.kind == K_MS) { fill(x, cy, (int)(fr * w / 2), 1, C_DIM); symCurve(x + (int)(fr * w / 2), y + 2, w - (int)(fr * w / 2), h - 4, c, [&](float t) { return expf(-t * 5.f); }); return; }
@@ -1780,7 +1782,7 @@ static void wtGraph(int gx, int gy, int gw, int gh, int tab, int pos, Col c) {
     const float* fr = wavetableFrame(tab, cur);
     int ox = x0 + cur * 7, oy = base - cur * 20 / 31 - 10, px = ox, py = oy - (int)(fr[0] * 12);
     for (int i = 1; i < W; i++) { int nx = ox + i, ny = oy - (int)(fr[i * 256 / W] * 12); line(px, py, nx, ny, c, 2); px = nx; py = ny; }
-    static const char* tn[4] = {"BASIC: SIN > TRI > SAW > SQR", "PWM: 50 % > 5 %", "VOKAL: A > E > I > O > U", "OBERTÖNE: 1 > 32"};
+    const char* tn[4] = {"BASIC: SIN > TRI > SAW > SQR", "PWM: 50 % > 5 %", TR("VOKAL: A > E > I > O > U", "VOWEL: A > E > I > O > U"), TR("OBERTÖNE: 1 > 32", "HARMONICS: 1 > 32")};
     text(gx + gw - 10 - textW(tn[tab & 3]), gy + 4, tn[tab & 3], dimC(c, 0.8f));
     char b[24]; snprintf(b, sizeof b, "FRAME %d/32", cur + 1);
     text(gx + gw - 10 - textW(b), gy + 22, b, c);
@@ -1791,7 +1793,7 @@ static void chopGraph(int gx, int gy, int gw, int gh, Col c) {
     graphBox(gx, gy, gw, gh);
     int idx = pv(P_S0);
     const Sample* sm = sampleGet(idx);
-    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, "KEINE SAMPLES IM ORDNER samples/", C_DIM); return; }
+    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, TR("KEINE SAMPLES IM ORDNER samples/", "NO SAMPLES IN FOLDER samples/"), C_DIM); return; }
     int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 16) / 2;
     if (W > 690) W = 690;
     const float* pk = samplePeaks(idx, W);
@@ -1804,7 +1806,7 @@ static void chopGraph(int gx, int gy, int gw, int gh, Col c) {
     for (int k = 1; k < n; k++) { int xx = x0 + k * W / n; for (int yy = gy + 4; yy < gy + gh - 4; yy += 4) fill(xx, yy, 1, 2, C_LOCK); }
     const Voice& v = eng.v[track];
     if (v.active && v.machine == M_CHOP && v.smp == sm) fill(x0 + (int)(v.spos / sm->len * (W - 1)), gy + 4, 2, gh - 8, C_PLAY);
-    char b[48]; snprintf(b, sizeof b, "SCHEIBE %d/%d%s", sl + 1, n, pv(P_S2) ? "" : " (AUTO)");
+    char b[48]; snprintf(b, sizeof b, TR("SCHEIBE %d/%d%s", "SLICE %d/%d%s"), sl + 1, n, pv(P_S2) ? "" : " (AUTO)");
     text(gx + gw - 10 - textW(b), gy + 4, b, C_TEXT);
 }
 
@@ -1813,7 +1815,7 @@ static void granGraph(int gx, int gy, int gw, int gh, Col c) {
     graphBox(gx, gy, gw, gh);
     int idx = pv(P_S0);
     const Sample* sm = sampleGet(idx);
-    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, "KEINE SAMPLES IM ORDNER samples/", C_DIM); return; }
+    if (!sm) { textC(gx + gw / 2, gy + gh / 2 - 8, TR("KEINE SAMPLES IM ORDNER samples/", "NO SAMPLES IN FOLDER samples/"), C_DIM); return; }
     int x0 = gx + 10, W = gw - 20, mid = gy + gh / 2, A = (gh - 16) / 2;
     if (W > 690) W = 690;
     const float* pk = samplePeaks(idx, W);
@@ -1830,7 +1832,7 @@ static void granGraph(int gx, int gy, int gw, int gh, Col c) {
             disc(xx, mid - (int)((g % 5 - 2) * A * 0.35f), 2 + (int)(w * 4), mix(c, C_PLAY, w * 0.6f));
         }
     char b[48];
-    snprintf(b, sizeof b, "KORN %.0f ms  %.0f/s", 10.f * exp2f(pv(P_S3) * (5.6f / 127.f)), 2.f * exp2f(pv(P_S4) * (6.f / 127.f)));
+    snprintf(b, sizeof b, TR("KORN %.0f ms  %.0f/s", "GRAIN %.0f ms  %.0f/s"), 10.f * exp2f(pv(P_S3) * (5.6f / 127.f)), 2.f * exp2f(pv(P_S4) * (6.f / 127.f)));
     text(gx + gw - 10 - textW(b), gy + 4, b, C_TEXT);
 }
 
@@ -1949,7 +1951,7 @@ static void drawMixer(int ox) {
 static void drawMenu() {
     rrect(50, 40, 540, 360, 14, C_ACC);
     rrect(52, 42, 536, 356, 13, C_BG);
-    textC(320, 50, "SEITE WÄHLEN", C_ACC, 2);
+    textC(320, 50, TR("SEITE WÄHLEN", "CHOOSE PAGE"), C_ACC, 2);
     int y = 104;
     for (int g = 0; g < 3; g++) {
         text(72, y - 20, GROUP_NAMES[g], C_DIM);
@@ -1969,8 +1971,8 @@ static void drawMenu() {
     if (PG_STORE[menuSel] >= 0) {
         char hb[80];
         int cq = 0; for (int q = 0; q < NUI_PAGES; q++) if (PG_STORE[q] == pageClipStore) { cq = q; break; }
-        if (pageClipStore >= 0) snprintf(hb, sizeof hb, "[X] SEITE KOPIEREN  [Y] EINFÜGEN (%s VON T%d)", PAGE_NAMES[cq], pageClipTrack + 1);
-        else snprintf(hb, sizeof hb, "[X] SEITE DER SPUR KOPIEREN  [Y] EINFÜGEN");
+        if (pageClipStore >= 0) snprintf(hb, sizeof hb, TR("[X] SEITE KOPIEREN  [Y] EINFÜGEN (%s VON T%d)", "[X] COPY PAGE  [Y] PASTE (%s OF T%d)"), PAGE_NAMES[cq], pageClipTrack + 1);
+        else snprintf(hb, sizeof hb, TR("[X] SEITE DER SPUR KOPIEREN  [Y] EINFÜGEN", "[X] COPY TRACK PAGE  [Y] PASTE"));
         hint(320 - textW(hb) / 2, 368, hb, C_ACC, C_DIM);
     }
 }
@@ -1981,7 +1983,7 @@ static void drawConfirm() {
     rrect(322 - w / 2, 172, w - 4, 106, 13, C_BG, 250);
     textC(320, 190, confirmText, C_TEXT);
     rrect(220, 226, 90, 32, 8, C_GREEN); textC(265, 234, "A = JA", C_BG);
-    rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, "B = NEIN", C_TEXT);
+    rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, TR("B = NEIN", "B = NO"), C_TEXT);
 }
 
 static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
@@ -2243,38 +2245,38 @@ static void drawSteps() {
         textC(x + 18, y + 22 - lift, b, st.on == 1 ? C_BG : (st.on == 2 ? tc : C_DIM));
     }
     const char* h;
-    if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [L1/R1]KOPIE/EINF [A]OK";
-    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN  LANG = LOCK-MODUS";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE";
-    else if (page == PG_MIX) h = "[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO";
+    if (lockLatch) h = TR("LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [L1/R1]KOPIE/EINF [A]OK", "LOCK [R-ST]VALUE [</>]STEP [B]CLEAR [SEL+A]TRIGLESS [L1/R1]COPY/PASTE [A]OK");
+    else if (aHeld) h = TR("[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN  LANG = LOCK-MODUS", "[X/Y/R-STICK]LOCK [B]CLEAR [L1]COPY [R1]PASTE  LONG = LOCK MODE");
+    else if (in.down[BT_SELECT]) h = TR("[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE", "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LENGTH");
+    else if (page == PG_MIX) h = TR("[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO", "[^/v]CHANNEL [L-STICK]ROW/CHANNEL [R-STICK^v]VALUE [A]MUTE [B]SOLO");
     else if (page == PG_PRJ) h = TR("[L-STICK]WÄHLEN [A]AUSFÜHREN [SEL]MENÜ", "[L-STICK]SELECT [A]RUN [SEL]MENU");
-    else h = "[A]TRIG [B]HÖR [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE";
+    else h = TR("[A]TRIG [B]HÖR [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE", "[A]TRIG [B]LISTEN [L-STICK]CONTROL [R-STICK]VALUE [SEL+R-STICK]PAGE");
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
 static void drawHelp() {
     rrect(30, 22, 580, 436, 12, C_ACC);
     rrect(32, 24, 576, 432, 11, C_BG);
-    static const char* lines[] = {
-        "SELECT GEHALTEN +",
-        "  LINKS/RECHTS   Pattern wechseln",
-        "  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo",
-        "  A / B          Spur stumm / RÜCKGÄNGIG",
-        "  X / Y          Engine wechseln",
-        "  L1 / R1        Step-Cursor 1 Schlag (4 Steps) zurück/vor",
-        "  L2 / R2        Spurlänge -/+",
-        "  START          Speichern (2s halten: Ende)",
+    const char* lines[] = {
+        TR("SELECT GEHALTEN +", "HOLD SELECT +"),
+        TR("  LINKS/RECHTS   Pattern wechseln", "  LEFT/RIGHT     Change pattern"),
+        TR("  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo", "  UP / DOWN      Record on/off / tap tempo"),
+        TR("  A / B          Spur stumm / RÜCKGÄNGIG", "  A / B          Mute track / UNDO"),
+        TR("  X / Y          Engine wechseln", "  X / Y          Change engine"),
+        TR("  L1 / R1        Step-Cursor 1 Schlag (4 Steps) zurück/vor", "  L1 / R1        Step cursor 1 beat (4 steps) back/fwd"),
+        TR("  L2 / R2        Spurlänge -/+", "  L2 / R2        Track length -/+"),
+        TR("  START          Speichern (2s halten: Ende)", "  START          Save (hold 2s: quit)"),
         "",
-        "OHNE SELECT",
-        "  A / A lang     Trig / LOCK-MODUS (Stick, X/Y lockt)",
-        "  A halten+L1/R1 Trig kopieren / einfügen",
-        "  B              Spur vorhören",
-        "  HOCH / RUNTER  Spur wählen",
-        "  L1 / R1        Block im Signalweg (Quelle..Insert)",
-        "  L2 / R2        Reihe SEQ: Trig, Seq, Arp, LFOs",
-        "  L-Stick/R-St.  Regler wählen / Wert ändern",
-        "  SELECT tippen  Menü: LIVE, Mixer, FX, Song, Projekt",
-        "  START          Play / Stop",
+        TR("OHNE SELECT", "WITHOUT SELECT"),
+        TR("  A / A lang     Trig / LOCK-MODUS (Stick, X/Y lockt)", "  A / A long     Trig / LOCK MODE (stick, X/Y lock)"),
+        TR("  A halten+L1/R1 Trig kopieren / einfügen", "  hold A+L1/R1   Copy / paste trig"),
+        TR("  B              Spur vorhören", "  B              Preview track"),
+        TR("  HOCH / RUNTER  Spur wählen", "  UP / DOWN      Select track"),
+        TR("  L1 / R1        Block im Signalweg (Quelle..Insert)", "  L1 / R1        Block in signal path (source..insert)"),
+        TR("  L2 / R2        Reihe SEQ: Trig, Seq, Arp, LFOs", "  L2 / R2        SEQ row: trig, seq, arp, LFOs"),
+        TR("  L-Stick/R-St.  Regler wählen / Wert ändern", "  L-stick/R-st.  Select control / change value"),
+        TR("  SELECT tippen  Menü: LIVE, Mixer, FX, Song, Projekt", "  tap SELECT     Menu: LIVE, mixer, FX, song, project"),
+        TR("  START          Play / Stop", "  START          Play / stop"),
     };
     for (unsigned i = 0; i < sizeof lines / sizeof *lines; i++)
         text(48, 36 + i * 22, lines[i], i == 0 || i == 9 ? C_ACC : C_TEXT);
@@ -2288,7 +2290,7 @@ static const int SIG_MOD[] = {PG_TRG, PG_SEQ, PG_ARP, PG_LFO1, PG_LFO2, PG_LFO3}
 static const int SIG_NCH = 6, SIG_NMOD = 6;
 static const char* sigName(int p) {
     switch (p) {
-    case PG_SRC: return "QUELLE"; case PG_SRC2: return "QUELLE 2"; case PG_FLT: return "FILTER 1"; case PG_FLT2: return "FILTER 2";
+    case PG_SRC: return TR("QUELLE", "SOURCE"); case PG_SRC2: return TR("QUELLE 2", "SOURCE 2"); case PG_FLT: return "FILTER 1"; case PG_FLT2: return "FILTER 2";
     case PG_AMP: return "AMP"; case PG_INS: return "INSERT"; case PG_TRG: return "TRIG"; case PG_SEQ: return "SEQ";
     case PG_ARP: return "ARP"; case PG_LFO1: return "LFO1"; case PG_LFO2: return "LFO2"; case PG_LFO3: return "LFO3";
     }
@@ -2300,9 +2302,9 @@ static void sigSummary(int p, char* b, int n) {
     char v[24];
     switch (p) {
     case PG_SRC: snprintf(b, n, "%s", MACHINE_NAMES[P.machine[track] % M_COUNT]); break;
-    case PG_SRC2: snprintf(b, n, "MEHR"); break;
+    case PG_SRC2: snprintf(b, n, TR("MEHR", "MORE")); break;
     case PG_FLT: knobText(COMMON_DEFS[P_FTYP], q[P_FTYP], v, sizeof v); snprintf(b, n, "%s %d", v, q[P_FREQ]); break;
-    case PG_FLT2: snprintf(b, n, "%s", q[P_BASE] > 0 || q[P_WDTH] < 127 ? "AN" : "AUS"); break;
+    case PG_FLT2: snprintf(b, n, "%s", q[P_BASE] > 0 || q[P_WDTH] < 127 ? TR("AN", "ON") : TR("AUS", "OFF")); break;
     case PG_AMP: snprintf(b, n, "VOL %d", q[P_VOL]); break;
     case PG_INS: snprintf(b, n, "%s", q[P_ITYP] < INS_COUNT ? INS_NAMES[q[P_ITYP]] : "?"); break;
     case PG_TRG: fmtParam(COMMON_DEFS[P_NOTE], q[P_NOTE], v, sizeof v); snprintf(b, n, "%s", v); break;
@@ -2379,7 +2381,7 @@ static void drawSigB() {
     }
     // --- Signalweg
     int X0 = 118, W = 518;
-    snprintf(b, sizeof b, "SIGNALWEG  SPUR %d", track + 1);
+    snprintf(b, sizeof b, TR("SIGNALWEG  SPUR %d", "SIGNAL PATH  TRACK %d"), track + 1);
     text(X0, 44, b, C_DIM);
     text(X0 + W - textW("L1/R1"), 44, "L1/R1", dimC(C_ACC, 0.8f));
     // Spalten: zusammengehoerige Seiten untereinander (QUELLE/QUELLE 2, FILTER 1/FILTER 2)
@@ -2479,10 +2481,10 @@ static void drawSigB() {
     }
     if (npg > 1) text(X0 - 40, sy + 12, b, C_DIM);
     const char* h;
-    if (lockLatch) h = "LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [A]OK";
-    else if (aHeld) h = "[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN";
-    else if (in.down[BT_SELECT]) h = "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE";
-    else h = "[^v]SPUR [L1/R1]BLOCK [L2/R2]SEQ [L-ST]REGLER [R-ST]WERT [SEL]MENÜ";
+    if (lockLatch) h = TR("LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [A]OK", "LOCK [R-ST]VALUE [</>]STEP [B]CLEAR [SEL+A]TRIGLESS [A]OK");
+    else if (aHeld) h = TR("[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN", "[X/Y/R-STICK]LOCK [B]CLEAR [L1]COPY [R1]PASTE");
+    else if (in.down[BT_SELECT]) h = TR("[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE", "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LENGTH");
+    else h = TR("[^v]SPUR [L1/R1]BLOCK [L2/R2]SEQ [L-ST]REGLER [R-ST]WERT [SEL]MENÜ", "[^v]TRACK [L1/R1]BLOCK [L2/R2]SEQ [L-ST]CONTROL [R-ST]VALUE [SEL]MENU");
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -2517,12 +2519,12 @@ static void drawLive() {
         fill(x + 8, y + h - 9, w - 16, 3, C_OFF);
         if (mw && !m) fill(x + 8, y + h - 9, mw, 3, C_GREEN);
     }
-    textC(160, 226, "STEUERKREUZ", C_DIM);
-    textC(480, 226, "TASTEN", C_DIM);
+    textC(160, 226, TR("STEUERKREUZ", "D-PAD"), C_DIM);
+    textC(480, 226, TR("TASTEN", "BUTTONS"), C_DIM);
     // Statusleiste
     int y = 340;
     struct Chip { const char* key; const char* name; bool on; Col c; } ch[4] = {
-        {"L1", "FILL (HALTEN)", eng.fill, C_LOCK}, {"R1", recOn ? "REC LÄUFT" : (recSaving ? "SPEICHERT" : "WAV-AUFNAHME"), recOn, C_TRIG},
+        {"L1", TR("FILL (HALTEN)", "FILL (HOLD)"), eng.fill, C_LOCK}, {"R1", recOn ? TR("REC LÄUFT", "RECORDING") : (recSaving ? TR("SPEICHERT", "SAVING") : TR("WAV-AUFNAHME", "WAV RECORDING")), recOn, C_TRIG},
         {"L2/R2", "PATTERN -/+", eng.nextPat >= 0, C_ACC}, {"START", eng.playing ? "STOP" : "PLAY", eng.playing, C_GREEN}};
     for (int i = 0; i < 4; i++) {
         int x = 6 + i * 158;
@@ -2540,7 +2542,7 @@ static void drawLive() {
     int dx = (int)(eng.dj * 150);
     if (dx) fill(dx > 0 ? 320 : 320 + dx, fy + 6, dx > 0 ? dx : -dx, 4, eng.dj > 0 ? C_CYAN : C_ACC);
     text(480, fy, "L-STICK TEMPO", C_DIM);
-    hint(6, 452, "[STEUERKREUZ/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PATTERN [R-ST]DJ [SEL]MENÜ", C_ACC, C_DIM);
+    hint(6, 452, TR("[STEUERKREUZ/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PATTERN [R-ST]DJ [SEL]MENÜ", "[D-PAD/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PATTERN [R-ST]DJ [SEL]MENU"), C_ACC, C_DIM);
 }
 
 static bool fbOpen, kbOpen;
@@ -2858,24 +2860,24 @@ static void runAction(int act, int arg) {
         doSaveProjectAs(nm);
         toast(TR("DEMO '%s' GELADEN - START DRÜCKEN", "DEMO '%s' LOADED - PRESS START"), nm);
     } break;
-    case ACT_PASTE: lockA(); curP() = clip; unlockA(); toast("PATTERN EINGEFÜGT"); break;
+    case ACT_PASTE: lockA(); curP() = clip; unlockA(); toast(TR("PATTERN EINGEFÜGT", "PATTERN PASTED")); break;
     case ACT_CLEARTRK:
         lockA();
         for (int st = 0; st < NSTEPS; st++) { curP().s[arg][st].on = 0; memset(curP().s[arg][st].lock, NO_LOCK, NPARAMS); }
         unlockA();
-        toast("SPUR %d GELEERT (SELECT+B = RÜCKGÄNGIG)", arg + 1);
+        toast(TR("SPUR %d GELEERT (SELECT+B = RÜCKGÄNGIG)", "TRACK %d CLEARED (SELECT+B = UNDO)"), arg + 1);
         break;
     case ACT_CLEARPAT:
         lockA();
         for (int t = 0; t < NTRACKS; t++) for (int st = 0; st < NSTEPS; st++) { curP().s[t][st].on = 0; memset(curP().s[t][st].lock, NO_LOCK, NPARAMS); }
         unlockA();
-        toast("PATTERN %02d GELEERT", eng.curPat + 1);
+        toast(TR("PATTERN %02d GELEERT", "PATTERN %02d CLEARED"), eng.curPat + 1);
         break;
     case ACT_QUIT: quitReq = true; break;
     case ACT_INIT: {
         int m = curP().machine[track];
         lockA(); Engine::initTrack(curP(), track, m); unlockA();
-        toast("SPUR %d: KLANG ZURÜCKGESETZT", track + 1);
+        toast(TR("SPUR %d: KLANG ZURÜCKGESETZT", "TRACK %d: SOUND RESET"), track + 1);
     } break;
     }
 }
@@ -2911,12 +2913,15 @@ enum SetItem {
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
     SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE,
-    SI_H_SYS, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
+    SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
 // Rhythmus-Vorlagen (Bit i = Step i+1 von 16), werden ueber die ganze Spurlaenge wiederholt
-static const char* const RHY_NAMES[] = {"Four on the Floor", "Backbeat (2+4)", "Offbeat", "Achtel", "Sechzehntel", "Breakbeat-Kick",
-                                        "Clave 3-2", "Tresillo", "Dembow-Snare", "Leer"};
+static const char* const RHY_NAMES_DE[] = {"Four on the Floor", "Backbeat (2+4)", "Offbeat", "Achtel", "Sechzehntel", "Breakbeat-Kick",
+                                           "Clave 3-2", "Tresillo", "Dembow-Snare", "Leer"};
+static const char* const RHY_NAMES_EN[] = {"Four on the floor", "Backbeat (2+4)", "Offbeat", "Eighths", "Sixteenths", "Breakbeat kick",
+                                           "Clave 3-2", "Tresillo", "Dembow snare", "Empty"};
+#define RHY_NAMES (g_lang ? RHY_NAMES_EN : RHY_NAMES_DE)
 static const uint16_t RHY_MASK[] = {0x1111, 0x1010, 0x4444, 0x5555, 0xFFFF, 0x0441, 0x1449, 0x4949, 0x4848, 0x0000};
 enum { RHY_N = sizeof RHY_MASK / sizeof *RHY_MASK };
 static int tmplSel = 0;
@@ -2930,7 +2935,7 @@ static void applyRhythm(int k) {
         if (!on) memset(P.s[track][st].lock, NO_LOCK, NPARAMS);
     }
     unlockA();
-    toast("SPUR %d: %s (SELECT+B = RÜCKGÄNGIG)", track + 1, RHY_NAMES[k]);
+    toast(TR("SPUR %d: %s (SELECT+B = RÜCKGÄNGIG)", "TRACK %d: %s (SELECT+B = UNDO)"), track + 1, RHY_NAMES[k]);
 }
 static float setScroll = 0;
 static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SYS; }
@@ -2944,86 +2949,88 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     switch (i) {
     case SI_H_PAT: snprintf(l, ln, "PATTERN"); break;
     case SI_PATTERN: snprintf(l, ln, "Pattern"); snprintf(v, vn, "P%02d%s", eng.curPat + 1, eng.nextPat >= 0 ? " >" : ""); break;
-    case SI_LEN: snprintf(l, ln, "Länge Spur %d", track + 1); snprintf(v, vn, "%d Steps", P.len[track]); break;
-    case SI_LENALL: snprintf(l, ln, "Länge alle Spuren"); snprintf(v, vn, "%d Steps", P.len[track]); break;
-    case SI_SPEED: snprintf(l, ln, "Tempo-Faktor Spur %d", track + 1); snprintf(v, vn, "%s", SPEED_NAMES[P.speed[track] % 7]); break;
-    case SI_FILL: snprintf(l, ln, "FILL-Modus (SELECT+L1)"); snprintf(v, vn, "%s", eng.fill ? "AN" : "AUS"); break;
+    case SI_LEN: snprintf(l, ln, TR("Länge Spur %d", "Length track %d"), track + 1); snprintf(v, vn, "%d Steps", P.len[track]); break;
+    case SI_LENALL: snprintf(l, ln, TR("Länge alle Spuren", "Length all tracks")); snprintf(v, vn, "%d Steps", P.len[track]); break;
+    case SI_SPEED: snprintf(l, ln, TR("Tempo-Faktor Spur %d", "Tempo factor track %d"), track + 1); snprintf(v, vn, "%s", SPEED_NAMES[P.speed[track] % 7]); break;
+    case SI_FILL: snprintf(l, ln, TR("FILL-Modus (SELECT+L1)", "FILL mode")); snprintf(v, vn, "%s", eng.fill ? TR("AN", "ON") : TR("AUS", "OFF")); break;
     case SI_BPM: snprintf(l, ln, "Tempo"); snprintf(v, vn, "%d BPM", eng.proj.bpm); break;
     case SI_SWING: snprintf(l, ln, "Swing"); snprintf(v, vn, "%d%%", 50 + eng.proj.mst[MS_SWNG]); break;
-    case SI_SCALE: snprintf(l, ln, "Tonskala");
+    case SI_SCALE: snprintf(l, ln, TR("Tonskala", "Scale"));
         if (curScale()) snprintf(v, vn, "%s", SCALE_LONG[scaleType(curScale()) - 1]);
-        else snprintf(v, vn, "AUS (chromatisch)");
+        else snprintf(v, vn, TR("AUS (chromatisch)", "OFF (chromatic)"));
         break;
-    case SI_ROOT: snprintf(l, ln, "Grundton"); snprintf(v, vn, "%s", NOTE_NAMES[eng.proj.mst[MS_ROOT] % 12]); break;
-    case SI_COPY: snprintf(l, ln, "Pattern kopieren"); break;
-    case SI_MUTATE: { static const char* const AM[3] = {"LEICHT", "MITTEL", "STARK"};
-        snprintf(l, ln, "Pattern mutieren (A = los)"); snprintf(v, vn, "%s", AM[mutAmt % 3]); } break;
-    case SI_PASTE: snprintf(l, ln, "Pattern einfügen"); snprintf(v, vn, "%s", haveClip ? "" : "(leer)"); break;
-    case SI_CLEAR: snprintf(l, ln, "Pattern leeren"); break;
-    case SI_CLRTRK: snprintf(l, ln, "Spur %d leeren", track + 1); break;
-    case SI_TMPL: snprintf(l, ln, "Rhythmus-Vorlage für Spur %d", track + 1); snprintf(v, vn, "< %s >", RHY_NAMES[tmplSel]); break;
-    case SI_UNDO: snprintf(l, ln, "Rückgängig (SELECT + B)"); snprintf(v, vn, "%d Schritte", undoCnt); break;
-    case SI_DEMO: snprintf(l, ln, "Demo-Song 'Neon Nights' laden"); snprintf(v, vn, ">>"); break;
-    case SI_REDO: snprintf(l, ln, "Wiederholen"); snprintf(v, vn, "%s", redoPat >= 0 ? ">>" : "(nichts)"); break;
+    case SI_ROOT: snprintf(l, ln, TR("Grundton", "Root note")); snprintf(v, vn, "%s", NOTE_NAMES[eng.proj.mst[MS_ROOT] % 12]); break;
+    case SI_COPY: snprintf(l, ln, TR("Pattern kopieren", "Copy pattern")); break;
+    case SI_MUTATE: { const char* const AM[3] = {TR("LEICHT", "LIGHT"), TR("MITTEL", "MEDIUM"), TR("STARK", "STRONG")};
+        snprintf(l, ln, TR("Pattern mutieren (A = los)", "Mutate pattern (A = go)")); snprintf(v, vn, "%s", AM[mutAmt % 3]); } break;
+    case SI_PASTE: snprintf(l, ln, TR("Pattern einfügen", "Paste pattern")); snprintf(v, vn, "%s", haveClip ? "" : TR("(leer)", "(empty)")); break;
+    case SI_CLEAR: snprintf(l, ln, TR("Pattern leeren", "Clear pattern")); break;
+    case SI_CLRTRK: snprintf(l, ln, TR("Spur %d leeren", "Clear track %d"), track + 1); break;
+    case SI_TMPL: snprintf(l, ln, TR("Rhythmus-Vorlage für Spur %d", "Rhythm template for track %d"), track + 1); snprintf(v, vn, "< %s >", RHY_NAMES[tmplSel]); break;
+    case SI_UNDO: snprintf(l, ln, TR("Rückgängig (SELECT + B)", "Undo (SELECT + B)")); snprintf(v, vn, TR("%d Schritte", "%d steps"), undoCnt); break;
+    case SI_DEMO: snprintf(l, ln, TR("Demo-Song 'Neon Nights' laden", "Load demo song 'Neon Nights'")); snprintf(v, vn, ">>"); break;
+    case SI_REDO: snprintf(l, ln, TR("Wiederholen", "Redo")); snprintf(v, vn, "%s", redoPat >= 0 ? ">>" : TR("(nichts)", "(nothing)")); break;
     case SI_H_AUDIO: snprintf(l, ln, "AUDIO"); break;
-    case SI_OUT: snprintf(l, ln, "Ausgang"); { int d = devIndex(); snprintf(v, vn, "%.26s", d ? devNames[d - 1] : "Standard (intern)"); } break;
-    case SI_BUF: snprintf(l, ln, "Puffer");
-        if (bufOverride) snprintf(v, vn, "%d (Startoption)", bufOverride);
+    case SI_OUT: snprintf(l, ln, TR("Ausgang", "Output")); { int d = devIndex(); snprintf(v, vn, "%.26s", d ? devNames[d - 1] : TR("Standard (intern)", "Default (internal)")); } break;
+    case SI_BUF: snprintf(l, ln, TR("Puffer", "Buffer"));
+        if (bufOverride) snprintf(v, vn, TR("%d (Startoption)", "%d (start option)"), bufOverride);
         else snprintf(v, vn, "%d  (%.1f ms)", BUF_SIZES[cfg.buf], BUF_SIZES[cfg.buf] * 1000.f / eng.sr);
         break;
-    case SI_VOL: snprintf(l, ln, "Lautstärke"); snprintf(v, vn, "%d", eng.proj.mst[MS_VOL]); break;
-    case SI_CORES: snprintf(l, ln, "Audio-Rechenkerne"); snprintf(v, vn, "%s", eng.audioThreads > 1 ? "2 (schneller)" : (cfg.cores > 1 ? "1 (nur ein Kern verfügbar)" : "1")); break;
+    case SI_VOL: snprintf(l, ln, TR("Lautstärke", "Volume")); snprintf(v, vn, "%d", eng.proj.mst[MS_VOL]); break;
+    case SI_CORES: snprintf(l, ln, TR("Audio-Rechenkerne", "Audio CPU cores")); snprintf(v, vn, "%s", eng.audioThreads > 1 ? TR("2 (schneller)", "2 (faster)") : (cfg.cores > 1 ? TR("1 (nur ein Kern verfügbar)", "1 (only one core available)") : "1")); break;
     case SI_H_MIDI: snprintf(l, ln, "MIDI"); break;
-    case SI_MIN: snprintf(l, ln, "MIDI-Eingang"); snprintf(v, vn, "%s", cfg.midiIn ? "AN" : "AUS"); break;
-    case SI_NOUT: snprintf(l, ln, "Noten ausgeben"); snprintf(v, vn, "%s", cfg.notesOut ? "AN (Spur = Kanal)" : "AUS"); break;
-    case SI_CLK: snprintf(l, ln, "Clock"); snprintf(v, vn, "%s", cfg.clk == 1 ? "SENDEN" : (cfg.clk == 2 ? "EMPFANGEN" : "AUS")); break;
-    case SI_MCH: snprintf(l, ln, "Eingangskanäle"); snprintf(v, vn, "%s", cfg.chm ? "Kanal 1-8 = Spur 1-8" : "AUTO (gewählte Spur)"); break;
+    case SI_MIN: snprintf(l, ln, TR("MIDI-Eingang", "MIDI input")); snprintf(v, vn, "%s", cfg.midiIn ? TR("AN", "ON") : TR("AUS", "OFF")); break;
+    case SI_NOUT: snprintf(l, ln, TR("Noten ausgeben", "Send notes")); snprintf(v, vn, "%s", cfg.notesOut ? TR("AN (Spur = Kanal)", "ON (track = channel)") : TR("AUS", "OFF")); break;
+    case SI_CLK: snprintf(l, ln, "Clock"); snprintf(v, vn, "%s", cfg.clk == 1 ? TR("SENDEN", "SEND") : (cfg.clk == 2 ? TR("EMPFANGEN", "RECEIVE") : TR("AUS", "OFF"))); break;
+    case SI_MCH: snprintf(l, ln, TR("Eingangskanäle", "Input channels")); snprintf(v, vn, "%s", cfg.chm ? TR("Kanal 1-8 = Spur 1-8", "Channel 1-8 = track 1-8") : TR("AUTO (gewählte Spur)", "AUTO (selected track)")); break;
     case SI_H_USB: snprintf(l, ln, "USB"); break;
-    case SI_USB: snprintf(l, ln, "USB-Modus");
-        snprintf(v, vn, "%s", usbMode == 0 ? "HOST (Geräte am R36S)" : (usbMode == 1 ? "PC (Netz-MIDI, SSH)" : "PC + AUDIO"));
+    case SI_USB: snprintf(l, ln, TR("USB-Modus", "USB mode"));
+        snprintf(v, vn, "%s", usbMode == 0 ? TR("HOST (Geräte am R36S)", "HOST (devices on R36S)") : (usbMode == 1 ? TR("PC (Netz-MIDI, SSH)", "PC (network MIDI, SSH)") : "PC + AUDIO"));
         break;
-    case SI_USBAUDIO: snprintf(l, ln, "Audio an PC (USB)");
-        if (!cfg.usbAudio) snprintf(v, vn, "AUS");
-        else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
-        else snprintf(v, vn, usbAudioStatus() == 2 ? "AN - PC LIEST MIT" : (usbAudioActive() ? "AN - WARTET AUF PC" : "AN - SUCHE GERÄT"));
+    case SI_USBAUDIO: snprintf(l, ln, TR("Audio an PC (USB)", "Audio to PC (USB)"));
+        if (!cfg.usbAudio) snprintf(v, vn, TR("AUS", "OFF"));
+        else if (usbMode != 2) snprintf(v, vn, TR("AN (erst PC MIDI+Audio)", "ON (needs PC MIDI+audio)"));
+        else snprintf(v, vn, usbAudioStatus() == 2 ? TR("AN - PC LIEST MIT", "ON - PC IS LISTENING") : (usbAudioActive() ? TR("AN - WARTET AUF PC", "ON - WAITING FOR PC") : TR("AN - SUCHE GERÄT", "ON - SEARCHING DEVICE")));
         break;
-    case SI_USBVOL: snprintf(l, ln, "USB-Lautstärke"); snprintf(v, vn, "%d%%", cfg.usbVol); break;
-    case SI_INTUSB: snprintf(l, ln, "Intern bei USB-Audio"); snprintf(v, vn, "%s", cfg.intUsb ? (intMuted ? "STUMM (AKTIV)" : "STUMM") : "AN"); break;
-    case SI_USBTONE: snprintf(l, ln, "Testton an PC (5 s, 1 kHz)"); if (!usbAudioActive()) snprintf(v, vn, "erst Audio an PC"); break;
-    case SI_PCIN: snprintf(l, ln, "PC-Ton über R36S");
-        if (!cfg.pcIn) snprintf(v, vn, "AUS");
-        else if (usbMode != 2) snprintf(v, vn, "AN (erst PC MIDI+Audio)");
-        else snprintf(v, vn, pcInStatus() == 2 ? "AN - PC SPIELT" : "AN - STILL");
+    case SI_USBVOL: snprintf(l, ln, TR("USB-Lautstärke", "USB volume")); snprintf(v, vn, "%d%%", cfg.usbVol); break;
+    case SI_INTUSB: snprintf(l, ln, TR("Intern bei USB-Audio", "Internal with USB audio")); snprintf(v, vn, "%s", cfg.intUsb ? (intMuted ? TR("STUMM (AKTIV)", "MUTED (ACTIVE)") : TR("STUMM", "MUTED")) : "AN"); break;
+    case SI_USBTONE: snprintf(l, ln, TR("Testton an PC (5 s, 1 kHz)", "Test tone to PC (5 s, 1 kHz)")); if (!usbAudioActive()) snprintf(v, vn, TR("erst Audio an PC", "needs audio to PC")); break;
+    case SI_PCIN: snprintf(l, ln, TR("PC-Ton über R36S", "PC audio through R36S"));
+        if (!cfg.pcIn) snprintf(v, vn, TR("AUS", "OFF"));
+        else if (usbMode != 2) snprintf(v, vn, TR("AN (erst PC MIDI+Audio)", "ON (needs PC MIDI+audio)"));
+        else snprintf(v, vn, pcInStatus() == 2 ? TR("AN - PC SPIELT", "ON - PC PLAYING") : TR("AN - STILL", "ON - SILENT"));
         break;
-    case SI_PCREC: snprintf(l, ln, "PC-Ton als Sample aufnehmen");
-        if (pcRecState() == 1) snprintf(v, vn, "WARTET AUF TON (A = ABBRECHEN)");
-        else if (pcRecState() == 2) snprintf(v, vn, "AUFNAHME %.1f s (A = STOP)", pcRecSeconds());
-        else if (usbMode != 2) snprintf(v, vn, "erst PC MIDI+Audio");
+    case SI_PCREC: snprintf(l, ln, TR("PC-Ton als Sample aufnehmen", "Record PC audio as sample"));
+        if (pcRecState() == 1) snprintf(v, vn, TR("WARTET AUF TON (A = ABBRECHEN)", "WAITING FOR SOUND (A = CANCEL)"));
+        else if (pcRecState() == 2) snprintf(v, vn, TR("AUFNAHME %.1f s (A = STOP)", "RECORDING %.1f s (A = STOP)"), pcRecSeconds());
+        else if (usbMode != 2) snprintf(v, vn, TR("erst PC MIDI+Audio", "needs PC MIDI+audio"));
         break;
-    case SI_IP: snprintf(l, ln, "Adresse"); snprintf(v, vn, "%s", usbMode && netIp[0] ? netIp : "-"); break;
-    case SI_WEB: snprintf(l, ln, "Samples per Browser");
+    case SI_IP: snprintf(l, ln, TR("Adresse", "Address")); snprintf(v, vn, "%s", usbMode && netIp[0] ? netIp : "-"); break;
+    case SI_WEB: snprintf(l, ln, TR("Samples per Browser", "Samples via browser"));
         if (!webPort()) snprintf(v, vn, "-");
         else if (usbMode && netIp[0]) snprintf(v, vn, webPort() == 80 ? "http://%s" : "http://%s:%d", netIp, webPort());
-        else snprintf(v, vn, "erst PC-Modus an");
+        else snprintf(v, vn, TR("erst PC-Modus an", "needs PC mode"));
         break;
     case SI_H_SYS: snprintf(l, ln, "SYSTEM"); break;
-    case SI_DISP: snprintf(l, ln, "Bild-Versatz (Lage + Farben)");
+    case SI_DISP: snprintf(l, ln, TR("Bild-Versatz (Lage + Farben)", "Display offset (position + colours)"));
         if (drmOutActive()) snprintf(v, vn, "%d Px (%d)", cfg.dispOff / 3, cfg.dispOff);
-        else snprintf(v, vn, "nur Groovebox-OS");
+        else snprintf(v, vn, TR("nur Groovebox-OS", "Groovebox OS only"));
         break;
-    case SI_LEARN: snprintf(l, ln, "Tasten neu lernen"); break;
-    case SI_BENCH: snprintf(l, ln, "Leistungstest (ca. 30 s)"); snprintf(v, vn, "A = START"); break;
+    case SI_LEARN: snprintf(l, ln, TR("Tasten neu lernen", "Learn buttons again")); break;
+    case SI_LANG: snprintf(l, ln, "Sprache / Language"); snprintf(v, vn, "%s", g_lang ? "English" : "Deutsch"); break;
+    case SI_BENCH: snprintf(l, ln, TR("Leistungstest (ca. 30 s)", "Benchmark (approx. 30 s)")); snprintf(v, vn, TR("A = START", "A = GO")); break;
     case SI_INFO: snprintf(l, ln, "Info");
-        snprintf(v, vn, "%.12s  %d Smp  Aussetzer %d", versionStr[0] ? versionStr : "dev", sampleCount(), audLateTotal + audLate);
+        snprintf(v, vn, TR("%.12s  %d Smp  Aussetzer %d", "%.12s  %d smp  dropouts %d"), versionStr[0] ? versionStr : "dev", sampleCount(), audLateTotal + audLate);
         break;
-    case SI_QUIT: snprintf(l, ln, "Groovebox beenden"); break;
-    case SI_DRIVE: snprintf(l, ln, "USB-Laufwerk (Samples vom PC)"); if (!isGrooveboxOS()) snprintf(v, vn, "nur Groovebox-OS"); break;
+    case SI_QUIT: snprintf(l, ln, TR("Groovebox beenden", "Quit groovebox")); break;
+    case SI_DRIVE: snprintf(l, ln, TR("USB-Laufwerk (Samples vom PC)", "USB drive (samples from PC)")); if (!isGrooveboxOS()) snprintf(v, vn, TR("nur Groovebox-OS", "Groovebox OS only")); break;
     }
 }
 
 static void setChange(int i, int d) {
     Pattern& P = curP();
     switch (i) {
+    case SI_LANG: g_lang = cfg.lang = cfg.lang ? 0 : 1; saveSettings(); break;
     case SI_TMPL: tmplSel = ((tmplSel + d) % RHY_N + RHY_N) % RHY_N; break;
     case SI_PATTERN: {
         int to = (eng.curPat + d + NPATTERNS) % NPATTERNS;
@@ -3111,8 +3118,8 @@ static void mutatePattern() {
         }
     }
     unlockA();
-    static const char* const AM[3] = {"LEICHT", "MITTEL", "STARK"};
-    toast("PATTERN %02d MUTIERT (%s)", eng.curPat + 1, AM[mutAmt % 3]);
+    const char* const AM[3] = {TR("LEICHT", "LIGHT"), TR("MITTEL", "MEDIUM"), TR("STARK", "STRONG")};
+    toast(TR("PATTERN %02d MUTIERT (%s)", "PATTERN %02d MUTATED (%s)"), eng.curPat + 1, AM[mutAmt % 3]);
 }
 
 static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0; }
@@ -3124,7 +3131,7 @@ static bool usbScript(const char* args, char* okMsg, int n) {
     int rc = system(cmd);
     snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
     bool ok = false;
-    snprintf(okMsg, n, rc == 0 ? "FERTIG" : "FEHLER (PC-MODUS.LOG)");
+    snprintf(okMsg, n, rc == 0 ? TR("FERTIG", "DONE") : TR("FEHLER (PC-MODUS.LOG)", "ERROR (PC-MODUS.LOG)"));
     FILE* f = fopen(lp, "r");
     if (f) {
         while (fgets(line, sizeof line, f)) {
@@ -3142,9 +3149,9 @@ static char driveSavedDev[128] = "";
 static bool isUsbAudioDev(const char* n) { return strcasestr(n, "uac") || strcasestr(n, "gadget"); }
 static void startDrive() {
     if (selfTesting) return;
-    if (!isGrooveboxOS()) { toast("NUR IM GROOVEBOX-OS"); return; }
+    if (!isGrooveboxOS()) { toast(TR("NUR IM GROOVEBOX-OS", "ONLY ON GROOVEBOX OS")); return; }
     saveProject();
-    toast("USB-LAUFWERK WIRD VERBUNDEN ...");
+    toast(TR("USB-LAUFWERK WIRD VERBUNDEN ...", "CONNECTING USB DRIVE ..."));
     drawAll(false); present();
     char m[200];
     driveSavedDev[0] = 0;
@@ -3160,7 +3167,7 @@ static void startDrive() {
 }
 static void stopDrive() {
     char m[200];
-    toast("LAUFWERK WIRD GETRENNT ...");
+    toast(TR("LAUFWERK WIRD GETRENNT ...", "DISCONNECTING DRIVE ..."));
     drawAll(false); present();
     usbScript("laufwerk-aus nosleep", m, sizeof m);
     driveOn = false; usbMode = 2;
@@ -3173,52 +3180,52 @@ static void stopDrive() {
         DIR* d = opendir(ud); struct dirent* e; bool upd = false;
         while (d && (e = readdir(d))) { size_t l = strlen(e->d_name); if (l > 4 && !strcmp(e->d_name + l - 4, ".tgz")) upd = true; }
         if (d) closedir(d);
-        if (upd) { toast("UPDATE GEFUNDEN - NEUSTART ..."); msgUntil = SDL_GetTicks() + 5000; quitReq = true; }
+        if (upd) { toast(TR("UPDATE GEFUNDEN - NEUSTART ...", "UPDATE FOUND - RESTARTING ...")); msgUntil = SDL_GetTicks() + 5000; quitReq = true; }
     }
     reloadSamples();
-    toast("%d SAMPLES GELADEN", sampleCount());
+    toast(TR("%d SAMPLES GELADEN", "%d SAMPLES LOADED"), sampleCount());
 }
 static void drawDrive() {
     rrect(60, 120, 520, 220, 16, C_ACC);
     rrect(62, 122, 516, 216, 15, C_BG, 250);
-    textC(320, 142, "USB-LAUFWERK AKTIV", C_ACC);
-    textC(320, 182, "Am PC erscheint das Laufwerk GROOVEBOX.", C_TEXT);
-    textC(320, 204, "Samples in den Ordner samples/ kopieren,", C_TEXT);
-    textC(320, 226, "dann das Laufwerk am PC AUSWERFEN.", C_TEXT);
-    rrect(200, 270, 240, 36, 9, C_GREEN); textC(320, 280, "A = FERTIG, ZURÜCK", C_BG);
+    textC(320, 142, TR("USB-LAUFWERK AKTIV", "USB DRIVE ACTIVE"), C_ACC);
+    textC(320, 182, TR("Am PC erscheint das Laufwerk GROOVEBOX.", "The drive GROOVEBOX appears on the PC."), C_TEXT);
+    textC(320, 204, TR("Samples in den Ordner samples/ kopieren,", "Copy samples into the folder samples/,"), C_TEXT);
+    textC(320, 226, TR("dann das Laufwerk am PC AUSWERFEN.", "then EJECT the drive on the PC."), C_TEXT);
+    rrect(200, 270, 240, 36, 9, C_GREEN); textC(320, 280, TR("A = FERTIG, ZURÜCK", "A = DONE, BACK"), C_BG);
 }
 
 static void setAction(int i) {
     switch (i) {
-    case SI_COPY: clip = curP(); haveClip = true; toast("PATTERN %02d KOPIERT", eng.curPat + 1); break;
+    case SI_COPY: clip = curP(); haveClip = true; toast(TR("PATTERN %02d KOPIERT", "PATTERN %02d COPIED"), eng.curPat + 1); break;
     case SI_PASTE:
-        if (haveClip) askConfirm(ACT_PASTE, 0, "PATTERN %02d MIT KOPIE ÜBERSCHREIBEN?", eng.curPat + 1);
-        else toast("ZWISCHENABLAGE LEER");
+        if (haveClip) askConfirm(ACT_PASTE, 0, TR("PATTERN %02d MIT KOPIE ÜBERSCHREIBEN?", "OVERWRITE PATTERN %02d WITH COPY?"), eng.curPat + 1);
+        else toast(TR("ZWISCHENABLAGE LEER", "CLIPBOARD EMPTY"));
         break;
-    case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, "ALLE STEPS VON PATTERN %02d LÖSCHEN?", eng.curPat + 1); break;
-    case SI_CLRTRK: askConfirm(ACT_CLEARTRK, track, "ALLE STEPS VON SPUR %d LÖSCHEN?", track + 1); break;
+    case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, TR("ALLE STEPS VON PATTERN %02d LÖSCHEN?", "CLEAR ALL STEPS OF PATTERN %02d?"), eng.curPat + 1); break;
+    case SI_CLRTRK: askConfirm(ACT_CLEARTRK, track, TR("ALLE STEPS VON SPUR %d LÖSCHEN?", "CLEAR ALL STEPS OF TRACK %d?"), track + 1); break;
     case SI_TMPL: applyRhythm(tmplSel); break;
     case SI_UNDO: undoStep(); break;
     case SI_REDO: redoStep(); break;
-    case SI_DEMO: askConfirm(ACT_DEMO, 0, "DEMO-SONG IN EINEM FREIEN PLATZ ANLEGEN?"); break;
+    case SI_DEMO: askConfirm(ACT_DEMO, 0, TR("DEMO-SONG IN EINEM FREIEN PLATZ ANLEGEN?", "CREATE DEMO SONG IN A FREE SLOT?")); break;
     case SI_LEARN: runLearn(); break;
     case SI_BENCH: {   // Messung auf dem Geraet, Bericht in logs/bench.txt (Browser: Logs)
         char bp[700];
         if (isGrooveboxOS()) { mkdir("/data/logs", 0755); snprintf(bp, sizeof bp, "/data/logs/bench.txt"); }
         else snprintf(bp, sizeof bp, "%sbench.txt", basePath);
-        clearScreen(C_BG); textC(320, 220, "LEISTUNGSTEST LÄUFT ...", C_ACC, 2); present();
+        clearScreen(C_BG); textC(320, 220, TR("LEISTUNGSTEST LÄUFT ...", "BENCHMARK RUNNING ..."), C_ACC, 2); present();
         runBench(bp, true);
-        toast("LEISTUNGSTEST FERTIG: LOGS/BENCH.TXT");
+        toast(TR("LEISTUNGSTEST FERTIG: LOGS/BENCH.TXT", "BENCHMARK DONE: LOGS/BENCH.TXT"));
     } break;
     case SI_MUTATE: mutatePattern(); break;
     case SI_DRIVE: startDrive(); break;
     case SI_PCREC:
-        if (pcRecState() == 1 || pcRecState() == 2) { pcRecStop(); toast(pcRecState() ? "AUFNAHME BEENDET" : "ABGEBROCHEN"); }
-        else if (usbMode != 2) toast("ERST USB = PC (MIDI + AUDIO)");
-        else if (pcRecStart()) toast("AM PC ABSPIELEN - AUFNAHME STARTET MIT DEM TON");
+        if (pcRecState() == 1 || pcRecState() == 2) { pcRecStop(); toast(pcRecState() ? TR("AUFNAHME BEENDET", "RECORDING FINISHED") : TR("ABGEBROCHEN", "CANCELLED")); }
+        else if (usbMode != 2) toast(TR("ERST USB = PC (MIDI + AUDIO)", "SET USB = PC (MIDI + AUDIO) FIRST"));
+        else if (pcRecStart()) toast(TR("AM PC ABSPIELEN - AUFNAHME STARTET MIT DEM TON", "PLAY ON THE PC - RECORDING STARTS WITH THE SOUND"));
         break;
-    case SI_USBTONE: if (usbAudioActive()) { usbAudioTestTone(5000); toast("TESTTON 5 S AN DEN PC"); } else toast("ERST USB = PC (MIDI + AUDIO)"); break;
-    case SI_QUIT: askConfirm(ACT_QUIT, 0, "GROOVEBOX BEENDEN? (PROJEKT WIRD GESPEICHERT)"); break;
+    case SI_USBTONE: if (usbAudioActive()) { usbAudioTestTone(5000); toast(TR("TESTTON 5 S AN DEN PC", "TEST TONE 5 S TO PC")); } else toast(TR("ERST USB = PC (MIDI + AUDIO)", "SET USB = PC (MIDI + AUDIO) FIRST")); break;
+    case SI_QUIT: askConfirm(ACT_QUIT, 0, TR("GROOVEBOX BEENDEN? (PROJEKT WIRD GESPEICHERT)", "QUIT GROOVEBOX? (PROJECT WILL BE SAVED)")); break;
     default: setChange(i, 1); break;   // Umschalter: A schaltet weiter
     }
 }
@@ -3252,17 +3259,17 @@ static void drawSong() {
     rrect(4, 46, 632, 398, 10, C_PANEL);
     char b[64];
     text(18, 54, "SONG", C_ACC, 2);
-    snprintf(b, sizeof b, "%d EINTRÄGE", J.songLen);
+    snprintf(b, sizeof b, TR("%d EINTRÄGE", "%d ENTRIES"), J.songLen);
     text(100, 62, b, C_DIM);
     bool on = eng.songOn;
     rrect(440, 54, 186, 28, 8, on ? C_ACC : C_OFF2);
-    textC(533, 60, on ? "SONG-MODUS AN" : "SONG-MODUS AUS", on ? C_BG : C_TEXT);
+    textC(533, 60, on ? TR("SONG-MODUS AN", "SONG MODE ON") : TR("SONG-MODUS AUS", "SONG MODE OFF"), on ? C_BG : C_TEXT);
     const int rowH = 30, top = 94, visible = 10;
     if (songSel >= J.songLen) songSel = J.songLen > 0 ? J.songLen - 1 : 0;
     float target = songSel - visible / 2.f; if (target < 0) target = 0;
     if (target > J.songLen - visible) target = J.songLen > visible ? J.songLen - visible : 0;
     songScroll += (target - songScroll) * (1.f - expf(-animDt * 14.f));
-    if (J.songLen == 0) { textC(320, 200, "NOCH LEER - A FÜGT DAS AKTUELLE PATTERN EIN", C_DIM); }
+    if (J.songLen == 0) { textC(320, 200, TR("NOCH LEER - A FÜGT DAS AKTUELLE PATTERN EIN", "STILL EMPTY - A INSERTS THE CURRENT PATTERN"), C_DIM); }
     for (int i = 0; i < J.songLen; i++) {
         float yf = top + (i - songScroll) * rowH;
         if (yf < top - 4 || yf > top + (visible - 1) * rowH + 4) continue;
@@ -3281,7 +3288,7 @@ static void drawSong() {
         }
         if (play) text(600 - textW(">>"), y + 6, ">>", C_PLAY);
     }
-    hint(6, 452, "[^v]EINTRAG [</>]PATTERN [X/Y]WDH [A]NEU [B]LÖSCHEN [R1]SONG AN/AUS [START]AB HIER", C_ACC, C_DIM);
+    hint(6, 452, TR("[^v]EINTRAG [</>]PATTERN [X/Y]WDH [A]NEU [B]LÖSCHEN [R1]SONG AN/AUS [START]AB HIER", "[^v]ENTRY [</>]PATTERN [X/Y]REPEAT [A]NEW [B]DELETE [R1]SONG ON/OFF [START]FROM HERE"), C_ACC, C_DIM);
 }
 
 static void songInput(Input& I, Uint32 now) {
@@ -3296,7 +3303,7 @@ static void songInput(Input& I, Uint32 now) {
     int dr = (I.repeat(BT_X, now) ? 1 : 0) - (I.repeat(BT_Y, now) ? 1 : 0);
     if (dr && J.songLen) { lockA(); J.song[songSel].rep = (uint8_t)clampi((J.song[songSel].rep < 1 ? 1 : J.song[songSel].rep) + dr, 1, 16); unlockA(); }
     if (I.pressed(BT_A)) {
-        if (J.songLen >= SONG_MAX) toast("SONG VOLL (%d)", SONG_MAX);
+        if (J.songLen >= SONG_MAX) toast(TR("SONG VOLL (%d)", "SONG FULL (%d)"), SONG_MAX);
         else {
             lockA();
             int at = J.songLen ? songSel + 1 : 0;
@@ -3318,8 +3325,8 @@ static void songInput(Input& I, Uint32 now) {
         if (songSel >= J.songLen && songSel > 0) songSel--;
     }
     if (I.pressed(BT_R1)) {
-        if (!J.songLen) toast("ERST EINTRÄGE ANLEGEN (A)");
-        else { lockA(); if (eng.songOn) eng.songOn = false; else eng.songStart(songSel); unlockA(); toast(eng.songOn ? "SONG-MODUS AN" : "SONG-MODUS AUS"); }
+        if (!J.songLen) toast(TR("ERST EINTRÄGE ANLEGEN (A)", "ADD ENTRIES FIRST (A)"));
+        else { lockA(); if (eng.songOn) eng.songOn = false; else eng.songStart(songSel); unlockA(); toast(eng.songOn ? TR("SONG-MODUS AN", "SONG MODE ON") : TR("SONG-MODUS AUS", "SONG MODE OFF")); }
     }
     if (I.pressed(BT_START)) {
         lockA();
@@ -3361,7 +3368,7 @@ static void drawSettings() {
             if (sel) { text(604 - textW(v) - 16, y + 4, "<", C_DIM); text(608, y + 4, ">", C_DIM); }
         }
     }
-    hint(6, 452, "[^/v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [B]ZURÜCK [SEL]MENÜ", C_ACC, C_DIM);
+    hint(6, 452, TR("[^/v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [B]ZURÜCK [SEL]MENÜ", "[^/v]SELECT [</>]CHANGE [A]RUN [B]BACK [SEL]MENU"), C_ACC, C_DIM);
 }
 
 // (frueher) Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
@@ -3402,21 +3409,21 @@ static void menuInput(Input& I, Uint32 now) {
         for (int i = 0; i < 8; i++) pageClip[i] = P.p[track][st * 8 + i];
         pageClipStore = st; pageClipMachine = P.machine[track]; pageClipTrack = track;
         pageClipLen = P.len[track]; pageClipSpeed = P.speed[track];
-        toast("SEITE %s VON T%d KOPIERT", PAGE_NAMES[menuSel], track + 1);
+        toast(TR("SEITE %s VON T%d KOPIERT", "PAGE %s OF T%d COPIED"), PAGE_NAMES[menuSel], track + 1);
     }
     if (I.pressed(BT_Y) && PG_STORE[menuSel] >= 0) {   // auf der aktuellen Spur einfuegen
         int st = PG_STORE[menuSel];
         bool srcPage = menuSel == PG_SRC || menuSel == PG_SRC2;
-        if (pageClipStore < 0) toast("SEITEN-ABLAGE LEER (X = KOPIEREN)");
-        else if (pageClipStore != st) toast("ABLAGE IST EINE ANDERE SEITE");
-        else if (srcPage && pageClipMachine != curP().machine[track]) toast("ANDERE ENGINE (%s) - NICHT EINGEFÜGT", MACHINE_NAMES[pageClipMachine % M_COUNT]);
+        if (pageClipStore < 0) toast(TR("SEITEN-ABLAGE LEER (X = KOPIEREN)", "PAGE CLIPBOARD EMPTY (X = COPY)"));
+        else if (pageClipStore != st) toast(TR("ABLAGE IST EINE ANDERE SEITE", "CLIPBOARD HOLDS ANOTHER PAGE"));
+        else if (srcPage && pageClipMachine != curP().machine[track]) toast(TR("ANDERE ENGINE (%s) - NICHT EINGEFÜGT", "OTHER ENGINE (%s) - NOT PASTED"), MACHINE_NAMES[pageClipMachine % M_COUNT]);
         else {
             lockA();
             Pattern& P = curP();
             for (int i = 0; i < 8; i++) P.p[track][st * 8 + i] = pageClip[i];
             if (menuSel == PG_SEQ) { P.len[track] = (uint8_t)pageClipLen; P.speed[track] = (uint8_t)pageClipSpeed; }
             unlockA();
-            toast("SEITE %s EINGEFÜGT (T%d -> T%d)", PAGE_NAMES[menuSel], pageClipTrack + 1, track + 1);
+            toast(TR("SEITE %s EINGEFÜGT (T%d -> T%d)", "PAGE %s PASTED (T%d -> T%d)"), PAGE_NAMES[menuSel], pageClipTrack + 1, track + 1);
         }
     }
     if (I.pressed(BT_A) || I.pressed(BT_START)) { page = menuSel; menuOpen = false; }
@@ -3446,7 +3453,7 @@ static void handleInput(Uint32 now, float dt) {
     Input& I = in;
     if (confirmOpen) {
         if (I.pressed(BT_A)) { confirmOpen = false; runAction(confirmAct, confirmArg); }
-        else if (I.pressed(BT_B) || I.pressed(BT_SELECT)) { confirmOpen = false; toast("ABGEBROCHEN"); }
+        else if (I.pressed(BT_B) || I.pressed(BT_SELECT)) { confirmOpen = false; toast(TR("ABGEBROCHEN", "CANCELLED")); }
         return;
     }
     if (kbOpen) { kbInput(I, now); return; }
@@ -3481,7 +3488,7 @@ static void handleInput(Uint32 now, float dt) {
         if (I.pressed(BT_UP)) {
             funcUsed = true;
             eng.recording = !eng.recording;
-            toast(eng.recording ? "AUFNAHME AN" : "AUFNAHME AUS");
+            toast(eng.recording ? TR("AUFNAHME AN", "RECORD ON") : TR("AUFNAHME AUS", "RECORD OFF"));
         }
         if (I.pressed(BT_DOWN)) {   // Tap-Tempo
             funcUsed = true;
@@ -3499,8 +3506,8 @@ static void handleInput(Uint32 now, float dt) {
             funcUsed = true;
             Step& hs = holdS();
             hs.on = hs.on == 2 ? 1 : 2; aEdited = true;
-            toast(hs.on == 2 ? "STEP %d: TRIGLESS (NUR LOCKS)" : "STEP %d: TRIG", holdStep + 1);
-        } else if (I.pressed(BT_A)) { funcUsed = true; eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
+            toast(hs.on == 2 ? TR("STEP %d: TRIGLESS (NUR LOCKS)", "STEP %d: TRIGLESS (LOCKS ONLY)") : "STEP %d: TRIG", holdStep + 1);
+        } else if (I.pressed(BT_A)) { funcUsed = true; eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? TR("SPUR %d STUMM", "TRACK %d MUTED") : TR("SPUR %d AN", "TRACK %d ON"), track + 1); }
         if (I.pressed(BT_B)) { funcUsed = true; undoStep(); }
         if (I.pressed(BT_X) || I.pressed(BT_Y)) {
             funcUsed = true;
@@ -3517,12 +3524,12 @@ static void handleInput(Uint32 now, float dt) {
             funcUsed = true;
             Pattern& P = curP();
             P.len[track] = (uint8_t)clampi(P.len[track] + (I.down[BT_R2] ? 1 : -1), 1, NSTEPS);
-            toast("SPURLÄNGE %d", P.len[track]);
+            toast(TR("SPURLÄNGE %d", "TRACK LENGTH %d"), P.len[track]);
         }
         if (I.pressed(BT_START)) {
             funcUsed = true;
             bool ok = saveProject();
-            toast(ok ? "GESPEICHERT" : "SPEICHERN FEHLGESCHLAGEN");
+            toast(ok ? TR("GESPEICHERT", "SAVED") : TR("SPEICHERN FEHLGESCHLAGEN", "SAVING FAILED"));
         }
         if (I.down[BT_START] && I.heldMs(BT_START, now) > 2000) quitReq = true;
         // SELECT + rechter Stick hoch/runter = DJ-Filter
@@ -3559,9 +3566,9 @@ static void handleInput(Uint32 now, float dt) {
             Step& s = holdS();
             if (aPrevOn == 0 && !aEdited) { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
             lockLatch = false; aHeld = false;
-            toast("LOCK-MODUS AUS");
+            toast(TR("LOCK-MODUS AUS", "LOCK MODE OFF"));
         } else if (I.pressed(BT_A)) {
-            if (mixP) { eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? "SPUR %d STUMM" : "SPUR %d AN", track + 1); }
+            if (mixP) { eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? TR("SPUR %d STUMM", "TRACK %d MUTED") : TR("SPUR %d AN", "TRACK %d ON"), track + 1); }
             else if (prjAct) prjTrigger(slot);
             else {
                 holdPat = eng.curPat; holdTrack = track; holdStep = cursor;
@@ -3574,15 +3581,15 @@ static void handleInput(Uint32 now, float dt) {
         // A lange halten (ohne zu drehen) = Lock-Modus einrasten: Daumen frei fuer Stick und X/Y
         if (aHeld && !lockLatch && I.down[BT_A] && !aEdited && now - aDownAt > 450) {
             lockLatch = true;
-            toast("LOCK-MODUS STEP %d  (A = FERTIG)", holdStep + 1);
+            toast(TR("LOCK-MODUS STEP %d  (A = FERTIG)", "LOCK MODE STEP %d  (A = DONE)"), holdStep + 1);
         }
         if (I.pressed(BT_B)) {
             if (aHeld) {
                 Step& hs = holdS();
                 memset(hs.lock, NO_LOCK, NPARAMS); aEdited = true;
-                if (hs.on == 2) { hs.on = 0; toast("TRIGLESS LOCKS GELÖSCHT"); } else toast("LOCKS GELÖSCHT");
+                if (hs.on == 2) { hs.on = 0; toast(TR("TRIGLESS LOCKS GELÖSCHT", "TRIGLESS LOCKS CLEARED")); } else toast(TR("LOCKS GELÖSCHT", "LOCKS CLEARED"));
             }
-            else if (mixP) { eng.solo[track] = !eng.solo[track]; toast(eng.solo[track] ? "SPUR %d SOLO" : "SPUR %d SOLO AUS", track + 1); }
+            else if (mixP) { eng.solo[track] = !eng.solo[track]; toast(eng.solo[track] ? TR("SPUR %d SOLO", "TRACK %d SOLO") : TR("SPUR %d SOLO AUS", "TRACK %d SOLO OFF"), track + 1); }
             else { lockA(); eng.preview(track, &curP().s[track][cursor]); unlockA(); }
         }
         // Linker Stick: auf Regler zeigen (Mixer: hoch/runter = Zeile, links/rechts = Kanal)
@@ -3601,11 +3608,11 @@ static void handleInput(Uint32 now, float dt) {
             if (aPrevOn == 0) { hs.on = 0; memset(hs.lock, NO_LOCK, NPARAMS); }   // leerer Step: nicht anlegen
             else hs.on = (uint8_t)aPrevOn;
             trigClip = hs; haveTrigClip = true; aEdited = true;
-            toast(aPrevOn == 0 ? "LEEREN STEP KOPIERT" : (aPrevOn == 2 ? "TRIGLESS STEP KOPIERT" : "TRIG KOPIERT (MIT LOCKS)"));
+            toast(aPrevOn == 0 ? TR("LEEREN STEP KOPIERT", "EMPTY STEP COPIED") : (aPrevOn == 2 ? TR("TRIGLESS STEP KOPIERT", "TRIGLESS STEP COPIED") : TR("TRIG KOPIERT (MIT LOCKS)", "TRIG COPIED (WITH LOCKS)")));
         }
         if (aHeld && I.pressed(BT_R1)) {   // Trig einfuegen in den gehaltenen Step
-            if (!haveTrigClip) toast("TRIG-ABLAGE LEER (A HALTEN + L1)");
-            else { lockA(); holdS() = trigClip; unlockA(); aEdited = true; toast("TRIG EINGEFÜGT IN STEP %d", holdStep + 1); }
+            if (!haveTrigClip) toast(TR("TRIG-ABLAGE LEER (A HALTEN + L1)", "TRIG CLIPBOARD EMPTY (HOLD A + L1)"));
+            else { lockA(); holdS() = trigClip; unlockA(); aEdited = true; toast(TR("TRIG EINGEFÜGT IN STEP %d", "TRIG PASTED INTO STEP %d"), holdStep + 1); }
         }
         if (!aHeld) {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
@@ -3628,7 +3635,7 @@ static void handleInput(Uint32 now, float dt) {
             lockA();
             if (eng.playing) eng.stop(); else eng.start();
             unlockA();
-            if (!eng.playing && eng.clockMode == 2) toast("WARTE AUF MIDI-START");
+            if (!eng.playing && eng.clockMode == 2) toast(TR("WARTE AUF MIDI-START", "WAITING FOR MIDI START"));
         }
         if (prjAct) {
             if (I.pressed(BT_X)) prjTrigger(slot);
@@ -3655,7 +3662,7 @@ static void handleInput(Uint32 now, float dt) {
         Step& s = holdS();
         if (!aEdited) {
             if (aPrevOn == 1) {   // Trig antippen = Trig weg; Locks bleiben als trigless Step
-                if (stepHasLock(s)) { s.on = 2; toast("TRIG WEG - LOCKS BLEIBEN (TRIGLESS)"); }
+                if (stepHasLock(s)) { s.on = 2; toast(TR("TRIG WEG - LOCKS BLEIBEN (TRIGLESS)", "TRIG REMOVED - LOCKS KEPT (TRIGLESS)")); }
                 else { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
             } else if (aPrevOn == 2) { s.on = 1; toast("TRIGLESS -> TRIG"); }
         }
@@ -3681,11 +3688,11 @@ static bool runLearn() {
     if (selfTesting) return false;
     SDL_Joystick* j = in.joy;
     if (!j) { printf("Kein Gamepad gefunden - Lernmodus übersprungen\n"); return false; }
-    static const char* prompts[BT_COUNT + 4] = {
-        "STEUERKREUZ HOCH", "STEUERKREUZ RUNTER", "STEUERKREUZ LINKS", "STEUERKREUZ RECHTS",
+    const char* prompts[BT_COUNT + 4] = {
+        TR("STEUERKREUZ HOCH", "D-PAD UP"), TR("STEUERKREUZ RUNTER", "D-PAD DOWN"), TR("STEUERKREUZ LINKS", "D-PAD LEFT"), TR("STEUERKREUZ RECHTS", "D-PAD RIGHT"),
         "A", "B", "X", "Y", "L1", "R1", "L2", "R2", "SELECT", "START",
-        "LINKEN STICK NACH OBEN", "RECHTEN STICK NACH OBEN",
-        "LINKEN STICK NACH RECHTS", "RECHTEN STICK NACH RECHTS"};
+        TR("LINKEN STICK NACH OBEN", "LEFT STICK UP"), TR("RECHTEN STICK NACH OBEN", "RIGHT STICK UP"),
+        TR("LINKEN STICK NACH RECHTS", "LEFT STICK RIGHT"), TR("RECHTEN STICK NACH RECHTS", "RIGHT STICK RIGHT")};
     int nb = SDL_JoystickNumButtons(j), nh = SDL_JoystickNumHats(j), na = SDL_JoystickNumAxes(j);
     Binding res[BT_COUNT];
     int axL = -1, axR = -1, sL = -1, sR = -1, axLx = -1, axRx = -1, sLx = 1, sRx = 1;
@@ -3729,13 +3736,13 @@ static bool runLearn() {
             if (stick && left <= 0) done = true;
 
             clearScreen(C_BG);
-            textC(SW / 2, 40, "TASTEN LERNEN", C_ACC, 2);
-            textC(SW / 2, 150, "DRÜCKE:", C_DIM);
+            textC(SW / 2, 40, TR("TASTEN LERNEN", "LEARN BUTTONS"), C_ACC, 2);
+            textC(SW / 2, 150, TR("DRÜCKE:", "PRESS:"), C_DIM);
             textC(SW / 2, 190, prompts[item], C_TEXT, 2);
             char b[64];
             snprintf(b, sizeof b, "%d / %d", item + 1, BT_COUNT + 4);
             textC(SW / 2, 260, b, C_DIM);
-            if (stick) { snprintf(b, sizeof b, "Kein Stick? Ueberspringen in %ds", left); textC(SW / 2, 300, b, C_DIM); }
+            if (stick) { snprintf(b, sizeof b, TR("Kein Stick? Ueberspringen in %ds", "No stick? Skipping in %ds"), left); textC(SW / 2, 300, b, C_DIM); }
             present();
             SDL_Delay(10);
         }
@@ -3835,7 +3842,7 @@ static void openAudio() {
     audioDev = SDL_OpenAudioDevice(name, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
     if (!audioDev && name) {
         printf("Audio: '%s' nicht verfügbar (%s) - nehme Standardausgang\n", name, SDL_GetError());
-        toast("AUSGANG NICHT VERFÜGBAR");
+        toast(TR("AUSGANG NICHT VERFÜGBAR", "OUTPUT NOT AVAILABLE"));
         audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
     }
     if (!audioDev) { printf("Audio: %s\n", SDL_GetError()); return; }
@@ -3864,14 +3871,15 @@ static void applyUsbMode() {
     char cmd[800];
     static const char* args[3] = {"aus", "an", "an audio"};
     snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s nosleep", basePath, args[usbMode]);
-    toast(usbMode ? "PC-MODUS WIRD AKTIVIERT ..." : "PC-MODUS AUS ...");
+    toast(usbMode ? TR("PC-MODUS WIRD AKTIVIERT ...", "ACTIVATING PC MODE ...") : TR("PC-MODUS AUS ...", "PC MODE OFF ..."));
     drawAll(false); present();
     int rc = system(cmd);
     int now = detectUsbMode();
     printf("USB-Modus %d: rc=%d, erkannt=%d\n", usbMode, rc, now);
     if (usbMode && !now) {   // letzte Fehlerzeile aus dem Log anzeigen
         usbMode = 0;
-        char lp[700], line[200], err[200] = "PC-MODUS NICHT MÖGLICH (PC-MODUS.LOG)";
+        char lp[700], line[200], err[200];
+        snprintf(err, sizeof err, "%s", TR("PC-MODUS NICHT MÖGLICH (PC-MODUS.LOG)", "PC MODE NOT POSSIBLE (PC-MODUS.LOG)"));
         snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
         FILE* lf = fopen(lp, "r");
         if (lf) {
@@ -3883,7 +3891,8 @@ static void applyUsbMode() {
         msgUntil = SDL_GetTicks() + 5000;
     }
     else if (usbMode) {
-        char lp[700], line[200], okm[200] = "PC-MODUS AKTIV";
+        char lp[700], line[200], okm[200];
+        snprintf(okm, sizeof okm, "%s", TR("PC-MODUS AKTIV", "PC MODE ACTIVE"));
         snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
         FILE* lf = fopen(lp, "r");
         if (lf) {
@@ -3893,7 +3902,7 @@ static void applyUsbMode() {
         }
         toast("%s", okm);
         msgUntil = SDL_GetTicks() + 4000;
-    } else toast("USB: HOST-MODUS");
+    } else toast(TR("USB: HOST-MODUS", "USB: HOST MODE"));
     usbMode = now;
     if (cfg.usb != usbMode) { cfg.usb = usbMode; saveSettings(); }   // ueber Neustarts merken
     readNetIp();
@@ -4062,6 +4071,7 @@ int main(int argc, char** argv) {
         if (shotPage == 23) { page = PG_TRG; slot = 6; track = 4; editSlot = 6; editAt = 1; }
         if (shotPage == 24) { page = PG_MST; slot = MS_SCALE; eng.proj.mst[MS_SCALE] = 1 + 1 * 12 + 9; eng.proj.mst[MS_ROOT] = 9; editSlot = MS_SCALE; editAt = 1; }
         if (shotPage == 25) { page = PG_AMP; menuOpen = true; menuSel = PG_FLT; pageClipStore = 2; pageClipTrack = 1; }
+        if (getenv("GB_LANG")) g_lang = atoi(getenv("GB_LANG"));   // Screenshots auf Englisch: GB_LANG=1
         if (getenv("GB_SHOT_FT")) { curP().p[4][P_FTYP] = (uint8_t)atoi(getenv("GB_SHOT_FT")); curP().p[4][P_RESO] = 90; slot = 2; }   // Filtertyp fuer Screenshots
         if (shotPage >= 50 && shotPage <= 53) {   // Datei-Dialoge: 50 Tastatur, 51 Samples, 52 Projekte, 53 Sounds
             page = PG_SRC; track = 7; slot = 0;
@@ -4197,16 +4207,16 @@ int main(int argc, char** argv) {
         last = now;
         handleInput(now, dt);
         undoTrack(now);
-        if (recDoneNo) { if (recDoneNo > 0) toast("GESPEICHERT: SAMPLES/REC/REC-%03d.WAV", recDoneNo); else toast("AUFNAHME: SPEICHERN FEHLGESCHLAGEN"); recDoneNo = 0; }
+        if (recDoneNo) { if (recDoneNo > 0) toast(TR("GESPEICHERT: SAMPLES/REC/REC-%03d.WAV", "SAVED: SAMPLES/REC/REC-%03d.WAV"), recDoneNo); else toast(TR("AUFNAHME: SPEICHERN FEHLGESCHLAGEN", "RECORDING: SAVING FAILED")); recDoneNo = 0; }
         if (audioApplyAt && now >= audioApplyAt) { audioApplyAt = 0; openAudio(); }
         if (usbApplyAt && now >= usbApplyAt) { usbApplyAt = 0; applyUsbMode(); }
         {   // Browser-Upload: Meldung und Samples neu laden, sobald 1,5 s nichts mehr kommt
             char wm[96];
             int sq = webLastEvent(wm, sizeof wm);
             if (sq != webSeq) { webSeq = sq; toast("%s", wm); }
-            if (webTakeChange(now, 1500)) { reloadSamples(); toast("%d SAMPLES GELADEN", sampleCount()); }
+            if (webTakeChange(now, 1500)) { reloadSamples(); toast(TR("%d SAMPLES GELADEN", "%d SAMPLES LOADED"), sampleCount()); }
             static Uint32 updAt = 0;
-            if (webUpdateReady() && !updAt) { updAt = now; toast("UPDATE EMPFANGEN - NEUSTART ..."); msgUntil = now + 5000; saveProject(); }
+            if (webUpdateReady() && !updAt) { updAt = now; toast(TR("UPDATE EMPFANGEN - NEUSTART ...", "UPDATE RECEIVED - RESTARTING ...")); msgUntil = now + 5000; saveProject(); }
             if (updAt && now - updAt > 1500) quitReq = true;   // Dienst startet neu, groovebox-run installiert
         }
         if (now - lastAuto > 120000) {   // Autosave alle 2 Minuten bei Aenderungen

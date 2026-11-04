@@ -252,7 +252,7 @@ Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im 
 * **AUDIO:** Ausgang (interner Lautsprecher, S-1, USB-Interface …), Puffer mit Latenz in ms, Lautstärke
 * **MIDI:** Eingang, Noten ausgeben, Clock (senden/empfangen), Eingangskanäle
 * **USB:** HOST (Geräte am R36S) oder PC (Netz-MIDI, SSH) und die IP-Adresse
-* **SYSTEM:** Tasten neu lernen, Info, Beenden
+* **SYSTEM:** **Sprache / Language** (Deutsch oder English, wirkt sofort), Tasten neu lernen, Leistungstest, Info, Beenden
 
 Steuerkreuz ↑/↓ wählt, ←/→ (oder X/Y) ändert, **A** führt aus, **B** springt zurück zur vorherigen Seite.
 
@@ -265,14 +265,24 @@ Hier siehst du alle 8 Spuren als Kanalzüge mit Fader, Pegelanzeige, Panorama, D
 * Rechter Stick ↑/↓ oder X/Y ändert den Wert.
 * **A = Mute, B = Solo.** Sind mehrere Spuren auf Solo, klingen alle Solo-Spuren.
 
-## Projekte und Presets (PRJ-Seite)
+## Projekte und Sounds (PRJ-Seite)
 
-* **SONG** (32 Plätze) mit **LADEN**, **SPEICHERN** und **NEU** (legt ein leeres Projekt mit leeren Init-Patterns im nächsten freien Platz an; der Demo-Beat kommt nur beim allerersten Start).
-  Gespeichert wird in `groovebox/projects/songNN.gbx`. Der aktive Platz wird gemerkt, und das automatische Speichern landet dort.
-* **PRESET** (32 Plätze pro Engine) mit **P.LADEN** und **P.SPEICHERN**. Ein Preset enthält den kompletten Klang der Spur: Engine und alle Seiten außer den Steps.
-  Gespeichert wird in `groovebox/presets/<ENGINE>/NN.gbp`.
-* **INIT** setzt den Klang der gewählten Spur auf die Grundwerte der Engine zurück.
-* Aktionen startest du mit **A** (oder X). Laden, Überschreiben, Neu und Init fragen vorher nach: **A = Ja, B = Nein**.
+Projekte und Sounds haben **freie Namen**. Die PRJ-Seite hat acht Schaltflächen (mit **A** auslösen):
+
+| Schaltfläche | Funktion |
+|---|---|
+| **LADEN…** | öffnet den Projekt-Explorer: alle Projekte alphabetisch, das aktive ist markiert. A lädt (bei ungespeicherten Änderungen mit Rückfrage) |
+| **SPEICHERN** | speichert unter dem aktuellen Namen (steht unter der Schaltfläche). Das automatische Speichern alle 2 Minuten nutzt denselben Namen |
+| **SPEICH. ALS…** | Bildschirm-Tastatur: neuen Namen eingeben, START speichert (vorhandene Namen mit Rückfrage) |
+| **NEU…** | Name eingeben, dann leeres Projekt anlegen |
+| **SOUND LADEN** | Sound-Explorer: Ordner **Werksklänge** und je Engine ein Ordner mit deinen Sounds |
+| **SOUND SPEICH.** | Klang der Spur (Engine und alle Seiten außer den Steps) unter einem Namen speichern |
+| **INIT SOUND** | Klang der Spur auf die Grundwerte der Engine zurücksetzen |
+| **DEMO-SONG** | „Neon Nights“ als neues Projekt anlegen |
+
+**Bildschirm-Tastatur:** Steuerkreuz wählt die Taste, **A** tippt, **B** löscht, **X** Leerzeichen, **Y** Groß/klein, **START** = OK, **SELECT** = Abbruch. Erlaubt sind Buchstaben, Ziffern, Leerzeichen und `- _ . ( ) +`, bis 32 Zeichen.
+
+Gespeichert wird in `projects/<Name>.gbx` und `presets/<ENGINE>/<Name>.gbp`. Ältere Projekte (`song01` …) und Presets (`01` …) erscheinen unter ihren bisherigen Namen.
 
 ## Kompressor und Sidechain (CMP-Seite)
 
@@ -292,9 +302,11 @@ Klassisches Pumpen: SC = T1 (Kick), THR um −30 dB, RATIO 8:1 oder mehr, ATK ku
 
 ## Samples
 
-WAV-Dateien kommen in den Ordner `groovebox/samples/`, gern mit einer Ebene Unterordnern, z. B. `samples/drums/kick.wav`.
+WAV-Dateien kommen in den Ordner `samples/`, gern mit **Unterordnern bis 3 Ebenen tief**, z. B. `samples/drums/808/kick.wav`.
 Erlaubt sind 8/16/24/32-Bit-PCM und 32-Bit-Float in jeder Samplerate. Stereo wird zu Mono gemischt.
-Gelesen wird beim Start, alphabetisch sortiert, höchstens 128 Dateien zu je höchstens 60 s.
+Gelesen wird beim Start, alphabetisch sortiert, höchstens 250 Dateien zu je höchstens 60 s. Der Ordner `samples/rec/` (WAV-Aufnahmen) wird nicht geladen.
+
+**Sample-Explorer:** Auf dem Regler **SMPL** (Seite QUELLE von SMPL, CHOP, GRAN) öffnet **X** den Explorer mit allen Ordnern und Unterordnern. Er startet im Ordner des aktuellen Samples. Steuerkreuz ↑/↓ wählt, **A** oder → öffnet einen Ordner bzw. übernimmt das Sample, **X** hört vorab hinein, **B** oder ← geht einen Ordner zurück, L1/R1 blättert seitenweise, SELECT bricht ab (das vorher eingestellte Sample bleibt). Im Lock-Modus (A lang halten) wird das gewählte Sample als **Lock auf den Step** gesetzt. Der rechte Stick blättert wie bisher direkt durch alle Samples.
 
 ### Samples per Browser hochladen (ohne SD-Karte)
 
