@@ -96,16 +96,17 @@ static bool queryGet(const char* q, const char* key, char* out, int n) {
     return false;
 }
 
-// Erlaubt: "name.wav" oder "ordner/name.wav" (eine Ebene), keine "..", nur harmlose Zeichen
+// Erlaubt: "name.wav" oder "ordner/unter/name.wav" (bis maxDepth Ebenen). Kein "..", kein Teil mit "." am Anfang,
+// keine Steuerzeichen und keine Zeichen, die FAT/exFAT nicht kennt. Umlaute usw. (UTF-8) sind erlaubt (Ordner vom USB-Stick).
 static bool safeRel(const char* p, int maxDepth) {
     if (!p[0] || p[0] == '/' || p[0] == '.') return false;
     int slashes = 0;
     for (const char* c = p; *c; c++) {
         unsigned char u = (unsigned char)*c;
         if (*c == '/') { slashes++; if (c[1] == '.' || c[1] == '/' || c[1] == 0) return false; continue; }
-        if (!(isalnum(u) || strchr(" _-.()+#", u))) return false;
+        if (u < 32 || u == 127 || strchr("\\:*?\"<>|", u)) return false;
     }
-    return slashes <= maxDepth && !strstr(p, "..");
+    return slashes <= maxDepth && !strstr(p, "..") && strlen(p) < 380;
 }
 static bool hasExt(const char* p, const char* ext) {
     size_t l = strlen(p), e = strlen(ext);
@@ -167,6 +168,116 @@ static void listDir(Buf& b, const char* dir, const char* sub, const char* ext, b
     closedir(d);
 }
 
+// Anzahl Eintraege (WAV + Unterordner) eines Ordners, ohne stat (fuer die Ordnerzeilen im Explorer)
+static int countEntries(const char* path, const char* ext) {
+    DIR* d = opendir(path); if (!d) return 0;
+    int n = 0; struct dirent* e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        if (e->d_type == DT_DIR || (e->d_type == DT_UNKNOWN && !strchr(e->d_name, '.'))) n++;
+        else if (hasExt(e->d_name, ext)) n++;
+    }
+    closedir(d);
+    return n;
+}
+// Ein Ordner: Unterordner (mit Anzahl) und Dateien (mit Groesse)
+static void handleDir(int fd, const char* dir, const char* rel, const char* ext) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s%s%s", dir, rel[0] ? "/" : "", rel);
+    DIR* d = opendir(path);
+    if (!d) { replyText(fd, 404, "Ordner nicht gefunden"); return; }
+    Buf b = {nullptr, 0, 0}, f = {nullptr, 0, 0};
+    bool fd1 = true, ff1 = true;
+    bstr(b, "{\"path\":"); bjson(b, rel); bstr(b, ",\"dirs\":[");
+    bstr(f, "\"files\":[");
+    struct dirent* e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        char full[1500]; snprintf(full, sizeof full, "%s/%s", path, e->d_name);
+        struct stat st; if (stat(full, &st)) continue;
+        char num[80];
+        if (S_ISDIR(st.st_mode)) {
+            if (!fd1) bstr(b, ",");
+            fd1 = false;
+            bstr(b, "{\"name\":"); bjson(b, e->d_name);
+            snprintf(num, sizeof num, ",\"n\":%d}", countEntries(full, ext)); bstr(b, num);
+        } else if (hasExt(e->d_name, ext)) {
+            if (!ff1) bstr(f, ",");
+            ff1 = false;
+            bstr(f, "{\"name\":"); bjson(f, e->d_name);
+            snprintf(num, sizeof num, ",\"size\":%lld,\"t\":%lld}", (long long)st.st_size, (long long)st.st_mtime); bstr(f, num);
+        }
+    }
+    closedir(d);
+    bstr(b, "],"); bput(b, f.p, f.n); bstr(b, "]}");
+    reply(fd, 200, "application/json", b.p, b.n);
+    free(b.p); free(f.p);
+}
+// Suche: alle WAVs, deren Pfad den Text enthaelt (ohne Gross/Klein), hoechstens 400 Treffer
+static void searchDir(Buf& b, const char* dir, const char* sub, const char* q, int depth, int& hits, long long& total) {
+    char path[1200]; snprintf(path, sizeof path, "%s%s%s", dir, sub[0] ? "/" : "", sub);
+    DIR* d = opendir(path); if (!d) return;
+    struct dirent* e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        char rel[600]; snprintf(rel, sizeof rel, "%s%s%s", sub, sub[0] ? "/" : "", e->d_name);
+        bool isDir = e->d_type == DT_DIR;
+        if (e->d_type == DT_UNKNOWN) { char full[1500]; struct stat st; snprintf(full, sizeof full, "%s/%s", dir, rel); isDir = !stat(full, &st) && S_ISDIR(st.st_mode); }
+        if (isDir) { if (depth < SAMPLE_DEPTH) searchDir(b, dir, rel, q, depth + 1, hits, total); continue; }
+        if (!hasExt(e->d_name, ".wav")) continue;
+        total++;
+        if (!strcasestr(rel, q)) continue;
+        if (hits < 400) { if (hits) bstr(b, ","); bjson(b, rel); }
+        hits++;
+    }
+    closedir(d);
+}
+// WAV-Kopf lesen: Format, Kanaele, Rate, Bits, Laenge
+static void handleInfo(int fd, const char* full) {
+    FILE* f = fopen(full, "rb");
+    if (!f) { replyText(fd, 404, "nicht gefunden"); return; }
+    uint8_t h[12]; char out[300];
+    int fmt = 0, ch = 0, bits = 0; unsigned rate = 0; unsigned long long data = 0;
+    if (fread(h, 1, 12, f) == 12 && !memcmp(h, "RIFF", 4) && !memcmp(h + 8, "WAVE", 4)) {
+        uint8_t c[8];
+        for (int guard = 0; guard < 64 && fread(c, 1, 8, f) == 8; guard++) {
+            uint32_t sz = c[4] | c[5] << 8 | c[6] << 16 | (uint32_t)c[7] << 24;
+            if (!memcmp(c, "fmt ", 4)) {
+                uint8_t fb[16];
+                if (sz < 16 || fread(fb, 1, 16, f) != 16) break;
+                fmt = fb[0] | fb[1] << 8; ch = fb[2] | fb[3] << 8; rate = fb[4] | fb[5] << 8 | fb[6] << 16 | (uint32_t)fb[7] << 24; bits = fb[14] | fb[15] << 8;
+                fseek(f, (long)(sz - 16 + (sz & 1)), SEEK_CUR);
+            } else if (!memcmp(c, "data", 4)) { data = sz; break; }
+            else fseek(f, (long)(sz + (sz & 1)), SEEK_CUR);
+        }
+    }
+    fclose(f);
+    double sec = (rate && ch && bits) ? (double)data / ((double)rate * ch * (bits / 8)) : 0;
+    const char* fn = fmt == 1 ? "PCM" : fmt == 3 ? "Float" : fmt == 0xFFFE ? "Extensible" : fmt ? "anderes" : "kein WAV";
+    snprintf(out, sizeof out, "{\"format\":\"%s\",\"ch\":%d,\"rate\":%u,\"bits\":%d,\"sec\":%.3f,\"ok\":%s}", fn, ch, rate, bits, sec,
+             (fmt == 1 || fmt == 3 || fmt == 0xFFFE) && ch > 0 ? "true" : "false");
+    reply(fd, 200, "application/json", out, strlen(out));
+}
+// Ordner samt Inhalt loeschen (nur unter samples/, Tiefe begrenzt)
+static bool rmTree(const char* path, int depth) {
+    if (depth > SAMPLE_DEPTH + 1) return false;
+    DIR* d = opendir(path); if (!d) return false;
+    struct dirent* e; bool ok = true;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char full[1500]; snprintf(full, sizeof full, "%s/%s", path, e->d_name);
+        struct stat st; if (lstat(full, &st)) { ok = false; continue; }
+        if (S_ISDIR(st.st_mode)) ok = rmTree(full, depth + 1) && ok;
+        else if (unlink(full)) ok = false;
+    }
+    closedir(d);
+    return rmdir(path) == 0 && ok;
+}
+static void mkParents(const char* dir, const char* rel) {   // Unterordner fuer rel anlegen
+    char p[1200];
+    for (const char* c = rel; (c = strchr(c, '/')); c++) { snprintf(p, sizeof p, "%s/%.*s", dir, (int)(c - rel), rel); mkdir(p, 0755); }
+}
+
 static void handleList(int fd) {
     Buf b = {nullptr, 0, 0}, f = {nullptr, 0, 0};
     char sd[700], pd[700], num[160];
@@ -174,12 +285,14 @@ static void handleList(int fd) {
     rootDir("projects", pd, sizeof pd);
     bool first = true, ffirst = true, pf = true, dummy = true;
     bstr(f, "[");
-    bstr(b, "{\"samples\":[");
-    listDir(b, sd, "", ".wav", first, 0, &f, ffirst);
-    bstr(f, "]");
-    bstr(b, "],\"folders\":");
-    bput(b, f.p, f.n);
-    bstr(b, ",\"projects\":[");
+    {   // nur zaehlen (die Liste holt der Explorer ordnerweise)
+        int hits = 0; long long total = 0; Buf dummyB = {nullptr, 0, 0};
+        searchDir(dummyB, sd, "", "\x01", 0, hits, total);
+        free(dummyB.p);
+        snprintf(num, sizeof num, "{\"count\":%lld,", total); bstr(b, num);
+    }
+    (void)f; (void)first; (void)ffirst;
+    bstr(b, "\"projects\":[");
     listDir(b, pd, "", ".gbx", pf, SAMPLE_DEPTH, nullptr, dummy);   // Projekte ohne Unterordner
     struct statvfs vs;
     long long freeB = statvfs(sd, &vs) == 0 ? (long long)vs.f_bavail * (long long)vs.f_frsize : -1;
@@ -316,6 +429,64 @@ static void handle(int fd) {
     const char* ext = isS ? ".wav" : ".gbx";
     snprintf(full, sizeof full, "%s/%s", dir, rel);
 
+    bool relOk = rel[0] == 0 || safeRel(rel, isS ? SAMPLE_DEPTH : 0);   // leer = Wurzel
+    if (!strcmp(method, "GET") && !strcmp(target, "/api/dir")) {
+        if (!relOk || !isS) { replyText(fd, 400, "Pfad?"); return; }
+        handleDir(fd, dir, rel, ext);
+        return;
+    }
+    if (!strcmp(method, "GET") && !strcmp(target, "/api/search")) {
+        char qq[100] = ""; if (q) queryGet(q, "q", qq, sizeof qq);
+        Buf b = {nullptr, 0, 0}; int hits = 0; long long total = 0;
+        bstr(b, "{\"hits\":[");
+        if (qq[0]) searchDir(b, dir, "", qq, 0, hits, total);
+        char num[80]; snprintf(num, sizeof num, "],\"more\":%s}", hits > 400 ? "true" : "false"); bstr(b, num);
+        reply(fd, 200, "application/json", b.p, b.n);
+        free(b.p);
+        return;
+    }
+    if (!strcmp(method, "GET") && !strcmp(target, "/api/info")) {
+        if (!rel[0] || !relOk || !hasExt(rel, ".wav")) { replyText(fd, 400, "Pfad?"); return; }
+        handleInfo(fd, full);
+        return;
+    }
+    if (!strcmp(method, "POST") && !strcmp(target, "/api/mkdir")) {
+        if (!isS || !rel[0] || !relOk || hasExt(rel, ".wav")) { replyText(fd, 400, "Ungueltiger Ordnername"); return; }
+        mkParents(dir, rel);
+        if (mkdir(full, 0755) && errno != EEXIST) { replyText(fd, 400, "Ordner nicht angelegt"); return; }
+        g_changedAt = SDL_GetTicks(); g_changed = 1;
+        replyText(fd, 200, "ok");
+        return;
+    }
+    if (!strcmp(method, "POST") && !strcmp(target, "/api/rmdir")) {
+        struct stat st;
+        if (!isS || !rel[0] || !relOk || stat(full, &st) || !S_ISDIR(st.st_mode)) { replyText(fd, 400, "Ordner?"); return; }
+        bool ok = rmTree(full, 0);
+        sync();
+        g_changedAt = SDL_GetTicks(); g_changed = 1;
+        note(g_lang ? "DELETED: %.60s" : "GELÖSCHT: %.60s", rel);
+        replyText(fd, ok ? 200 : 400, ok ? "ok" : "nicht alles geloescht");
+        return;
+    }
+    if (!strcmp(method, "POST") && !strcmp(target, "/api/move")) {   // Datei oder Ordner verschieben/umbenennen
+        char to[400] = "", tfull[1200]; struct stat st;
+        if (q) queryGet(q, "to", to, sizeof to);
+        if (!rel[0] || !relOk || !to[0] || !safeRel(to, isS ? SAMPLE_DEPTH : 0) || stat(full, &st)) { replyText(fd, 400, "Pfad?"); return; }
+        bool isDir = S_ISDIR(st.st_mode);
+        if (!isS && isDir) { replyText(fd, 400, "Pfad?"); return; }
+        if (!isDir && !hasExt(to, ext)) { replyText(fd, 400, isS ? "Ziel muss auf .wav enden" : "Ziel muss auf .gbx enden"); return; }
+        size_t rl = strlen(rel);
+        if (isDir && !strncmp(to, rel, rl) && (to[rl] == '/' || !to[rl])) { replyText(fd, 400, "Ordner kann nicht in sich selbst"); return; }
+        snprintf(tfull, sizeof tfull, "%s/%s", dir, to);
+        if (!stat(tfull, &st)) { replyText(fd, 409, "Ziel existiert schon"); return; }
+        mkParents(dir, to);
+        if (rename(full, tfull)) { replyText(fd, 400, "Verschieben fehlgeschlagen"); return; }
+        sync();
+        if (isS) { g_changedAt = SDL_GetTicks(); g_changed = 1; }
+        replyText(fd, 200, "ok");
+        return;
+    }
+
     if (!strcmp(method, "GET") && !strcmp(target, "/api/file")) {
         if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
         FILE* f = fopen(full, "rb");
@@ -333,11 +504,8 @@ static void handle(int fd) {
     }
     if (!strcmp(method, "PUT") && !strcmp(target, "/api/upload")) {
         if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Ungueltiger Dateiname"); return; }
-        int slotNo = 0;
-        if (!isS && (sscanf(rel, "song%2d.gbx", &slotNo) != 1 || slotNo < 1 || slotNo > 32 || strlen(rel) != 10)) { replyText(fd, 400, "Projekte heissen songNN.gbx"); return; }
         if (clen <= 0 || clen > 200LL * 1024 * 1024) { replyText(fd, 413, "Datei zu gross (max. 200 MB)"); return; }
-        const char* sl = strchr(rel, '/');
-        if (sl) { char sub[700]; snprintf(sub, sizeof sub, "%s/%.*s", dir, (int)(sl - rel), rel); mkdir(sub, 0755); }
+        mkParents(dir, rel);
         char tmp[1300];
         snprintf(tmp, sizeof tmp, "%s.upload", full);
         FILE* f = fopen(tmp, "wb");
@@ -365,9 +533,7 @@ static void handle(int fd) {
     if (!strcmp(method, "POST") && !strcmp(target, "/api/delete")) {
         if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
         if (unlink(full)) { replyText(fd, 404, "nicht gefunden"); return; }
-        const char* sl = strchr(rel, '/');   // leeren Ordner mit entfernen
-        if (sl) { char sub[700]; snprintf(sub, sizeof sub, "%s/%.*s", dir, (int)(sl - rel), rel); rmdir(sub); }
-        sync();
+        sync();   // Ordner bleibt stehen (der Explorer zeigt ihn leer; loeschen ueber /api/rmdir)
         if (isS) { g_changedAt = SDL_GetTicks(); g_changed = 1; }
         note(g_lang ? "DELETED: %.60s" : "GELÖSCHT: %.60s", rel);
         replyText(fd, 200, "ok");

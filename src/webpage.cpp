@@ -4,46 +4,68 @@ const char WEB_PAGE[] = R"HTML(<!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SYNTH CITY</title>
 <style>
-:root{--bg:#080612;--panel:#141026;--panel2:#20183a;--text:#d6eeff;--dim:#8a80b0;--acc:#ff2e88;--cy:#00e0ff;--ok:#00ffaa;--bad:#ff4060}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 ui-monospace,Menlo,Consolas,monospace}
-main{max-width:880px;margin:0 auto;padding:20px 16px 60px}
-h1{font-size:30px;margin:0 0 4px;letter-spacing:.18em;color:#fff;text-shadow:-2px 0 var(--acc),2px 0 var(--cy),0 0 18px var(--acc)}h1 b{color:#fff}body{background:linear-gradient(180deg,#080612 0%,#140a2a 60%,#2a0a3a 100%) fixed}
+:root{--bg:#080612;--panel:#141026;--panel2:#20183a;--text:#d6eeff;--dim:#8a80b0;--acc:#ff2e88;--cy:#00e0ff;--ok:#00ffaa;--bad:#ff4060;--lock:#ffc040}
+*{box-sizing:border-box}body{margin:0;color:var(--text);font:15px/1.45 ui-monospace,Menlo,Consolas,monospace;background:linear-gradient(180deg,#080612 0%,#140a2a 60%,#2a0a3a 100%) fixed}
+main{max-width:920px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:30px;margin:0 0 4px;letter-spacing:.18em;color:#fff;text-shadow:-2px 0 var(--acc),2px 0 var(--cy),0 0 18px var(--acc)}
 h2{font-size:14px;color:var(--acc);letter-spacing:.12em;margin:28px 0 10px;text-transform:uppercase}
-.sub{color:var(--dim);margin:0 0 18px}
-#drop{border:2px dashed #3a3a46;border-radius:14px;padding:34px 16px;text-align:center;background:var(--panel);cursor:pointer;transition:.15s}
-#drop.over{border-color:var(--acc);background:#2a2018}
-#drop strong{display:block;font-size:18px;margin-bottom:6px}
-.row{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;margin:14px 0}
-select,input[type=text]{background:var(--panel2);color:var(--text);border:1px solid #3a3a46;border-radius:8px;padding:7px 10px;font:inherit}
+.sub{color:var(--dim);margin:0 0 18px}a{color:var(--cy)}
+.row{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:10px 0}
+select,input[type=text],input[type=search]{background:var(--panel2);color:var(--text);border:1px solid #3a3a46;border-radius:8px;padding:6px 10px;font:inherit}
+input[type=search]{flex:1;min-width:180px}
 label{color:var(--dim)}label input{accent-color:var(--acc)}
-button{background:var(--panel2);color:var(--text);border:1px solid #3a3a46;border-radius:8px;padding:5px 10px;font:inherit;cursor:pointer}
-button:hover{border-color:var(--acc)}button.del:hover{border-color:var(--bad);color:var(--bad)}
-.list{background:var(--panel);border-radius:12px;overflow:hidden}
-.item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid #26262e}
+button{background:var(--panel2);color:var(--text);border:1px solid #3a3a46;border-radius:8px;padding:5px 10px;font:inherit;cursor:pointer;white-space:nowrap}
+button:hover{border-color:var(--acc)}button.del:hover{border-color:var(--bad);color:var(--bad)}button.pri{border-color:var(--acc);color:#fff}
+button.ic{padding:4px 8px;min-width:34px}
+.list{background:var(--panel);border-radius:12px;overflow:hidden;position:relative}
+.list.over{outline:2px dashed var(--acc);outline-offset:-4px;background:#22102e}
+.item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid #26222e}
 .item:first-child{border-top:0}.item .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .item .s{color:var(--dim);font-size:13px;white-space:nowrap}
-.folder{padding:7px 12px;background:#15151a;color:var(--acc);font-size:13px;letter-spacing:.08em}
-.job{display:flex;gap:10px;padding:6px 12px;font-size:13px}.job .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.dir .n{color:var(--lock);cursor:pointer}.item.dir .n:hover{text-decoration:underline}
+.item.up .n{color:var(--dim);cursor:pointer}
+.item input[type=checkbox]{accent-color:var(--acc);width:16px;height:16px}
+.item.sel{background:#2a1838}
+.info{padding:6px 12px 10px 44px;color:var(--dim);font-size:13px;border-top:1px dashed #2e2840}
+.crumb{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:10px 0 8px}
+.crumb a{cursor:pointer;color:var(--cy);text-decoration:none;padding:2px 6px;border-radius:6px;background:var(--panel2)}
+.crumb a:last-child{color:#fff;background:var(--acc)}
+.crumb span{color:var(--dim)}
+#selbar{display:none;position:sticky;bottom:10px;margin-top:10px;background:var(--panel2);border:1px solid var(--acc);border-radius:12px;padding:8px 12px;gap:10px;align-items:center;box-shadow:0 0 20px #0008}
+.job{display:flex;gap:10px;padding:5px 12px;font-size:13px}.job .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.dim{color:var(--dim)}
-#bar{height:4px;background:var(--panel2);border-radius:2px;overflow:hidden;margin-top:10px}#bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+#bar{height:4px;background:var(--panel2);border-radius:2px;overflow:hidden;margin-top:8px}#bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+.hint{font-size:13px;color:var(--dim);margin:6px 2px}
+@media(max-width:600px){.item{flex-wrap:wrap}.item .n{order:-1;flex:1 1 100%;white-space:normal;word-break:break-word}.item.dir .n,.item.up .n{order:0;flex:1}}
 </style></head><body><main>
 <h1>SYNTH <b>CITY</b></h1>
 <p class="sub" id="info">verbinde …</p>
-<p><a href="/screen" style="color:var(--cy);font-weight:700">▶ Bildschirm &amp; Fernbedienung</a> <span class="dim">– Live-Bild der Groovebox, bedienbar per Maus, Touch oder Tastatur</span></p>
+<p><a href="/screen" style="font-weight:700">▶ Bildschirm &amp; Fernbedienung</a> <span class="dim">– Live-Bild der Groovebox, bedienbar per Maus, Touch oder Tastatur</span></p>
 
-<div id="drop"><strong>Samples hier hineinziehen</strong><span class="dim">oder klicken · WAV, MP3, FLAC, AIFF, OGG … werden automatisch umgewandelt</span>
-<input type="file" id="pick" multiple accept="audio/*,.wav,.mp3,.flac,.aif,.aiff,.ogg,.m4a" hidden></div>
+<h2>Samples</h2>
 <div class="row">
- <span>Ordner <select id="folder"></select></span>
- <input type="text" id="newf" placeholder="neuer Ordner" size="14">
+ <input type="search" id="q" placeholder="Samples suchen (alle Ordner) …">
+ <button id="mk">+ Ordner</button>
+ <button id="upf" class="pri">Dateien hochladen</button>
+ <button id="upd2">Ordner hochladen</button>
+ <input type="file" id="pick" multiple accept="audio/*,.wav,.mp3,.flac,.aif,.aiff,.ogg,.m4a" hidden>
+ <input type="file" id="pickdir" webkitdirectory multiple hidden>
+</div>
+<div class="row">
  <label><input type="checkbox" id="conv" checked> in Mono/44,1 kHz umwandeln</label>
  <label><input type="checkbox" id="norm"> normalisieren</label>
 </div>
-<div id="bar"><i></i></div>
-<div id="jobs" class="list" style="margin-top:10px"></div>
-
-<h2>Samples auf der Karte</h2>
+<div class="crumb" id="crumb"></div>
 <div id="samples" class="list"></div>
+<p class="hint">Dateien oder ganze Ordner auf die Liste ziehen = Hochladen in den angezeigten Ordner (Unterordner bleiben erhalten). MP3, FLAC, AIFF, OGG … werden im Browser in WAV umgewandelt. Umbenennen/Verschieben: Projekte merken sich Samples per Name und finden verschobene Dateien danach nicht mehr.</p>
+<div id="selbar"><b id="seln"></b><span style="flex:1"></span><button id="selmv">verschieben …</button><button id="seldel" class="del">löschen</button><button id="selnone">Auswahl aufheben</button></div>
+<div id="bar"><i></i></div>
+<div id="jobs" class="list" style="margin-top:8px"></div>
+
+<h2>Projekte</h2>
+<div class="row"><button id="pup" class="pri">Projekt (.gbx) hochladen</button><input type="file" id="ppick" accept=".gbx" multiple hidden>
+<span class="dim">Name = Dateiname. Laden am Gerät unter PRJ → LADEN. Herunterladen = Sicherung.</span></div>
+<div id="projects" class="list"></div>
 
 <div id="upd" style="display:none">
 <h2>Groovebox aktualisieren</h2>
@@ -55,40 +77,110 @@ button:hover{border-color:var(--acc)}button.del:hover{border-color:var(--bad);co
 <div class="row"><select id="logsel"><option>groovebox.log</option><option>groovebox.old.log</option><option>boot.txt</option><option>update.log</option><option>bench.txt</option><option>pc-modus.log</option><option>usb-diagnose</option></select>
 <button id="logload">anzeigen</button><label><input type="checkbox" id="logauto"> automatisch aktualisieren</label><a id="logdl" download><button>herunterladen</button></a></div>
 <pre id="logview" style="background:var(--panel);border-radius:12px;padding:12px;max-height:420px;overflow:auto;font-size:12px;white-space:pre-wrap;display:none"></pre>
-
-<h2>Projekte</h2>
-<div class="row"><span>Platz <select id="pslot"></select></span><button id="pup">Projekt (.gbx) hochladen</button><input type="file" id="ppick" accept=".gbx" hidden>
-<span class="dim">Laden am Gerät unter PRJ → SONG. Herunterladen = Sicherung.</span></div>
-<div id="projects" class="list"></div>
 </main>
 <script>
 const $=s=>document.querySelector(s);
-let state={samples:[],folders:[],projects:[],free:0,max:128};
+const MAXDEPTH=8;
+let cwd=localStorage.getItem('gbdir')||'',listing={dirs:[],files:[]},projects=[],sel=new Set(),query='',hits=null,infoOpen='';
 const fmt=b=>b>1e9?(b/1e9).toFixed(1)+' GB':b>1e6?(b/1e6).toFixed(1)+' MB':Math.ceil(b/1e3)+' kB';
-const clean=s=>s.normalize('NFKD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9 _\-.()+#]/g,'_').replace(/^[.\s]+/,'').slice(0,40)||'sample';
-async function refresh(){
- try{const r=await fetch('/api/list');state=await r.json();}catch(e){$('#info').textContent='keine Verbindung zum R36S';return;}
- if(state.os){$('#upd').style.display='';$('#ver').textContent=state.version||'?';}
- $('#info').textContent=`${state.samples.length} von ${state.max} Samples · ${fmt(state.free)} frei auf der Karte · max. 60 s pro Sample`;
- const sel=$('#folder'),cur=sel.value;sel.innerHTML='<option value="">(Hauptordner)</option>'+state.folders.map(f=>`<option>${f}</option>`).join('');
- if(cur&&state.folders.includes(cur))sel.value=cur;
- const by={};state.samples.forEach(s=>{const i=s.path.lastIndexOf('/');const f=i<0?'':s.path.slice(0,i);(by[f]=by[f]||[]).push(s)});
- let h='';Object.keys(by).sort().forEach(f=>{h+=`<div class="folder">${f||'HAUPTORDNER'}</div>`;
-  by[f].sort((a,b)=>a.path.localeCompare(b.path)).forEach(s=>{const n=s.path.slice(f?f.length+1:0);
-  h+=`<div class="item"><span class="n">${n}</span><span class="s">${fmt(s.size)}</span><button data-play="${encodeURIComponent(s.path)}">▶</button><button class="del" data-del="${encodeURIComponent(s.path)}">löschen</button></div>`})});
- $('#samples').innerHTML=h||'<div class="item dim">noch keine Samples</div>';
- const used=new Set(state.projects.map(p=>p.path)),ps=$('#pslot'),pc=ps.value;
- ps.innerHTML=Array.from({length:32},(_,i)=>{const n='song'+String(i+1).padStart(2,'0')+'.gbx';return `<option value="${n}">SONG ${String(i+1).padStart(2,'0')}${used.has(n)?' (belegt)':''}</option>`}).join('');
- if(pc)ps.value=pc;else{const f=[...Array(32).keys()].find(i=>!used.has('song'+String(i+1).padStart(2,'0')+'.gbx'));if(f!==undefined)ps.selectedIndex=f;}
- $('#projects').innerHTML=state.projects.sort((a,b)=>a.path.localeCompare(b.path)).map(p=>`<div class="item"><span class="n">${p.path.replace(/^song(\d+)\.gbx$/,'SONG $1')}</span><span class="s">${fmt(p.size)}</span><a href="/api/file?root=projects&path=${encodeURIComponent(p.path)}" download="${p.path}"><button>herunterladen</button></a></div>`).join('')||'<div class="item dim">keine Projekte</div>';
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const enc=encodeURIComponent;
+// Namensteil bereinigen: Zeichen, die FAT nicht kennt, und Steuerzeichen raus; Umlaute bleiben
+const cleanSeg=s=>s.normalize('NFC').replace(/[\\:*?"<>|\x00-\x1f\x7f\/]/g,'_').replace(/^[.\s]+/,'').replace(/\s+$/,'').slice(0,60)||'sample';
+const join=(a,b)=>a?(b?a+'/'+b:a):b;
+const depth=p=>p?p.split('/').length:0;
+async function api(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text()||r.status);return r;}
+async function refreshInfo(){
+ try{const st=await (await fetch('/api/list')).json();projects=st.projects||[];
+  $('#info').textContent=`${st.count} Samples · ${fmt(st.free)} frei auf der Karte`;
+  if(st.os){$('#upd').style.display='';$('#ver').textContent=st.version||'?';}
+  drawProjects();
+ }catch(e){$('#info').textContent='keine Verbindung zum R36S';}
+}
+async function loadDir(d){
+ try{listing=await (await api('/api/dir?root=samples&path='+enc(d))).json();cwd=d;}
+ catch(e){if(d){return loadDir(d.includes('/')?d.slice(0,d.lastIndexOf('/')):'');}listing={dirs:[],files:[]};}
+ try{localStorage.setItem('gbdir',cwd)}catch(e){}
+ sel.clear();infoOpen='';draw();
+}
+function drawCrumb(){
+ const parts=cwd?cwd.split('/'):[];let h=`<a data-cd="">samples</a>`,acc='';
+ parts.forEach(p=>{acc=join(acc,p);h+=`<span>/</span><a data-cd="${esc(acc)}">${esc(p)}</a>`});
+ $('#crumb').innerHTML=query?`<span>Suche „${esc(query)}“ – ${hits?hits.hits.length:0}${hits&&hits.more?'+':''} Treffer</span>`:h;
+}
+function fileRow(path,name,size,showDir){
+ const k=esc(path),checked=sel.has(path);
+ let h=`<div class="item${checked?' sel':''}"><input type="checkbox" data-sel="${k}"${checked?' checked':''}><button class="ic" data-play="${k}" title="anhören">▶</button>
+  <span class="n" title="${k}">${esc(name)}${showDir?` <span class="dim">· ${esc(showDir)}</span>`:''}</span>${size!=null?`<span class="s">${fmt(size)}</span>`:''}
+  <button class="ic" data-info="${k}" title="Infos">i</button><button class="ic" data-ren="${k}" title="umbenennen">✎</button>
+  <a href="/api/file?root=samples&path=${enc(path)}" download="${esc(name)}"><button class="ic" title="herunterladen">⤓</button></a>
+  <button class="ic del" data-del="${k}" title="löschen">✕</button></div>`;
+ if(infoOpen===path)h+=`<div class="info" id="infobox">lese …</div>`;
+ return h;
+}
+function draw(){
+ drawCrumb();
+ let h='';
+ if(query){
+  if(!hits)h='<div class="item dim">suche …</div>';
+  else{hits.hits.forEach(p=>{const i=p.lastIndexOf('/');h+=fileRow(p,i<0?p:p.slice(i+1),null,i<0?'':p.slice(0,i))});if(!hits.hits.length)h='<div class="item dim">nichts gefunden</div>';}
+ }else{
+  if(cwd)h+=`<div class="item up"><span class="ic"></span><span class="n" data-cd="${esc(cwd.includes('/')?cwd.slice(0,cwd.lastIndexOf('/')):'')}">↰ ..</span></div>`;
+  listing.dirs.sort((a,b)=>a.name.localeCompare(b.name,'de',{sensitivity:'base'})).forEach(d=>{const p=join(cwd,d.name),k=esc(p);
+   h+=`<div class="item dir"><span style="width:16px">📁</span><span class="n" data-cd="${k}">${esc(d.name)}</span><span class="s">${d.n} ${d.n==1?'Eintrag':'Einträge'}</span>
+   <button class="ic" data-ren="${k}" data-isdir="1" title="umbenennen/verschieben">✎</button><button class="ic del" data-rmdir="${k}" data-n="${d.n}" title="Ordner löschen">✕</button></div>`});
+  listing.files.sort((a,b)=>a.name.localeCompare(b.name,'de',{numeric:true,sensitivity:'base'})).forEach(f=>{h+=fileRow(join(cwd,f.name),f.name,f.size)});
+  if(!listing.dirs.length&&!listing.files.length)h+='<div class="item dim">Ordner ist leer – Dateien hierher ziehen</div>';
+ }
+ $('#samples').innerHTML=h;
+ const n=sel.size;$('#selbar').style.display=n?'flex':'none';$('#seln').textContent=n+' ausgewählt';
+ if(infoOpen)showInfo(infoOpen);
+}
+async function showInfo(p){
+ try{const j=await (await api('/api/info?root=samples&path='+enc(p))).json();const b=$('#infobox');if(!b)return;
+  b.innerHTML=j.ok?`${j.format} · ${j.ch==1?'Mono':j.ch==2?'Stereo':j.ch+' Kanäle'} · ${j.rate} Hz · ${j.bits} Bit · <b style="color:var(--text)">${j.sec.toFixed(2)} s</b>${j.sec>60?' <span class="bad">(länger als 60 s – wird gekürzt)</span>':''}`:'<span class="bad">kein lesbares WAV</span>';
+ }catch(e){const b=$('#infobox');if(b)b.textContent='Fehler: '+e.message;}
+}
+function drawProjects(){
+ $('#projects').innerHTML=projects.sort((a,b)=>a.path.localeCompare(b.path,'de',{sensitivity:'base'})).map(p=>{const k=esc(p.path),n=p.path.replace(/\.gbx$/i,'');
+  return `<div class="item"><span class="n">${esc(n)}</span><span class="s">${fmt(p.size)}</span><a href="/api/file?root=projects&path=${enc(p.path)}" download="${k}"><button>herunterladen</button></a>
+  <button class="ic" data-pren="${k}" title="umbenennen">✎</button><button class="ic del" data-pdel="${k}" title="löschen">✕</button></div>`}).join('')||'<div class="item dim">keine Projekte</div>';
 }
 let audio=null;
 document.addEventListener('click',async e=>{
- const p=e.target.dataset.play,d=e.target.dataset.del;
- if(p){if(audio)audio.pause();audio=new Audio('/api/file?root=samples&path='+p);audio.play();}
- if(d&&confirm('Sample '+decodeURIComponent(d)+' löschen?')){await fetch('/api/delete?root=samples&path='+d,{method:'POST'});refresh();}
+ const t=e.target.closest('[data-cd],[data-play],[data-del],[data-rmdir],[data-ren],[data-info],[data-pren],[data-pdel]');if(!t)return;const d=t.dataset;
+ try{
+  if(d.cd!==undefined){query='';$('#q').value='';hits=null;loadDir(d.cd);}
+  else if(d.play){if(audio)audio.pause();audio=new Audio('/api/file?root=samples&path='+enc(d.play));audio.play();}
+  else if(d.info){infoOpen=infoOpen===d.info?'':d.info;draw();}
+  else if(d.del){if(confirm('Sample „'+d.del+'“ löschen?')){await api('/api/delete?root=samples&path='+enc(d.del),{method:'POST'});changed();}}
+  else if(d.rmdir){if(confirm(`Ordner „${d.rmdir}“${+d.n?' mit allem Inhalt ('+d.n+' Einträge)':''} löschen?`)){await api('/api/rmdir?root=samples&path='+enc(d.rmdir),{method:'POST'});changed();}}
+  else if(d.ren){const isDir=!!d.isdir,i=d.ren.lastIndexOf('/'),dir=i<0?'':d.ren.slice(0,i),name=i<0?d.ren:d.ren.slice(i+1);
+   let to=prompt(`Neuer Pfad für ${isDir?'den Ordner':'das Sample'} (Ordner mit / trennen):`,d.ren);if(!to||to===d.ren)return;
+   to=to.split('/').filter(x=>x).map(cleanSeg).join('/');if(!isDir&&!/\.wav$/i.test(to))to+='.wav';
+   await api('/api/move?root=samples&path='+enc(d.ren)+'&to='+enc(to),{method:'POST'});changed();}
+  else if(d.pdel){if(confirm('Projekt „'+d.pdel+'“ löschen?')){await api('/api/delete?root=projects&path='+enc(d.pdel),{method:'POST'});refreshInfo();}}
+  else if(d.pren){let to=prompt('Neuer Projektname:',d.pren.replace(/\.gbx$/i,''));if(!to)return;to=cleanSeg(to.replace(/\//g,'_'))+'.gbx';
+   await api('/api/move?root=projects&path='+enc(d.pren)+'&to='+enc(to),{method:'POST'});refreshInfo();}
+ }catch(err){alert(err.message||err);}
 });
-function wav(buf){ // AudioBuffer -> 16-Bit-WAV
+document.addEventListener('change',e=>{const p=e.target.dataset&&e.target.dataset.sel;if(p===undefined)return;if(e.target.checked)sel.add(p);else sel.delete(p);
+ e.target.closest('.item').classList.toggle('sel',e.target.checked);const n=sel.size;$('#selbar').style.display=n?'flex':'none';$('#seln').textContent=n+' ausgewählt';});
+$('#selnone').onclick=()=>{sel.clear();draw();};
+$('#seldel').onclick=async()=>{if(!confirm(sel.size+' Samples löschen?'))return;for(const p of [...sel]){try{await api('/api/delete?root=samples&path='+enc(p),{method:'POST'});}catch(e){}}changed();};
+$('#selmv').onclick=async()=>{let to=prompt('Zielordner (z. B. drums/kicks, leer = Hauptordner):',cwd);if(to===null)return;
+ to=to.split('/').filter(x=>x).map(cleanSeg).join('/');let bad=0;
+ for(const p of [...sel]){const n=p.slice(p.lastIndexOf('/')+1),dst=join(to,n);if(dst===p)continue;try{await api('/api/move?root=samples&path='+enc(p)+'&to='+enc(dst),{method:'POST'});}catch(e){bad++;}}
+ if(bad)alert(bad+' Dateien nicht verschoben (Ziel existiert schon?)');changed();};
+function changed(){refreshInfo();if(query)search(query);else loadDir(cwd);}
+$('#mk').onclick=async()=>{const n=prompt('Name des neuen Ordners in /samples/'+(cwd?cwd+'/':'')+':');if(!n)return;
+ const p=join(cwd,n.split('/').filter(x=>x).map(cleanSeg).join('/'));if(depth(p)>MAXDEPTH){alert('Höchstens '+MAXDEPTH+' Ordnerebenen');return;}
+ try{await api('/api/mkdir?root=samples&path='+enc(p),{method:'POST'});loadDir(p);}catch(e){alert(e.message);}};
+let sTimer=0;
+async function search(q){hits=null;draw();try{hits=await (await api('/api/search?root=samples&q='+enc(q))).json();}catch(e){hits={hits:[]};}if(query===q)draw();}
+$('#q').oninput=e=>{clearTimeout(sTimer);query=e.target.value.trim();sTimer=setTimeout(()=>{if(query)search(query);else{hits=null;draw();}},250);};
+// ---- Hochladen (Dateien, Ordner, Ziehen & Ablegen)
+function wav(buf){
  const ch=buf.numberOfChannels,len=buf.length,rate=buf.sampleRate,out=new DataView(new ArrayBuffer(44+len*ch*2));
  const ws=(o,s)=>{for(let i=0;i<s.length;i++)out.setUint8(o+i,s.charCodeAt(i))};
  ws(0,'RIFF');out.setUint32(4,36+len*ch*2,true);ws(8,'WAVE');ws(12,'fmt ');out.setUint32(16,16,true);out.setUint16(20,1,true);
@@ -108,43 +200,61 @@ async function convert(file){
  const off=new OfflineAudioContext(1,len,rate),src=off.createBufferSource();src.buffer=dec;src.connect(off.destination);src.start();
  return wav(await off.startRendering());
 }
-async function upload(files){
- const nf=clean($('#newf').value.trim()).replace(/\//g,'_'),folder=$('#newf').value.trim()?nf:$('#folder').value;
- files=[...files];let done=0;$('#bar i').style.width='0';
- for(const f of files){
-  const row=document.createElement('div');row.className='job';row.innerHTML=`<span class="n">${f.name}</span><span class="st dim">wandle um …</span>`;$('#jobs').prepend(row);
+const AUDIO=/\.(wav|mp3|flac|aif|aiff|ogg|oga|m4a|aac|opus|webm)$/i;
+// items: [{file, rel}] rel = Pfad relativ zum aktuellen Ordner (mit Unterordnern)
+async function uploadItems(items){
+ items=items.filter(it=>AUDIO.test(it.file.name));
+ if(!items.length){alert('Keine Audiodateien gefunden');return;}
+ const base=cwd;let done=0;$('#bar i').style.width='0';
+ for(const it of items){
+  const parts=it.rel.split('/').filter(x=>x),fname=parts.pop();
+  const sub=parts.map(cleanSeg).join('/'),name=cleanSeg(fname.replace(/\.[^.]+$/,''))+'.wav',path=join(join(base,sub),name);
+  const row=document.createElement('div');row.className='job';row.innerHTML=`<span class="n">${esc(join(sub,fname))}</span><span class="st dim">wandle um …</span>`;$('#jobs').prepend(row);
   const st=row.querySelector('.st');
   try{
-   const isWav=/\.wav$/i.test(f.name);let blob=f;
-   if(!isWav||$('#conv').checked)blob=await convert(f);
-   const name=clean(f.name.replace(/\.[^.]+$/,''))+'.wav',path=(folder?folder+'/':'')+name;
+   if(depth(path)-1>MAXDEPTH)throw new Error('zu viele Ordnerebenen (max. '+MAXDEPTH+')');
+   const isWav=/\.wav$/i.test(fname);let blob=it.file;
+   if(!isWav||$('#conv').checked)blob=await convert(it.file);
    st.textContent='lade hoch …';
-   const r=await fetch('/api/upload?root=samples&path='+encodeURIComponent(path),{method:'PUT',body:blob});
-   if(!r.ok)throw new Error(await r.text());
+   await api('/api/upload?root=samples&path='+enc(path),{method:'PUT',body:blob});
    st.textContent='✓ '+fmt(blob.size);st.className='st ok';
   }catch(e){st.textContent='✗ '+(e.message||e);st.className='st bad';}
-  done++;$('#bar i').style.width=(done/files.length*100)+'%';
+  done++;$('#bar i').style.width=(done/items.length*100)+'%';
  }
- $('#newf').value='';refresh();
+ changed();
 }
-const drop=$('#drop');
-drop.onclick=()=>$('#pick').click();$('#pick').onchange=e=>upload(e.target.files);
-['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
-['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over')}));
-drop.addEventListener('drop',e=>upload(e.dataTransfer.files));
+$('#upf').onclick=()=>$('#pick').click();$('#upd2').onclick=()=>$('#pickdir').click();
+$('#pick').onchange=e=>{uploadItems([...e.target.files].map(f=>({file:f,rel:f.name})));e.target.value='';};
+$('#pickdir').onchange=e=>{uploadItems([...e.target.files].map(f=>({file:f,rel:f.webkitRelativePath||f.name})));e.target.value='';};
+function readEntry(en,prefix,out){return new Promise(res=>{
+ if(en.isFile)en.file(f=>{out.push({file:f,rel:prefix+f.name});res();},()=>res());
+ else if(en.isDirectory){const rd=en.createReader(),all=[];const next=()=>rd.readEntries(async es=>{if(es.length){all.push(...es);next();}else{for(const c of all)await readEntry(c,prefix+en.name+'/',out);res();}},()=>res());next();}
+ else res();});}
+const zone=$('#samples');
+['dragenter','dragover'].forEach(t=>zone.addEventListener(t,e=>{e.preventDefault();zone.classList.add('over')}));
+['dragleave','drop'].forEach(t=>zone.addEventListener(t,e=>{e.preventDefault();zone.classList.remove('over')}));
+zone.addEventListener('drop',async e=>{const its=[...(e.dataTransfer.items||[])],out=[];
+ if(its.length&&its[0].webkitGetAsEntry){const ens=its.map(i=>i.webkitGetAsEntry()).filter(x=>x);for(const en of ens)await readEntry(en,'',out);}
+ else [...e.dataTransfer.files].forEach(f=>out.push({file:f,rel:f.name}));
+ if(query){query='';$('#q').value='';hits=null;}
+ uploadItems(out);});
+// ---- Projekte
 $('#pup').onclick=()=>$('#ppick').click();
-$('#ppick').onchange=async e=>{const f=e.target.files[0];if(!f)return;const n=$('#pslot').value;
- if(state.projects.some(p=>p.path===n)&&!confirm(n+' ist belegt – überschreiben?'))return;
- const r=await fetch('/api/upload?root=projects&path='+encodeURIComponent(n),{method:'PUT',body:f});if(!r.ok)alert(await r.text());e.target.value='';refresh();};
+$('#ppick').onchange=async e=>{for(const f of e.target.files){const n=cleanSeg(f.name.replace(/\.gbx$/i,'').replace(/\//g,'_'))+'.gbx';
+ if(projects.some(p=>p.path.toLowerCase()===n.toLowerCase())&&!confirm('Projekt „'+n+'“ gibt es schon – überschreiben?'))continue;
+ try{await api('/api/upload?root=projects&path='+enc(n),{method:'PUT',body:f});}catch(err){alert(n+': '+err.message);}}
+ e.target.value='';refreshInfo();};
+// ---- Update, Logs
 $('#uup').onclick=()=>$('#upick').click();
 $('#upick').onchange=async e=>{const f=e.target.files[0];if(!f)return;const st=$('#ust');st.className='';st.textContent='lade hoch …';
  try{const r=await fetch('/api/update',{method:'PUT',body:f});const t=await r.text();if(!r.ok)throw new Error(t);
-  st.className='ok';st.textContent='✓ übertragen – Groovebox startet neu und installiert (ca. 15 s)';setTimeout(refresh,15000);}
+  st.className='ok';st.textContent='✓ übertragen – Groovebox startet neu und installiert (ca. 15 s)';setTimeout(refreshInfo,15000);}
  catch(err){st.className='bad';st.textContent='✗ '+(err.message||err);}e.target.value='';};
 async function loadLog(){const n=$('#logsel').value,v=$('#logview');v.style.display='';$('#logdl').href='/api/log?name='+n;$('#logdl').download=n;
- try{const r=await fetch('/api/log?name='+encodeURIComponent(n));v.textContent=await r.text();v.scrollTop=v.scrollHeight;}catch(e){v.textContent='keine Verbindung';}}
+ try{const r=await fetch('/api/log?name='+enc(n));v.textContent=await r.text();v.scrollTop=v.scrollHeight;}catch(e){v.textContent='keine Verbindung';}}
 $('#logload').onclick=loadLog;$('#logsel').onchange=loadLog;setInterval(()=>{if($('#logauto').checked)loadLog()},3000);
-refresh();setInterval(refresh,8000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)changed();});
+refreshInfo();loadDir(cwd);
 </script></body></html>)HTML";
 
 // Bildschirm-Spiegelung + Fernbedienung (http://<ip>/screen)

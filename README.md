@@ -334,10 +334,18 @@ SET → **Samples** zeigt: Dateien in der Bibliothek, Samples im Projekt, fehlen
 
 1. R36S per USB-Kabel mit dem PC verbinden und **PC-Modus** einschalten (SET → USB = PC).
 2. Im Browser **http://192.168.77.1** öffnen. Die Adresse steht auch in SET unter „Samples per Browser“.
-3. Dateien in das Feld ziehen. **WAV, MP3, FLAC, AIFF, OGG …** wandelt der Browser automatisch in Mono-WAV mit 44,1 kHz um (abschaltbar, optional normalisieren). Mit „neuer Ordner“ legst du einen Unterordner an.
+3. Der **Sample-Explorer** zeigt einen Ordner nach dem anderen (Pfadleiste oben, Klick auf einen Ordner öffnet ihn, „..“ geht zurück). Dateien **oder ganze Ordner** auf die Liste ziehen lädt sie in den angezeigten Ordner hoch, Unterordner bleiben erhalten (auch über „Ordner hochladen“). **WAV, MP3, FLAC, AIFF, OGG …** wandelt der Browser automatisch in Mono-WAV mit 44,1 kHz um (abschaltbar, optional normalisieren).
 4. Etwa 1,5 Sekunden nach dem letzten Upload liest die Groovebox die Bibliothek neu, ohne Aussetzer. Spuren behalten ihr Sample; geänderte Dateien im Projekt werden neu geladen.
 
-Auf derselben Seite kannst du Samples anhören und löschen sowie Projekte (SONG 01–32) sichern und hochladen.
+Im Explorer:
+* **Suche** über alle Ordner (Teil des Namens oder Ordners, bis 400 Treffer)
+* je Sample: ▶ anhören, **i** Infos (Format, Kanäle, Rate, Bits, Länge), ✎ umbenennen/verschieben (Pfad mit „/“), ⤓ herunterladen, ✕ löschen
+* **Mehrfachauswahl** (Häkchen): gemeinsam verschieben oder löschen
+* **+ Ordner** legt einen Unterordner an; Ordner lassen sich umbenennen/verschieben und samt Inhalt löschen (mit Rückfrage)
+* Ordnernamen vom USB-Stick mit Umlauten oder Sonderzeichen (&, Komma …) gehen; nur Zeichen, die FAT nicht kennt (`\ : * ? " < > |`), werden beim Hochladen ersetzt
+* Achtung: Projekte merken sich Samples per Name – umbenannte oder verschobene Samples dort neu wählen
+
+**Projekte** im Browser: hochladen mit beliebigem Namen (Name = Dateiname, bei gleichem Namen mit Rückfrage), herunterladen (Sicherung), umbenennen, löschen.
 
 Ein Start-Paket mit 13 selbst erzeugten Samples liegt bei: Drums, Keys, eine Vokal-Fläche und FX.
 Es wird mit `tools/gensamples.py` erzeugt.
