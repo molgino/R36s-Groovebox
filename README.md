@@ -177,13 +177,29 @@ Für alle Spuren mit Tonhöhe (Synth, FM, Wavetable, Samples …). Ein Trig spie
 
 Alle Werte lassen sich pro Step locken. Die Grafik zeigt die Tonfolge über die Trig-Länge.
 
-## Song-Modus (SNG-Seite, Gruppe PROJEKT)
+## Song-Modus (SNG-Seite, Gruppe PROJEKT): Clip-Matrix
 
-Eine Kette aus Patterns mit Wiederholungen (bis 64 Einträge):
-* ↑/↓ Eintrag wählen, ←/→ Pattern ändern, X/Y Wiederholungen, A neuer Eintrag, B löschen
-* Seite wechseln wie überall mit L2/R2, SELECT + rechtem Stick oder dem SELECT-Menü (rechter Stick links/rechts geht hier auch ohne SELECT)
-* **START** spielt den Song ab dem gewählten Eintrag, **R1** schaltet den Song-Modus an/aus
-* Im Song-Modus steht im Kopf „SNG 2/5“; START auf anderen Seiten setzt den Song fort
+Der Song ist eine **Matrix wie in einer Clip-Ansicht**: jede **Zeile** ist eine Szene (bis 64), jede **Spalte** eine Spur. In jeder Zelle steht, **welches Pattern diese Spur** in der Zeile spielt – Spur 1 kann also die Drums aus Pattern 1 spielen, während der Bass aus Pattern 4 kommt. Klang und Steps einer Spur kommen jeweils aus ihrem Pattern.
+
+* **Pattern-Mutes:** Stummschalten (Spurtasten auf LIVE, MIX, SELECT + A) gehört zum **Pattern** und wird mit ihm gespeichert. Wechselst du das Pattern, gelten dessen Mutes.
+* **Song-Mutes:** Jede Zeile hat eigene Mutes. Eine neue Zeile und jede Zelle, deren Pattern du änderst, **übernimmt die Mutes des Patterns**; danach kannst du sie in der Zeile frei ändern (das Pattern bleibt unverändert). Läuft der Song, wirkt Stummschalten auf die laufende Zeile.
+* Spalten: **ALLE** (alle Spuren gemeinsam), **1–8** (je Spur), **WDH** (Wiederholungen).
+
+| Taste | Wirkung |
+|---|---|
+| ↑/↓, ←/→ | Zelle wählen |
+| X / Y | Pattern der Zelle +/−; unter 01 wird die Zelle **leer** („--“, Spur schweigt). In ALLE: alle Spuren auf ein Pattern (bei „MIX“ vereinheitlicht der erste Druck). In WDH: Wiederholungen 1–16 |
+| A | Zelle stumm/an (rotes M). In ALLE: Mutes wieder von den Patterns übernehmen |
+| L1 | neue Zeile unter der gewählten (Kopie; im leeren Song: aktuelles Pattern mit seinen Mutes) |
+| B | Zeile löschen |
+| R1 | Song-Modus an/aus |
+| START | Song ab der gewählten Zeile spielen / stoppen |
+
+* Die Länge einer Zeile richtet sich nach der längsten belegten Spur. Spuren, deren Pattern in der nächsten Zeile gleich bleibt, laufen ohne Neustart weiter.
+* Im Song-Modus zeigen die Spurseiten das Pattern, das die gewählte Spur gerade spielt (Kopf „P04“). Bearbeiten wirkt auf dieses Pattern.
+* Ein Pattern-Wechsel (SELECT + ←/→, LIVE L2/R2, SET) beendet den Song-Modus.
+* Im Kopf steht „SNG2/5“; START auf anderen Seiten setzt den Song fort. Seite wechseln wie überall mit L2/R2.
+* Projekte ab Version 12 speichern Matrix und Mutes; ältere Songs (Pattern-Kette) werden beim Laden in Zeilen mit demselben Pattern auf allen Spuren umgestellt.
 
 ## Pattern-Mutation (SET → PATTERN)
 

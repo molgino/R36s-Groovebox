@@ -132,14 +132,52 @@ static void testSong() {
     curTest = "Song-Modus";
     fresh(120);
     E.proj.songLen = 2;
-    E.proj.song[0].pat = 0; E.proj.song[0].rep = 2;
-    E.proj.song[1].pat = 3; E.proj.song[1].rep = 1;
+    Engine::rowFromPattern(E.proj, E.proj.row[0], 0); E.proj.row[0].rep = 2;
+    Engine::rowFromPattern(E.proj, E.proj.row[1], 3);
     E.songStart(0); E.songOn = true;
     E.start();
     run(barFrames(120) * 2 + 2000);
-    CHECK(E.curPat == 3, "nach 2 Takten Pattern %d statt 4", E.curPat + 1);
+    CHECK(E.patOf(0) == 3 && E.patOf(7) == 3, "nach 2 Takten Pattern %d statt 4", E.patOf(0) + 1);
     run(barFrames(120));
-    CHECK(E.curPat == 0, "nach 3 Takten Pattern %d statt 1 (Schleife)", E.curPat + 1);
+    CHECK(E.patOf(0) == 0, "nach 3 Takten Pattern %d statt 1 (Schleife)", E.patOf(0) + 1);
+}
+
+// Clip-Matrix: jede Spur spielt ihr eigenes Pattern, leere Zelle und Mute schweigen
+static void testClipMatrix() {
+    curTest = "Clip-Matrix";
+    fresh(120);
+    for (int pi = 0; pi < 3; pi++) for (int t = 0; t < 3; t++) for (int st = 0; st < NSTEPS; st++) E.proj.pat[pi].s[t][st].on = 0;
+    for (int st = 0; st < 16; st += 4) E.proj.pat[0].s[0][st].on = 1;    // Pattern 1, Spur 1: 4 Trigs
+    for (int st = 0; st < 16; st += 2) E.proj.pat[5].s[1][st].on = 1;    // Pattern 6, Spur 2: 8 Trigs
+    E.proj.pat[5].len[1] = 16;
+    for (int st = 0; st < 16; st++) E.proj.pat[0].s[2][st].on = 1;       // Spur 3 in Pattern 1 voll, aber Zelle leer
+    E.proj.songLen = 1;
+    Project::SongRow& r = E.proj.row[0];
+    Engine::rowFromPattern(E.proj, r, 0);
+    r.pat[1] = 5; r.pat[2] = SONG_EMPTY;
+    E.songStart(0);
+    uint32_t a0 = trigs(0), a1 = trigs(1), a2 = trigs(2);
+    E.start();
+    run(barFrames(120) - 500);
+    CHECK(trigs(0) - a0 == 4, "Spur 1: %u Trigs statt 4", trigs(0) - a0);
+    CHECK(trigs(1) - a1 == 8, "Spur 2 (Pattern 6): %u Trigs statt 8", trigs(1) - a1);
+    CHECK(trigs(2) - a2 == 0, "leere Zelle spielt (%u Trigs)", trigs(2) - a2);
+    E.stop();
+    // Zeilen-Mute
+    r.mute = 1u << 1;
+    E.songStart(0); a1 = trigs(1);
+    E.start(); run(barFrames(120) - 500); E.stop();
+    CHECK(trigs(1) - a1 == 0, "Zeilen-Mute wirkt nicht (%u Trigs)", trigs(1) - a1);
+    // Pattern-Mute (ohne Song) und Uebernahme in neue Zeile
+    E.songOn = false; E.curPat = 0;
+    E.toggleMute(0);
+    CHECK(E.proj.patMute[0] == 1 && E.muted(0), "Pattern-Mute nicht gesetzt");
+    a0 = trigs(0);
+    E.start(); run(barFrames(120) - 500); E.stop();
+    CHECK(trigs(0) - a0 == 0, "Pattern-Mute wirkt nicht (%u Trigs)", trigs(0) - a0);
+    Project::SongRow r2; Engine::rowFromPattern(E.proj, r2, 0);
+    CHECK(r2.mute == 1 && r2.pat[3] == 0, "neue Zeile uebernimmt Pattern-Mutes nicht (%02x)", r2.mute);
+    E.toggleMute(0);
 }
 
 static void testArp() {
@@ -250,7 +288,7 @@ static void testSaveLoad() {
     fresh(133);
     Pattern& P = E.proj.pat[2];
     P.s[5][77].on = 2; P.s[5][77].lock[P_FREQ] = 42; P.len[5] = 99; P.speed[5] = 6;
-    E.proj.songLen = 3; E.proj.song[1].pat = 7;
+    E.proj.songLen = 3; Engine::rowFromPattern(E.proj, E.proj.row[1], 7); E.proj.row[1].pat[2] = SONG_EMPTY; E.proj.row[1].mute = 0x30; E.proj.patMute[4] = 0x81;
     static Project ref;
     memcpy(&ref, &E.proj, sizeof(Project));
     const char* path = "/tmp/gb-unit-test.gbx";
@@ -267,6 +305,16 @@ static void testSaveLoad() {
     CHECK(E.load(path), "Laden v9");
     CHECK(E.proj.version == PROJECT_VERSION, "Version %u", E.proj.version);
     CHECK(E.proj.pat[0].p[4][P_FTYP] == FT_LP24, "Migration LP12->LP24 fehlt (%d)", E.proj.pat[0].p[4][P_FTYP]);
+    // v11-Datei (Song als Kette, ohne Clip-Matrix): nur der alte Teil + Sample-Liste dahinter
+    fresh(120);
+    E.proj.songLen = 2; E.proj.songOld[0].pat = 3; E.proj.songOld[0].rep = 4; E.proj.songOld[1].pat = 9; E.proj.songOld[1].rep = 1;
+    E.proj.version = 11;
+    { FILE* g = fopen(path, "wb"); fwrite(&E.proj, PROJECT_V11_SIZE, 1, g); fwrite("SPL1\0\0", 1, 6, g); fclose(g); }
+    memset(E.proj.row, 0x77, sizeof E.proj.row);
+    CHECK(E.load(path), "Laden v11");
+    CHECK(E.proj.songLen == 2 && E.proj.row[0].pat[0] == 3 && E.proj.row[0].pat[7] == 3 && E.proj.row[0].rep == 4 && E.proj.row[1].pat[5] == 9,
+          "Song v11 nicht in Zeilen umgestellt (%d %d %d)", E.proj.row[0].pat[0], E.proj.row[0].rep, E.proj.row[1].pat[5]);
+    CHECK(E.proj.row[0].mute == 0 && E.proj.patMute[0] == 0, "Mutes nach Umstellung nicht leer");
     // kaputte Datei darf nicht geladen werden
     FILE* f = fopen(path, "wb"); fwrite("GBX1xxxx", 1, 8, f); fclose(f);
     CHECK(!E.load(path), "kaputte Datei wurde geladen");
@@ -326,6 +374,7 @@ int main(int argc, char** argv) {
     testEuclid();
     testTrigless();
     testSong();
+    testClipMatrix();
     testArp();
     testChord();
     testFactory();

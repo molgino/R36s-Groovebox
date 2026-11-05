@@ -96,5 +96,5 @@ static inline void buildDemo(Engine& E) {
     J.fx[FX_DTIM] = 6; J.fx[FX_DFBK] = 55; J.fx[FX_RSIZ] = 95;
     static const uint8_t chain[4][2] = {{0, 2}, {1, 4}, {2, 2}, {3, 4}};
     J.songLen = 4;
-    for (int i = 0; i < 4; i++) { J.song[i].pat = chain[i][0]; J.song[i].rep = chain[i][1]; }
+    for (int i = 0; i < 4; i++) { Engine::rowFromPattern(J, J.row[i], chain[i][0]); J.row[i].rep = chain[i][1]; }
 }

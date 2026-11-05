@@ -25,12 +25,18 @@ struct Project {
     Pattern pat[NPATTERNS];
     uint8_t cmp[8];          // ab Version 2: Kompressor
     uint8_t fx[8];           // ab Version 2: Delay/Reverb (vorher in mst)
-    // ab Version 9: Song (Pattern-Kette)
-    struct SongEntry { uint8_t pat, rep; } song[64];
-    uint8_t songLen;
+    // Version 9-11: Song als Pattern-Kette (nur noch zum Umstellen alter Projekte)
+    struct SongEntry { uint8_t pat, rep; } songOld[64];
+    uint8_t songLen;         // Anzahl Song-Zeilen
     uint8_t pad2[3];
+    // ab Version 12: Mutes je Pattern (Bit je Spur) und Song als Clip-Matrix: je Zeile ein Pattern pro Spur
+    uint8_t patMute[NPATTERNS];
+    struct SongRow { uint8_t pat[NTRACKS]; uint8_t rep, mute, pad[2]; } row[64];   // pat = SONG_EMPTY: Spur schweigt
 };
-enum { PROJECT_VERSION = 11, SONG_MAX = 64 };
+enum { PROJECT_VERSION = 12, SONG_MAX = 64, SONG_EMPTY = 255 };
+#include <stddef.h>
+enum { PROJECT_V11_SIZE = offsetof(Project, patMute) };   // Projekte v9-v11 enden hier (danach evtl. Sample-Namensliste)
+static_assert(PROJECT_V11_SIZE == 1602088, "Layout v11 veraendert");
 
 struct Rng {
     uint32_t s = 0x9E3779B9u;
@@ -173,11 +179,27 @@ public:
     volatile bool fill = false;        // FILL-Modus fuer Trig-Bedingungen
     volatile int loopCount[NTRACKS] = {0};
     uint32_t tmReg[NTRACKS] = {0};                    // Turing-Register (generativ)
-    bool mute[NTRACKS] = {false};
     volatile float dj = 0;     // -1..1 DJ-Filter (rechter Stick)
     bool solo[NTRACKS] = {false};
+    // Song-Zeile, die gerade gilt (Song-Modus an und Zeilen vorhanden), sonst nullptr
+    const Project::SongRow* songRow() const { return songOn && proj.songLen ? &proj.row[songPos % proj.songLen] : nullptr; }
+    bool songActive() const { return songOn && proj.songLen > 0; }
+    // Pattern, das Spur t gerade spielt: im Song je Spur aus der Zeile, sonst das aktuelle Pattern
+    int patOf(int t) const { return songActive() ? trkPat[t] : curPat; }
+    Pattern& TP(int t) { return proj.pat[patOf(t)]; }
+    const Pattern& TP(int t) const { return proj.pat[patOf(t)]; }
+    // Stumm: im Song die Mutes der Zeile (leere Zelle = stumm), sonst die Mutes des Patterns
+    bool muted(int t) const {
+        if (const Project::SongRow* r = songRow()) return r->pat[t] == SONG_EMPTY || ((r->mute >> t) & 1);
+        return (proj.patMute[curPat % NPATTERNS] >> t) & 1;
+    }
+    void toggleMute(int t) {
+        if (songActive()) { Project::SongRow& r = proj.row[songPos % proj.songLen]; if (r.pat[t] != SONG_EMPTY) r.mute ^= (uint8_t)(1u << t); }
+        else proj.patMute[curPat % NPATTERNS] ^= (uint8_t)(1u << t);
+    }
+    void setMute(int t, bool m) { if (muted(t) != m) toggleMute(t); }
     bool audible(int t) const {   // Mute/Solo
-        if (mute[t]) return false;
+        if (muted(t)) return false;
         for (int i = 0; i < NTRACKS; i++) if (solo[i]) return solo[t];
         return true;
     }
@@ -203,6 +225,10 @@ public:
     // Song-Modus: Pattern-Kette proj.song abspielen
     volatile bool songOn = false;
     volatile int songPos = 0, songRep = 0;
+    volatile uint8_t trkPat[NTRACKS] = {0};   // Song: Pattern je Spur (aus der laufenden Zeile)
+    volatile bool rowPending = false;          // Song: neue Zeile beim naechsten Pattern-Anfang uebernehmen
+    void applyRow(int pos);                    // Pattern je Spur aus Zeile pos setzen
+    static void rowFromPattern(Project& J, Project::SongRow& r, int pat);   // Zeile: alle Spuren pat, Mutes vom Pattern
     void songStart(int pos);   // ab Eintrag pos (nur Engine-Zustand; Wiedergabe startet mit start())
 
     void init(int sampleRate);
@@ -259,7 +285,7 @@ private:
     void doTick();
     void stepTrack(int t);
     bool condOk(int t, int cond);
-    double trackStepSamples(int t) const { return stepSamples() * SPEED_TPS[proj.pat[curPat].speed[t] % 7] / 12.0; }
+    double trackStepSamples(int t) const { return stepSamples() * SPEED_TPS[TP(t).speed[t] % 7] / 12.0; }
     bool sendStart = false, sendStop = false;
     void initFx(int sampleRate);
     void emit(uint8_t st, uint8_t d1, uint8_t d2, int off) { if (midiOut) midiOut(st, d1, d2, off); }

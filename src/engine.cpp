@@ -970,7 +970,7 @@ void Engine::allNotesOff() {
 }
 
 void Engine::liveNoteOn(int t, int note, int vel) {
-    Pattern& P = proj.pat[curPat];
+    Pattern& P = TP(t);
     note = quantizeNote(note, proj.mst[MS_SCALE]);
     v[t].scaleVal = proj.mst[MS_SCALE];
     memset(liveLk[t], NO_LOCK, NPARAMS);
@@ -1031,7 +1031,7 @@ void Engine::midiIn(uint8_t st, uint8_t d1, uint8_t d2) {
     } else if (type == 0xB0) {
         if (d1 == 1) { dj = (d2 - 64) / 64.f; return; }        // Modulationsrad = DJ-Filter
         if (d1 < 70 || d1 > 77 || uiPage < 0 || uiPage >= NPAGES) return;   // CC 70-77 = Regler 1-8 (uiPage = Speicherseite)
-        Pattern& P = proj.pat[curPat];
+        Pattern& P = TP(t);
         int idx = uiPage * 8 + (d1 - 70);
         const ParamDef& d = paramDef(P.machine[t], idx);
         if (d.kind == K_NONE) return;
@@ -1108,7 +1108,7 @@ void Engine::defaultProject(bool demo) {
 }
 
 void Engine::start() {
-    if (songOn && proj.songLen > 0) { curPat = proj.song[songPos % proj.songLen].pat % NPATTERNS; songRep = 0; nextPat = -1; }
+    if (songActive()) { applyRow(songPos); songRep = 0; nextPat = -1; rowPending = false; }
     if (nextPat >= 0) { curPat = nextPat; nextPat = -1; }
     for (int t = 0; t < NTRACKS; t++) { resetSeq(t); skipStep[t] = -1; }
     patTick = 0; globalTick = 0;
@@ -1131,7 +1131,7 @@ void Engine::preview(int t, const Step* s) {
 }
 
 void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, bool toMidi) {
-    Pattern& P = proj.pat[curPat];
+    Pattern& P = TP(t);
     const uint8_t* b = P.p[t];
     auto val = [&](int i) { return (lk && lk[i] != NO_LOCK) ? lk[i] : b[i]; };
     float ls = lenSteps(val(P_LEN));
@@ -1215,7 +1215,7 @@ void Engine::trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, boo
 }
 
 void Engine::playNote(int t, const uint8_t* lk, float velScale, int gs, bool toMidi) {
-    Pattern& P = proj.pat[curPat];
+    Pattern& P = TP(t);
     const uint8_t* b = P.p[t];
     auto val = [&](int i) { return (lk && lk[i] != NO_LOCK) ? lk[i] : b[i]; };
     v[t].scaleVal = proj.mst[MS_SCALE];
@@ -1242,13 +1242,27 @@ void Engine::arpFire(int t) {
     playNote(t, a.lk, vel, a.gate, true);
 }
 
+void Engine::applyRow(int pos) {
+    if (!proj.songLen) return;
+    const Project::SongRow& r = proj.row[((pos % proj.songLen) + proj.songLen) % proj.songLen];
+    int first = -1;
+    for (int t = 0; t < NTRACKS; t++) if (r.pat[t] != SONG_EMPTY) { trkPat[t] = (uint8_t)(r.pat[t] % NPATTERNS); if (first < 0) first = trkPat[t]; }
+    if (first >= 0) for (int t = 0; t < NTRACKS; t++) if (r.pat[t] == SONG_EMPTY) trkPat[t] = (uint8_t)first;   // leere Spur: Klang egal (stumm)
+    if (first >= 0) curPat = first;
+}
+
+void Engine::rowFromPattern(Project& J, Project::SongRow& r, int pat) {
+    for (int t = 0; t < NTRACKS; t++) r.pat[t] = (uint8_t)pat;
+    r.rep = 1; r.mute = J.patMute[pat % NPATTERNS]; r.pad[0] = r.pad[1] = 0;
+}
+
 void Engine::songStart(int pos) {
     if (proj.songLen == 0) { songOn = false; return; }
     songPos = ((pos % proj.songLen) + proj.songLen) % proj.songLen;
     songRep = 0;
     songOn = true;
-    int pt = proj.song[songPos].pat % NPATTERNS;
-    if (playing) nextPat = pt; else { curPat = pt; nextPat = -1; }
+    nextPat = -1;
+    if (playing) rowPending = true; else { applyRow(songPos); rowPending = false; }
 }
 
 // Trig-Bedingung pruefen (Digitone-II-Stil). Ergebnis wird fuer PRE/NEI gemerkt.
@@ -1275,7 +1289,7 @@ bool Engine::condOk(int t, int c) {
 }
 
 int Engine::seqP(int t, int i) {
-    int r = proj.pat[curPat].p[t][i];
+    int r = TP(t).p[t][i];
     const Voice& vo = v[t];
     for (int k = 0; k < NLFO; k++)
         if (vo.lfDst[k] == i) { r += (int)vo.lfOff[k]; if (r < 0) r = 0; if (r > vo.lfMax[k]) r = vo.lfMax[k]; }
@@ -1285,7 +1299,7 @@ int Engine::seqP(int t, int i) {
 void Engine::resetSeq(int t) {
     pend[t][0].on = pend[t][1].on = false; preDone[t] = -1;
     trackPos[t] = 0; trackTick[t] = 0; loopCount[t] = 0; lastCond[t] = false; dirSt[t] = 1; stepCnt[t] = 0;
-    int dens = proj.pat[curPat].p[t][P_DENS];
+    int dens = TP(t).p[t][P_DENS];
     tmReg[t] = 0;
     for (int b = 0; b < 32; b++) if (rng.uni() * 100.f < dens) tmReg[t] |= 1u << b;
 }
@@ -1299,7 +1313,7 @@ static bool euclidHit(int s, int k, int n, int rot) {
 
 // Bedingung/Wahrscheinlichkeit pruefen und Locks (inkl. generierter Note) fuer einen Step bereitstellen
 bool Engine::trigFor(int t, int s, bool on, uint32_t reg, uint8_t* outLk) {
-    Pattern& P = proj.pat[curPat];
+    Pattern& P = TP(t);
     Step& st = P.s[t][s];
     if (!on) return false;
     int cond = st.lock[P_COND] != NO_LOCK ? st.lock[P_COND] : P.p[t][P_COND];
@@ -1327,7 +1341,7 @@ void Engine::schedule(int t, double at, int s, const uint8_t* lk) {
 static bool euclidHit(int s, int k, int n, int rot);
 
 void Engine::stepTrack(int t) {
-    Pattern& P = proj.pat[curPat];
+    Pattern& P = TP(t);
     int len = P.len[t] < 1 ? 1 : (P.len[t] > NSTEPS ? NSTEPS : P.len[t]);
     int dir = P.p[t][P_DIR] % 6;
     int s = trackPos[t] % len;
@@ -1408,31 +1422,36 @@ void Engine::stepTrack(int t) {
 
 // ein Tick (12 pro 16tel): Spuren mit eigener Geschwindigkeit, Pattern-Ende = laengste Spur
 void Engine::doTick() {
-    Pattern* P = &proj.pat[curPat];
-    if (patTick == 0 && nextPat >= 0) {
-        curPat = nextPat; nextPat = -1;
-        P = &proj.pat[curPat];
-        for (int t = 0; t < NTRACKS; t++) resetSeq(t);
+    if (patTick == 0) {
+        if (songActive() && rowPending) {   // Song: Pattern je Spur aus der neuen Zeile
+            rowPending = false;
+            uint8_t old[NTRACKS]; for (int t = 0; t < NTRACKS; t++) old[t] = trkPat[t];
+            applyRow(songPos);
+            for (int t = 0; t < NTRACKS; t++) if (trkPat[t] != old[t]) resetSeq(t);   // gleiche Clips laufen weiter
+        } else if (nextPat >= 0) {
+            curPat = nextPat; nextPat = -1;
+            for (int t = 0; t < NTRACKS; t++) resetSeq(t);
+        }
     }
-    for (int t = 0; t < NTRACKS; t++) {
-        int tps = SPEED_TPS[P->speed[t] % 7];
-        if (trackTick[t] % tps == 0) stepTrack(t);
-        trackTick[t]++;
-        int len = P->len[t] < 1 ? 1 : P->len[t];
-        if (trackTick[t] >= len * tps) trackTick[t] = 0;
-    }
+    const Project::SongRow* row = songRow();
     long master = 0;
     for (int t = 0; t < NTRACKS; t++) {
-        long l = (long)(P->len[t] < 1 ? 1 : P->len[t]) * SPEED_TPS[P->speed[t] % 7];
+        const Pattern& P = TP(t);
+        int tps = SPEED_TPS[P.speed[t] % 7];
+        if (trackTick[t] % tps == 0) stepTrack(t);
+        trackTick[t]++;
+        int len = P.len[t] < 1 ? 1 : P.len[t];
+        if (trackTick[t] >= len * tps) trackTick[t] = 0;
+        if (row && row->pat[t] == SONG_EMPTY) continue;   // leere Zelle bestimmt die Zeilenlaenge nicht
+        long l = (long)len * tps;
         if (l > master) master = l;
     }
+    if (master <= 0) master = 16 * 12;
     if (++patTick >= master) {
         patTick = 0;
-        if (songOn && proj.songLen > 0 && nextPat < 0) {   // Song: Wiederholungen zaehlen, dann naechster Eintrag
-            int rep = proj.song[songPos % proj.songLen].rep; if (rep < 1) rep = 1;
-            if (++songRep >= rep) { songRep = 0; songPos = (songPos + 1) % proj.songLen; }
-            int np = proj.song[songPos].pat % NPATTERNS;
-            if (np != curPat) nextPat = np;
+        if (songActive()) {   // Song: Wiederholungen zaehlen, dann naechste Zeile
+            int rep = proj.row[songPos % proj.songLen].rep; if (rep < 1) rep = 1;
+            if (++songRep >= rep) { songRep = 0; songPos = (songPos + 1) % proj.songLen; rowPending = true; }
         }
     }
     if (clockMode == 1 && (globalTick & 1) == 0) emit(0xF8, 0, 0, curOff);   // 24 ppqn
@@ -1737,8 +1756,11 @@ bool Engine::load(const char* path) {
     // v5..v7: 72 bzw. 80 Parameter, 128 Steps, speed-Feld
     long nNp = ver == 5 ? 72 : (ver <= 7 ? 80 : 88);
     long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nSize = 20 + NPATTERNS * nPat + 16;
-    if (ok && (ver == PROJECT_VERSION || ver == 9 || ver == 10) && size >= (long)sizeof(Project)) {   // dahinter evtl. Sample-Namensliste   // v9/v10 = gleiches Layout
+    if (ok && ver == PROJECT_VERSION && size >= (long)sizeof(Project)) {   // dahinter evtl. Sample-Namensliste
         memcpy(&proj, buf, sizeof(Project));
+    } else if (ok && ver >= 9 && ver <= 11 && size >= (long)PROJECT_V11_SIZE) {   // v9-v11: gleiches Layout ohne Mutes/Clip-Song
+        memset(&proj, 0, sizeof(Project));
+        memcpy(&proj, buf, PROJECT_V11_SIZE);
         proj.version = PROJECT_VERSION;
     } else if (ok && ver >= 5 && ver <= 8 && size == nSize) {
         Project* np = (Project*)malloc(sizeof(Project));
@@ -1818,6 +1840,11 @@ bool Engine::load(const char* path) {
         printf("Projekt von Version %u auf %d umgestellt\n", ver, PROJECT_VERSION);
     } else {
         ok = false;
+    }
+    if (ok && ver < 12) {   // bis v11: Song war eine Pattern-Kette -> Zeilen mit demselben Pattern auf allen Spuren
+        memset(proj.patMute, 0, sizeof proj.patMute);
+        if (proj.songLen > SONG_MAX) proj.songLen = 0;
+        for (int i = 0; i < SONG_MAX; i++) { rowFromPattern(proj, proj.row[i], proj.songOld[i].pat % NPATTERNS); proj.row[i].rep = proj.songOld[i].rep < 1 ? 1 : proj.songOld[i].rep; }
     }
     if (ok && ver < 10) {   // bis v9: SYNTH/WTBL spielten den Tiefpass mit 24 dB -> Typ LP24
         for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {

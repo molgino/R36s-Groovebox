@@ -223,7 +223,7 @@ static void simReset() {
     simLX = simLY = simRX = simRY = 0;
     for (int i = 0; i < 6; i++) simFrame();
     page = PG_TRG; track = 0; slot = 0; cursor = 0; menuOpen = false; confirmOpen = false; aHeld = false; lockLatch = false;
-    eng.curPat = 0; eng.nextPat = -1;
+    eng.curPat = 0; eng.nextPat = -1; eng.songOn = false;
     for (int i = 0; i < 4; i++) simFrame();
     simKeys = 0;
 }
@@ -314,8 +314,8 @@ static void uiScenarios() {
 
     uiCase = "Mute/Play";
     simReset();
-    bool m0 = eng.mute[0];
-    combo(BT_SELECT, BT_A); UCHECK(eng.mute[0] != m0, "SELECT+A schaltet nicht stumm");
+    bool m0 = eng.muted(0);
+    combo(BT_SELECT, BT_A); UCHECK(eng.muted(0) != m0, "SELECT+A schaltet nicht stumm");
     combo(BT_SELECT, BT_A);
     tap(BT_START); UCHECK(eng.playing, "START spielt nicht");
     tap(BT_START); UCHECK(!eng.playing, "START stoppt nicht");
@@ -332,6 +332,47 @@ static void uiScenarios() {
     tap(BT_R2); UCHECK(page != PG_SONG, "R2 verlaesst die Song-Seite nicht");
     page = PG_SONG; simWait(50);
     tap(BT_L2); UCHECK(page != PG_SONG, "L2 verlaesst die Song-Seite nicht");
+
+    uiCase = "Clip-Matrix";
+    {
+        Project& J = eng.proj;
+        simReset(); J.songLen = 0; memset(J.patMute, 0, sizeof J.patMute);
+        eng.toggleMute(2);   // Pattern-Mute: Spur 3 in Pattern 1
+        UCHECK(J.patMute[0] == 4 && eng.muted(2), "Pattern-Mute nicht gesetzt");
+        page = PG_SONG; simWait(10); songCol = SC_ALL;
+        tap(BT_L1);
+        UCHECK(J.songLen == 1 && J.row[0].pat[5] == 0 && J.row[0].mute == 4, "neue Zeile: Pattern %d, Mutes %02x (erwartet 1, 04)", J.row[0].pat[5] + 1, J.row[0].mute);
+        tap(BT_RIGHT); tap(BT_RIGHT);   // Spalte Spur 2
+        tap(BT_X); tap(BT_X);
+        UCHECK(J.row[0].pat[1] == 2 && rowAllPat(J.row[0]) < 0, "Spur 2 nicht auf Pattern 3 (%d)", J.row[0].pat[1] + 1);
+        tap(BT_A);
+        UCHECK(J.row[0].mute & 2, "A schaltet die Zelle nicht stumm");
+        for (int i = 0; i < 4; i++) tap(BT_Y);
+        UCHECK(J.row[0].pat[1] == SONG_EMPTY, "Y bis unter 01 ergibt keine leere Zelle (%d)", J.row[0].pat[1]);
+        tap(BT_L1);
+        UCHECK(J.songLen == 2 && songSel == 1 && !memcmp(J.row[1].pat, J.row[0].pat, NTRACKS), "L1 kopiert die Zeile nicht");
+        J.patMute[1] = 0x80;
+        tap(BT_LEFT); tap(BT_LEFT); tap(BT_LEFT);
+        UCHECK(songCol == SC_ALL, "Spalte ALLE nicht erreichbar (%d)", songCol);
+        tap(BT_X);   // MIX -> vereinheitlichen
+        UCHECK(rowAllPat(J.row[1]) == 0, "ALLE vereinheitlicht nicht (%d)", rowAllPat(J.row[1]));
+        tap(BT_X);
+        UCHECK(rowAllPat(J.row[1]) == 1 && J.row[1].mute == 0x80, "ALLE: Pattern %d, Mutes %02x (erwartet 2, 80)", rowAllPat(J.row[1]) + 1, J.row[1].mute);
+        tap(BT_R1);
+        UCHECK(eng.songActive() && eng.songPos == 1 && curPi() == 1 && eng.muted(7) && !eng.muted(2), "Song an: Zeile %d, Pattern %d", eng.songPos + 1, curPi() + 1);
+        songSel = 0; simWait(2);
+        UCHECK(eng.patOf(1) == 1, "Zeile 2 laeuft nicht");
+        eng.songStart(0); simWait(2);
+        UCHECK(eng.patOf(0) == 0 && eng.muted(1) && eng.muted(2) && !eng.muted(0), "Zeile 1: leere Zelle / Mute falsch");
+        eng.toggleMute(0);   // Mute im Song-Modus aendert die Zeile, nicht das Pattern
+        UCHECK((J.row[0].mute & 1) && !(J.patMute[0] & 1), "Mute im Song landet nicht in der Zeile");
+        tap(BT_B);
+        UCHECK(J.songLen == 1, "B loescht die Zeile nicht");
+        page = PG_TRG; simWait(2);
+        combo(BT_SELECT, BT_RIGHT);
+        UCHECK(!eng.songOn, "Pattern-Wechsel beendet den Song-Modus nicht");
+        J.songLen = 0; memset(J.patMute, 0, sizeof J.patMute); eng.songOn = false;
+    }
 
     uiCase = "Einstellungen";
     simReset(); page = PG_SYS; simWait(50);
@@ -359,9 +400,9 @@ static void uiScenarios() {
     uiCase = "LIVE-Seite";
     simReset(); goPage(PG_LIVE);
     UCHECK(page == PG_LIVE, "LIVE nicht erreichbar (Seite %d)", page);
-    bool m5 = eng.mute[4];
-    tap(BT_UP); UCHECK(eng.mute[0], "Steuerkreuz hoch schaltet Spur 1 nicht stumm");
-    tap(BT_X); UCHECK(eng.mute[4] != m5, "X schaltet Spur 5 nicht");
+    bool m5 = eng.muted(4);
+    tap(BT_UP); UCHECK(eng.muted(0), "Steuerkreuz hoch schaltet Spur 1 nicht stumm");
+    tap(BT_X); UCHECK(eng.muted(4) != m5, "X schaltet Spur 5 nicht");
     tap(BT_UP); tap(BT_X);
     holdDown(BT_L1); UCHECK(eng.fill, "L1 halten = FILL"); release(BT_L1); UCHECK(!eng.fill, "FILL bleibt nach Loslassen");
     eng.start();
@@ -486,6 +527,22 @@ static void uiScenarios() {
             doLoadProject("PoolTest");
             int s2 = curP().p[7][P_S0];
             UCHECK(sampleGet(s2) && !strcmp(sampleName(s2), want), "nach Projekt-Laden '%s' statt '%s'", sampleName(s2), want);
+            {   // dasselbe Projekt im Format v11 (kuerzer, Namensliste direkt danach) muss sein Sample ebenso finden
+                char pp[700]; projectPath("PoolTest", pp, sizeof pp);
+                FILE* f = fopen(pp, "rb"); long n = 0; uint8_t* buf = nullptr;
+                if (f) { fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET); buf = (uint8_t*)malloc(n); if (fread(buf, 1, n, f) != (size_t)n) n = 0; fclose(f); }
+                if (buf && n > (long)sizeof(Project)) {
+                    uint32_t v11 = 11; memcpy(buf + 4, &v11, 4);
+                    f = fopen(pp, "wb");
+                    fwrite(buf, 1, PROJECT_V11_SIZE, f); fwrite(buf + sizeof(Project), 1, n - sizeof(Project), f); fclose(f);
+                    poolSetSlot(s2, "");
+                    doLoadProject("PoolTest");
+                    int s4 = curP().p[7][P_S0];
+                    UCHECK(sampleGet(s4) && !strcmp(sampleName(s4), want), "v11-Projekt: Sample '%s' statt '%s'", sampleName(s4), want);
+                    s2 = s4;
+                }
+                free(buf);
+            }
             char pp[700]; presetFile(M_SAMPLE, "PoolSound", pp, sizeof pp);
             UCHECK(savePresetFile(7, pp), "Sound mit Sample nicht gespeichert");
             poolSetSlot(s2, "");

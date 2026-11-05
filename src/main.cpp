@@ -618,7 +618,21 @@ static void animate() {
 
 // ---------------------------------------------------------------- Bildschirm
 
-static Pattern& curP() { return eng.proj.pat[eng.curPat]; }
+static int curPi() { return eng.patOf(track); }   // Pattern der gewaehlten Spur (im Song: aus der laufenden Zeile)
+static Pattern& curP() { return eng.proj.pat[curPi()]; }
+static void toast(const char* fmt, ...);
+static void lockA();
+static void unlockA();
+// Pattern wechseln (am Pattern-Ende, falls es laeuft). Im Song-Modus: Song aus, dann wechseln
+static void switchPattern(int to) {
+    to = (to % NPATTERNS + NPATTERNS) % NPATTERNS;
+    lockA();
+    bool wasSong = eng.songActive();
+    if (wasSong) { eng.songOn = false; eng.curPat = eng.trkPat[0]; }
+    if (eng.playing) eng.nextPat = to; else { eng.curPat = to; eng.nextPat = -1; }
+    unlockA();
+    if (wasSong) toast(TR("SONG AUS - PATTERN %02d", "SONG OFF - PATTERN %02d"), to + 1);
+}
 static Step& holdS() { return eng.proj.pat[holdPat].s[holdTrack][holdStep]; }
 
 // Rueckgaengig: Stapel von Pattern-Staenden; zusammenhaengende Aenderungen (bis 0,8 s Pause) = ein Schritt
@@ -627,12 +641,9 @@ static Pattern undoBuf[UNDO_N], undoShadow, redoBuf;
 static int undoPat[UNDO_N], undoTop = 0, undoCnt = 0, undoShadowPat = -1, redoPat = -1;
 static bool undoDirty = false;
 static Uint32 undoLastChange = 0;
-static void toast(const char* fmt, ...);
-static void lockA();
-static void unlockA();
 static void undoTrack(Uint32 now) {   // einmal pro Bild nach der Eingabe
-    const Pattern& P = eng.proj.pat[eng.curPat];
-    if (eng.curPat != undoShadowPat) { undoShadow = P; undoShadowPat = eng.curPat; undoDirty = false; return; }
+    const Pattern& P = curP();
+    if (curPi() != undoShadowPat) { undoShadow = P; undoShadowPat = curPi(); undoDirty = false; return; }
     if (memcmp(&P, &undoShadow, sizeof(Pattern))) {
         if (!undoDirty) {   // erster Schritt einer Aenderung: Stand davor sichern
             undoBuf[undoTop] = undoShadow; undoPat[undoTop] = undoShadowPat;
@@ -649,7 +660,7 @@ static void undoStep() {
     int pi = undoPat[undoTop];
     redoBuf = eng.proj.pat[pi]; redoPat = pi;
     lockA(); eng.proj.pat[pi] = undoBuf[undoTop]; unlockA();
-    if (pi == eng.curPat) undoShadow = undoBuf[undoTop];
+    if (pi == curPi()) undoShadow = undoBuf[undoTop];
     undoDirty = false;
     toast(TR("RÜCKGÄNGIG: PATTERN %02d (%d WEITERE)", "UNDO: PATTERN %02d (%d MORE)"), pi + 1, undoCnt);
 }
@@ -763,7 +774,7 @@ static void drawHeader() {
         fill(x, 41, 8, 1, c, (Uint8)(30 + 110 * beatPulse));
         fill(x, 42, 8, 1, c, (Uint8)(10 + 40 * beatPulse));
     }
-    snprintf(b, sizeof b, "P%02d", eng.curPat + 1);
+    snprintf(b, sizeof b, "P%02d", curPi() + 1);
     text(8, 4, b, C_TEXT, 2);
     if (eng.nextPat >= 0) {
         if ((SDL_GetTicks() / 250) % 2) { snprintf(b, sizeof b, ">%02d", eng.nextPat + 1); text(58, 4, b, C_ACC); }
@@ -783,7 +794,7 @@ static void drawHeader() {
     if (eng.proj.mst[MS_SWNG]) { snprintf(b, sizeof b, "SW %d%%", 50 + eng.proj.mst[MS_SWNG]); text(84, 21, b, C_DIM); }
     else text(84, 21, eng.playing ? "PLAY" : "STOP", eng.playing ? C_GREEN : C_DIM);
     if (eng.songOn && eng.proj.songLen && !eng.recording && !eng.fill) {
-        snprintf(b, sizeof b, "SNG %d/%d", eng.songPos + 1, eng.proj.songLen);
+        snprintf(b, sizeof b, "SNG%d/%d", eng.songPos + 1, eng.proj.songLen);
         text(140, 21, b, C_CYAN);
     } else if (curScale() && !eng.recording && !eng.fill) { snprintf(b, sizeof b, "%s%s", NOTE_NAMES[(curScale() - 1) % 12], SCALE_NAMES[scaleType(curScale()) - 1]); text(140, 21, b, dimC(C_ACC, 0.8f)); }
     if (eng.recording) {
@@ -797,7 +808,7 @@ static void drawHeader() {
     }
     {
         int m = curP().machine[track] % M_COUNT;
-        Col hc = eng.mute[track] ? C_DIM : mix(tc, C_PLAY, flash[track] * 0.35f);
+        Col hc = eng.muted(track) ? C_DIM : mix(tc, C_PLAY, flash[track] * 0.35f);
         int is = 30 + (int)(flash[track] * 4);
         drawIcon(m, 206 - is / 2, 20 - is / 2, is, hc);
         text(226, 4, MACHINE_NAMES[m], hc, 2);
@@ -1922,7 +1933,7 @@ static void drawMixer(int ox) {
         text(x + 8, y + 4, b, sel ? TCOL[t] : C_TEXT);
         drawIcon(P.machine[t] % M_COUNT, x + 8, y + 19, 22, mix(TCOL[t], C_PLAY, flash[t] * 0.5f));
         // Mute / Solo
-        rrect(x + 50, y + 5, 22, 14, 3, eng.mute[t] ? C_TRIG : C_OFF2); text(x + 57, y + 4, "M", eng.mute[t] ? C_BG : C_DIM);
+        rrect(x + 50, y + 5, 22, 14, 3, eng.muted(t) ? C_TRIG : C_OFF2); text(x + 57, y + 4, "M", eng.muted(t) ? C_BG : C_DIM);
         rrect(x + 50, y + 21, 22, 14, 3, eng.solo[t] ? C_LOCK : C_OFF2); text(x + 57, y + 20, "S", eng.solo[t] ? C_BG : C_DIM);
         // Fader + Pegel
         int fy = y + 44, fh = 84, vol = P.p[t][P_VOL];
@@ -2156,15 +2167,15 @@ static void drawGrid() {
     rrect(0, (int)hlY - 2, SW, 18, 4, C_PANEL);   // gleitende Spur-Markierung
     for (int t = 0; t < NTRACKS; t++) {
         int y = y0 + t * 18;
-        Col tc = eng.mute[t] ? dimC(TCOL[t], 0.35f) : TCOL[t];
+        Col tc = eng.muted(t) ? dimC(TCOL[t], 0.35f) : TCOL[t];
         int chipH = 14 + (int)(flash[t] * 4);
         rrect(4, y + 7 - chipH / 2, 4, chipH, 1, mix(tc, C_PLAY, flash[t] * 0.7f));
-        Col lc = eng.mute[t] ? C_DIM : (t == track ? TCOL[t] : C_TEXT);
+        Col lc = eng.muted(t) ? C_DIM : (t == track ? TCOL[t] : C_TEXT);
         snprintf(b, sizeof b, "%d", t + 1);
         text(12, y - 2, b, lc);
-        drawIcon(P.machine[t] % M_COUNT, 21, y - 1, 15, eng.mute[t] ? C_DIM : mix(TCOL[t], C_PLAY, flash[t] * 0.6f));
+        drawIcon(P.machine[t] % M_COUNT, 21, y - 1, 15, eng.muted(t) ? C_DIM : mix(TCOL[t], C_PLAY, flash[t] * 0.6f));
         text(39, y - 2, MACHINE_NAMES[P.machine[t] % M_COUNT], lc);
-        if (eng.mute[t]) fill(39, y + 5, 40, 1, C_TRIG);
+        if (eng.muted(t)) fill(39, y + 5, 40, 1, C_TRIG);
         if (P.p[t][P_PULS] > 0 || P.p[t][P_DENS] > 0) rrect(32, y - 1, 5, 5, 2, C_LOCK);   // Euklid/Generator aktiv
         int mw = clampi((int)(sqrtf(meterV[t]) * 62), 0, 62);
         fill(12, y + 13, 62, 2, C_OFF);
@@ -2204,7 +2215,7 @@ static void drawGrid() {
 static void drawSteps() {
     const Pattern& P = curP();
     char b[8];
-    Col tc = eng.mute[track] ? dimC(TCOL[track], 0.35f) : TCOL[track];
+    Col tc = eng.muted(track) ? dimC(TCOL[track], 0.35f) : TCOL[track];
     int len = P.len[track];
     int sv = curScale();
     if (eng.recording) {
@@ -2361,20 +2372,20 @@ static void miniTile(int k, int x, int y, int w, int h, Col tc) {
 static void drawSigB() {
     const Pattern& P = curP();
     char b[32];
-    Col tc = eng.mute[track] ? dimC(TCOL[track], 0.35f) : TCOL[track];
+    Col tc = eng.muted(track) ? dimC(TCOL[track], 0.35f) : TCOL[track];
     // --- links: alle Spuren
     int len0 = P.len[track] < 1 ? 1 : P.len[track];
     int base = (cursor / 16) * 16;
     for (int t = 0; t < NTRACKS; t++) {
         int y = 46 + t * 46, x = 2, w = 110, h = 43;
         bool sel = t == track;
-        Col c = eng.mute[t] ? dimC(TCOL[t], 0.35f) : TCOL[t];
+        Col c = eng.muted(t) ? dimC(TCOL[t], 0.35f) : TCOL[t];
         rrect(x, y, w, h, 5, sel ? C_SEL : C_PANEL);
         if (sel) { rrect(x, y, w, 2, 1, c); rrect(x, y + h - 2, w, 2, 1, c); rrect(x, y, 2, h, 1, c); rrect(x + w - 2, y, 2, h, 1, c); }
         drawIcon(P.machine[t] % M_COUNT, x + 5, y + 4, 14, mix(c, C_PLAY, flash[t] * 0.6f));
         snprintf(b, sizeof b, "%d %.6s", t + 1, MACHINE_NAMES[P.machine[t] % M_COUNT]);
-        text(x + 22, y + 2, b, eng.mute[t] ? C_DIM : (sel ? c : C_TEXT));
-        if (eng.mute[t]) text(x + w - 14, y + 2, "M", C_TRIG);
+        text(x + 22, y + 2, b, eng.muted(t) ? C_DIM : (sel ? c : C_TEXT));
+        if (eng.muted(t)) text(x + w - 14, y + 2, "M", C_TRIG);
         else if (eng.solo[t]) text(x + w - 14, y + 2, "S", C_LOCK);
         int len = P.len[t];
         for (int s0 = 0; s0 < 16; s0++) {
@@ -2505,7 +2516,7 @@ static void drawLive() {
     const Pattern& P = curP();
     char b[48];
     text(10, 48, "LIVE", C_ACC, 2);
-    snprintf(b, sizeof b, "PATTERN %02d", eng.curPat + 1);
+    snprintf(b, sizeof b, "PATTERN %02d", curPi() + 1);
     text(120, 50, b, C_TEXT);
     if (eng.nextPat >= 0) { snprintf(b, sizeof b, "> %02d", eng.nextPat + 1); text(120 + textW("PATTERN 00 "), 50, b, (SDL_GetTicks() / 250) % 2 ? C_ACC : C_DIM); }
     snprintf(b, sizeof b, "%d BPM", eng.proj.bpm);
@@ -2514,7 +2525,7 @@ static void drawLive() {
     for (int t = 0; t < NTRACKS; t++) {
         int cx = t < 4 ? 160 : 480, cy = 232, k = t % 4;
         int w = 100, h = 56, x = cx + OX[k] * 105 - w / 2, y = cy + OY[k] * 64 - h / 2;
-        bool m = eng.mute[t];
+        bool m = eng.muted(t);
         Col tc = TCOL[t];
         Col bg = m ? C_DARK : mix(dimC(tc, 0.25f), dimC(tc, 0.7f), flash[t]);
         rrect(x, y, w, h, 8, m ? C_OFF2 : tc);
@@ -2905,7 +2916,7 @@ static void runAction(int act, int arg) {
         lockA();
         for (int t = 0; t < NTRACKS; t++) for (int st = 0; st < NSTEPS; st++) { curP().s[t][st].on = 0; memset(curP().s[t][st].lock, NO_LOCK, NPARAMS); }
         unlockA();
-        toast(TR("PATTERN %02d GELEERT", "PATTERN %02d CLEARED"), eng.curPat + 1);
+        toast(TR("PATTERN %02d GELEERT", "PATTERN %02d CLEARED"), curPi() + 1);
         break;
     case ACT_QUIT: quitReq = true; break;
     case ACT_INIT: {
@@ -2983,7 +2994,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     v[0] = 0;
     switch (i) {
     case SI_H_PAT: snprintf(l, ln, "PATTERN"); break;
-    case SI_PATTERN: snprintf(l, ln, "Pattern"); snprintf(v, vn, "P%02d%s", eng.curPat + 1, eng.nextPat >= 0 ? " >" : ""); break;
+    case SI_PATTERN: snprintf(l, ln, "Pattern"); snprintf(v, vn, "P%02d%s", curPi() + 1, eng.nextPat >= 0 ? " >" : ""); break;
     case SI_LEN: snprintf(l, ln, TR("Länge Spur %d", "Length track %d"), track + 1); snprintf(v, vn, "%d Steps", P.len[track]); break;
     case SI_LENALL: snprintf(l, ln, TR("Länge alle Spuren", "Length all tracks")); snprintf(v, vn, "%d Steps", P.len[track]); break;
     case SI_SPEED: snprintf(l, ln, TR("Tempo-Faktor Spur %d", "Tempo factor track %d"), track + 1); snprintf(v, vn, "%s", SPEED_NAMES[P.speed[track] % 7]); break;
@@ -3085,8 +3096,7 @@ static void setChange(int i, int d) {
         break;
     case SI_TMPL: tmplSel = ((tmplSel + d) % RHY_N + RHY_N) % RHY_N; break;
     case SI_PATTERN: {
-        int to = (eng.curPat + d + NPATTERNS) % NPATTERNS;
-        lockA(); if (eng.playing) eng.nextPat = to; else { eng.curPat = to; eng.nextPat = -1; } unlockA();
+        switchPattern(curPi() + d);
     } break;
     case SI_LEN: P.len[track] = (uint8_t)clampi(P.len[track] + d, 1, NSTEPS); break;
     case SI_LENALL: { int l = clampi(P.len[track] + d, 1, NSTEPS); for (int t = 0; t < NTRACKS; t++) P.len[t] = (uint8_t)l; } break;
@@ -3134,7 +3144,7 @@ static void mutatePattern() {
     mutRnd ^= SDL_GetTicks() * 2654435761u;
     lockA();
     Pattern& P = curP();
-    mutUndo = P; haveMutUndo = true; mutPat = eng.curPat;
+    mutUndo = P; haveMutUndo = true; mutPat = curPi();
     int sv = curScale();
     for (int t = 0; t < NTRACKS; t++) {
         int len = P.len[t] < 1 ? 1 : P.len[t];
@@ -3171,7 +3181,7 @@ static void mutatePattern() {
     }
     unlockA();
     const char* const AM[3] = {TR("LEICHT", "LIGHT"), TR("MITTEL", "MEDIUM"), TR("STARK", "STRONG")};
-    toast(TR("PATTERN %02d MUTIERT (%s)", "PATTERN %02d MUTATED (%s)"), eng.curPat + 1, AM[mutAmt % 3]);
+    toast(TR("PATTERN %02d MUTIERT (%s)", "PATTERN %02d MUTATED (%s)"), curPi() + 1, AM[mutAmt % 3]);
 }
 
 static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0; }
@@ -3249,12 +3259,12 @@ static void drawDrive() {
 
 static void setAction(int i) {
     switch (i) {
-    case SI_COPY: clip = curP(); haveClip = true; toast(TR("PATTERN %02d KOPIERT", "PATTERN %02d COPIED"), eng.curPat + 1); break;
+    case SI_COPY: clip = curP(); haveClip = true; toast(TR("PATTERN %02d KOPIERT", "PATTERN %02d COPIED"), curPi() + 1); break;
     case SI_PASTE:
-        if (haveClip) askConfirm(ACT_PASTE, 0, TR("PATTERN %02d MIT KOPIE ÜBERSCHREIBEN?", "OVERWRITE PATTERN %02d WITH COPY?"), eng.curPat + 1);
+        if (haveClip) askConfirm(ACT_PASTE, 0, TR("PATTERN %02d MIT KOPIE ÜBERSCHREIBEN?", "OVERWRITE PATTERN %02d WITH COPY?"), curPi() + 1);
         else toast(TR("ZWISCHENABLAGE LEER", "CLIPBOARD EMPTY"));
         break;
-    case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, TR("ALLE STEPS VON PATTERN %02d LÖSCHEN?", "CLEAR ALL STEPS OF PATTERN %02d?"), eng.curPat + 1); break;
+    case SI_CLEAR: askConfirm(ACT_CLEARPAT, 0, TR("ALLE STEPS VON PATTERN %02d LÖSCHEN?", "CLEAR ALL STEPS OF PATTERN %02d?"), curPi() + 1); break;
     case SI_CLRTRK: askConfirm(ACT_CLEARTRK, track, TR("ALLE STEPS VON SPUR %d LÖSCHEN?", "CLEAR ALL STEPS OF TRACK %d?"), track + 1); break;
     case SI_TMPL: applyRhythm(tmplSel); break;
     case SI_UNDO: undoStep(); break;
@@ -3303,44 +3313,107 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
     if (I.pressed(BT_START)) { lockA(); if (eng.playing) eng.stop(); else eng.start(); unlockA(); }
 }
 
-// ---------------------------------------------------------------- Song-Seite (SNG): Pattern-Kette
-static int songSel = 0;
+// ---------------------------------------------------------------- Song-Seite (SNG): Clip-Matrix
+// Zeilen = Szenen (Song-Eintraege), Spalten: ALLE, Spur 1-8 (Pattern je Spur + Mute), WDH (Wiederholungen)
+static int songSel = 0, songCol = 0;
 static float songScroll = 0;
+enum { SC_ALL = 0, SC_T1 = 1, SC_REP = SC_T1 + NTRACKS, SC_N };
+static int rowAllPat(const Project::SongRow& r) {   // gemeinsames Pattern aller Spuren, sonst -1
+    int p = -1;
+    for (int t = 0; t < NTRACKS; t++) { if (r.pat[t] == SONG_EMPTY) return -1; if (p < 0) p = r.pat[t]; else if (p != r.pat[t]) return -1; }
+    return p;
+}
 static void drawSong() {
     Project& J = eng.proj;
     rrect(4, 46, 632, 398, 10, C_PANEL);
     char b[64];
     text(18, 54, "SONG", C_ACC, 2);
-    snprintf(b, sizeof b, TR("%d EINTRÄGE", "%d ENTRIES"), J.songLen);
+    snprintf(b, sizeof b, TR("%d ZEILEN", "%d ROWS"), J.songLen);
     text(100, 62, b, C_DIM);
     bool on = eng.songOn;
     rrect(440, 54, 186, 28, 8, on ? C_ACC : C_OFF2);
     textC(533, 60, on ? TR("SONG-MODUS AN", "SONG MODE ON") : TR("SONG-MODUS AUS", "SONG MODE OFF"), on ? C_BG : C_TEXT);
-    const int rowH = 30, top = 94, visible = 10;
+    const int rowH = 30, top = 116, visible = 10;
+    const int xAll = 50, wAll = 58, xT = 112, wT = 54, xRep = xT + NTRACKS * wT + 4, wRep = 628 - xRep - 6;
+    // Spaltenkoepfe
+    bool hs = songCol == SC_ALL;
+    textC(xAll + wAll / 2, 94, TR("ALLE", "ALL"), hs ? C_ACC : C_DIM);
+    for (int t = 0; t < NTRACKS; t++) {
+        int cx = xT + t * wT + wT / 2;
+        bool hc = songCol == SC_T1 + t;
+        drawIcon(J.pat[curPi()].machine[t] % M_COUNT, cx - 15, 92, 13, hc ? C_ACC : dimC(TCOL[t], 0.8f));
+        snprintf(b, sizeof b, "%d", t + 1); text(cx + 2, 94, b, hc ? C_ACC : C_DIM);
+    }
+    textC(xRep + wRep / 2, 94, TR("WDH", "REP"), songCol == SC_REP ? C_ACC : C_DIM);
     if (songSel >= J.songLen) songSel = J.songLen > 0 ? J.songLen - 1 : 0;
     float target = songSel - visible / 2.f; if (target < 0) target = 0;
     if (target > J.songLen - visible) target = J.songLen > visible ? J.songLen - visible : 0;
     songScroll += (target - songScroll) * (1.f - expf(-animDt * 14.f));
-    if (J.songLen == 0) { textC(320, 200, TR("NOCH LEER - A FÜGT DAS AKTUELLE PATTERN EIN", "STILL EMPTY - A INSERTS THE CURRENT PATTERN"), C_DIM); }
+    if (J.songLen == 0) {
+        textC(320, 200, TR("NOCH LEER - L1 LEGT EINE ZEILE MIT DEM", "STILL EMPTY - L1 ADDS A ROW WITH THE"), C_DIM);
+        textC(320, 220, TR("AKTUELLEN PATTERN UND SEINEN MUTES AN", "CURRENT PATTERN AND ITS MUTES"), C_DIM);
+    }
     for (int i = 0; i < J.songLen; i++) {
         float yf = top + (i - songScroll) * rowH;
         if (yf < top - 4 || yf > top + (visible - 1) * rowH + 4) continue;
         int y = (int)yf;
+        const Project::SongRow& r = J.row[i];
         bool sel = i == songSel, play = eng.songOn && eng.playing && eng.songPos == i;
-        if (sel) { rrect(12, y, 616, rowH - 4, 6, C_SEL); rrect(12, y + 4, 3, rowH - 12, 1, C_ACC); }
-        snprintf(b, sizeof b, "%02d", i + 1); text(26, y + 6, b, C_DIM);
-        int pt = J.song[i].pat % NPATTERNS, rep = J.song[i].rep < 1 ? 1 : J.song[i].rep;
-        Col pc = TCOL[pt % NTRACKS];
-        rrect(70, y + 3, 64, rowH - 10, 5, play ? pc : dimC(pc, 0.35f));
-        snprintf(b, sizeof b, "P%02d", pt + 1); textC(102, y + 6, b, play ? C_BG : C_TEXT);
-        snprintf(b, sizeof b, "x%d", rep); text(150, y + 6, b, sel ? C_ACC : C_TEXT);
-        for (int k = 0; k < rep && k < 16; k++) {   // Wiederholungen als Kaestchen, laufender Durchgang leuchtet
-            bool cur = play && k == eng.songRep;
-            rrect(200 + k * 24, y + 7, 18, rowH - 18, 3, cur ? C_PLAY : (play && k < eng.songRep ? pc : C_OFF2));
+        if (sel) { rrect(10, y - 1, 620, rowH - 2, 6, C_SEL); rrect(10, y + 4, 3, rowH - 12, 1, C_ACC); }
+        snprintf(b, sizeof b, "%02d", i + 1); text(20, y + 6, b, play ? C_PLAY : C_DIM);
+        // ALLE
+        int ap = rowAllPat(r);
+        if (ap >= 0) snprintf(b, sizeof b, "P%02d", ap + 1); else snprintf(b, sizeof b, "MIX");
+        Col ac = ap >= 0 ? TCOL[ap % NTRACKS] : C_DIM;
+        rrect(xAll, y + 2, wAll, rowH - 8, 5, play ? ac : dimC(ac, 0.3f));
+        textC(xAll + wAll / 2, y + 6, b, play ? C_BG : C_TEXT);
+        if (sel && songCol == SC_ALL) { rrect(xAll - 2, y, wAll + 4, 2, 1, C_ACC); rrect(xAll - 2, y + rowH - 6, wAll + 4, 2, 1, C_ACC); }
+        // Spuren
+        for (int t = 0; t < NTRACKS; t++) {
+            int x = xT + t * wT;
+            bool empty = r.pat[t] == SONG_EMPTY, mu = (r.mute >> t) & 1;
+            Col tc = TCOL[t];
+            if (empty) { rrect(x + 2, y + 2, wT - 4, rowH - 8, 5, C_BG); textC(x + wT / 2, y + 6, "--", C_OFF2); }
+            else {
+                Col bg = mu ? C_BG : (play ? tc : dimC(tc, 0.35f));
+                rrect(x + 2, y + 2, wT - 4, rowH - 8, 5, bg);
+                if (mu) { rrect(x + 2, y + 2, wT - 4, 2, 1, dimC(tc, 0.5f)); }
+                snprintf(b, sizeof b, "%02d", r.pat[t] % NPATTERNS + 1);
+                textC(x + wT / 2 - (mu ? 6 : 0), y + 6, b, mu ? C_DIM : (play ? C_BG : C_TEXT));
+                if (mu) text(x + wT - 15, y + 6, "M", C_TRIG);
+            }
+            if (sel && songCol == SC_T1 + t) { rrect(x, y, wT, 2, 1, C_ACC); rrect(x, y + rowH - 6, wT, 2, 1, C_ACC); }
         }
-        if (play) text(600 - textW(">>"), y + 6, ">>", C_PLAY);
+        // Wiederholungen: Zahl + laufender Durchgang
+        int rep = r.rep < 1 ? 1 : r.rep;
+        snprintf(b, sizeof b, play ? "%d/%d" : "x%d", play ? eng.songRep + 1 : rep, rep);
+        text(xRep + 6, y + 6, b, sel && songCol == SC_REP ? C_ACC : (play ? C_PLAY : C_TEXT));
+        if (sel && songCol == SC_REP) { rrect(xRep, y, wRep, 2, 1, C_ACC); rrect(xRep, y + rowH - 6, wRep, 2, 1, C_ACC); }
     }
-    hint(6, 452, TR("[^v]EINTRAG [</>]PATTERN [X/Y]WDH [A]NEU [B]LÖSCHEN [R1]SONG AN/AUS [START]AB HIER", "[^v]ENTRY [</>]PATTERN [X/Y]REPEAT [A]NEW [B]DELETE [R1]SONG ON/OFF [START]FROM HERE"), C_ACC, C_DIM);
+    hint(6, 452, TR("[^v<>]ZELLE [X/Y]PATTERN/WDH [A]MUTE [L1]NEU [B]LÖSCHEN [R1]SONG [START]AB HIER",
+                    "[^v<>]CELL [X/Y]PATTERN/REP [A]MUTE [L1]NEW [B]DELETE [R1]SONG [START]FROM HERE"), C_ACC, C_DIM);
+}
+
+// Zelle aendern: Pattern einer Spur (mit "leer" unterhalb von 01), alle Spuren gemeinsam oder Wiederholungen
+static void songEditCell(Project& J, int i, int col, int d) {
+    Project::SongRow& r = J.row[i];
+    if (col == SC_REP) { r.rep = (uint8_t)clampi((r.rep < 1 ? 1 : r.rep) + d, 1, 16); return; }
+    if (col == SC_ALL) {
+        int base = rowAllPat(r);
+        if (base < 0) {   // MIX: erster Druck vereinheitlicht auf das Pattern der ersten belegten Spur
+            base = 0; for (int t = 0; t < NTRACKS; t++) if (r.pat[t] != SONG_EMPTY) { base = r.pat[t]; break; }
+            d = 0;
+        }
+        int np = clampi(base + d, 0, NPATTERNS - 1);
+        uint8_t rp = r.rep; Engine::rowFromPattern(J, r, np); r.rep = rp;   // Mutes vom Pattern uebernehmen
+    } else {
+        int t = col - SC_T1;
+        int cur = r.pat[t] == SONG_EMPTY ? -1 : r.pat[t];
+        int nv = clampi(cur + d, -1, NPATTERNS - 1);
+        r.pat[t] = nv < 0 ? (uint8_t)SONG_EMPTY : (uint8_t)nv;
+        if (nv >= 0) r.mute = (uint8_t)((r.mute & ~(1u << t)) | (J.patMute[nv] & (1u << t)));   // Mute vom Pattern uebernehmen
+    }
+    if (eng.songActive() && eng.songPos == i) { if (eng.playing) eng.rowPending = true; else eng.applyRow(i); }   // laufende Zeile: ab naechstem Durchgang
 }
 
 static void songInput(Input& I, Uint32 now) {
@@ -3351,34 +3424,56 @@ static void songInput(Input& I, Uint32 now) {
     int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
     if (dy && J.songLen) songSel = clampi(songSel + dy, 0, J.songLen - 1);
     int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + flick(I.lx, flLX, flLXt, now);
-    if (dx && J.songLen) { lockA(); J.song[songSel].pat = (uint8_t)((J.song[songSel].pat + NPATTERNS + dx) % NPATTERNS); unlockA(); }
-    int dr = (I.repeat(BT_X, now) ? 1 : 0) - (I.repeat(BT_Y, now) ? 1 : 0);
-    if (dr && J.songLen) { lockA(); J.song[songSel].rep = (uint8_t)clampi((J.song[songSel].rep < 1 ? 1 : J.song[songSel].rep) + dr, 1, 16); unlockA(); }
-    if (I.pressed(BT_A)) {
+    if (dx) songCol = clampi(songCol + dx, 0, SC_N - 1);
+    int dv = (I.repeat(BT_X, now) ? 1 : 0) - (I.repeat(BT_Y, now) ? 1 : 0);
+    if (dv && J.songLen) { lockA(); songEditCell(J, songSel, songCol, dv); unlockA(); }
+    if (I.pressed(BT_A) && J.songLen) {
+        Project::SongRow& r = J.row[songSel];
+        lockA();
+        if (songCol >= SC_T1 && songCol < SC_REP) {
+            int t = songCol - SC_T1;
+            if (r.pat[t] != SONG_EMPTY) r.mute ^= (uint8_t)(1u << t);
+        } else if (songCol == SC_ALL) {   // Mutes neu von den Patterns uebernehmen
+            r.mute = 0;
+            for (int t = 0; t < NTRACKS; t++) if (r.pat[t] != SONG_EMPTY) r.mute |= (uint8_t)(J.patMute[r.pat[t] % NPATTERNS] & (1u << t));
+        }
+        unlockA();
+        if (songCol == SC_ALL) toast(TR("MUTES VON DEN PATTERNS ÜBERNOMMEN", "MUTES TAKEN FROM THE PATTERNS"));
+    }
+    if (I.pressed(BT_L1)) {
         if (J.songLen >= SONG_MAX) toast(TR("SONG VOLL (%d)", "SONG FULL (%d)"), SONG_MAX);
         else {
             lockA();
             int at = J.songLen ? songSel + 1 : 0;
-            for (int i = J.songLen; i > at; i--) J.song[i] = J.song[i - 1];
-            J.song[at].pat = (uint8_t)(J.songLen ? J.song[songSel].pat : eng.curPat);
-            J.song[at].rep = 1;
+            for (int i = J.songLen; i > at; i--) J.row[i] = J.row[i - 1];
+            if (J.songLen) J.row[at] = J.row[songSel];   // Kopie der gewaehlten Zeile
+            else Engine::rowFromPattern(J, J.row[at], curPi());
+            J.row[at].rep = 1;
             J.songLen++;
+            if (eng.songActive() && eng.songPos >= at && J.songLen > 1) eng.songPos = eng.songPos + 1;
             unlockA();
             songSel = at;
         }
     }
     if (I.pressed(BT_B) && J.songLen) {
         lockA();
-        for (int i = songSel; i < J.songLen - 1; i++) J.song[i] = J.song[i + 1];
+        for (int i = songSel; i < J.songLen - 1; i++) J.row[i] = J.row[i + 1];
         J.songLen--;
         if (eng.songPos >= J.songLen) eng.songPos = 0;
         if (!J.songLen) eng.songOn = false;
+        else if (eng.songOn) eng.rowPending = true;
         unlockA();
         if (songSel >= J.songLen && songSel > 0) songSel--;
     }
     if (I.pressed(BT_R1)) {
-        if (!J.songLen) toast(TR("ERST EINTRÄGE ANLEGEN (A)", "ADD ENTRIES FIRST (A)"));
-        else { lockA(); if (eng.songOn) eng.songOn = false; else eng.songStart(songSel); unlockA(); toast(eng.songOn ? TR("SONG-MODUS AN", "SONG MODE ON") : TR("SONG-MODUS AUS", "SONG MODE OFF")); }
+        if (!J.songLen) toast(TR("ERST ZEILEN ANLEGEN (L1)", "ADD ROWS FIRST (L1)"));
+        else {
+            lockA();
+            if (eng.songOn) { eng.songOn = false; if (eng.playing) eng.nextPat = eng.curPat; }
+            else eng.songStart(songSel);
+            unlockA();
+            toast(eng.songOn ? TR("SONG-MODUS AN", "SONG MODE ON") : TR("SONG-MODUS AUS", "SONG MODE OFF"));
+        }
     }
     if (I.pressed(BT_START)) {
         lockA();
@@ -3483,16 +3578,13 @@ static void menuInput(Input& I, Uint32 now) {
 }
 
 static void liveInput(Input& I, Uint32 now, float dt) {
-    for (int t = 0; t < NTRACKS; t++) if (I.pressed(LIVE_BTN[t])) eng.mute[t] = !eng.mute[t];
+    for (int t = 0; t < NTRACKS; t++) if (I.pressed(LIVE_BTN[t])) eng.toggleMute(t);
     if (I.pressed(BT_L1)) eng.fill = true;
     if (I.released(BT_L1)) eng.fill = false;
     if (I.pressed(BT_R1)) recToggle();
     if (I.pressed(BT_L2) || I.pressed(BT_R2)) {
         int d = I.pressed(BT_R2) ? 1 : -1;
-        int from = eng.nextPat >= 0 ? eng.nextPat : eng.curPat, to = (from + d + NPATTERNS) % NPATTERNS;
-        lockA();
-        if (eng.playing) eng.nextPat = to; else { eng.curPat = to; eng.nextPat = -1; }
-        unlockA();
+        switchPattern((eng.nextPat >= 0 ? eng.nextPat : curPi()) + d);
     }
     if (I.pressed(BT_START)) { lockA(); if (eng.playing) eng.stop(); else eng.start(); unlockA(); }
     if (fabsf(I.ry) > 0.2f) { eng.dj = I.ry > 0 ? (I.ry - 0.2f) / 0.8f : (I.ry + 0.2f) / 0.8f; stickDj = true; }
@@ -3530,12 +3622,10 @@ static void handleInput(Uint32 now, float dt) {
         if (I.pressed(BT_LEFT) || I.pressed(BT_RIGHT)) {
             funcUsed = true;
             int d = I.pressed(BT_RIGHT) ? 1 : -1;
-            int from = eng.nextPat >= 0 ? eng.nextPat : eng.curPat;
-            int to = (from + d + NPATTERNS) % NPATTERNS;
-            lockA();
-            if (eng.playing) eng.nextPat = to; else { eng.curPat = to; eng.nextPat = -1; }
-            unlockA();
-            toast("PATTERN %02d", to + 1);
+            int to = ((eng.nextPat >= 0 ? eng.nextPat : curPi()) + d + NPATTERNS) % NPATTERNS;
+            bool wasSong = eng.songActive();
+            switchPattern(to);
+            if (!wasSong) toast("PATTERN %02d", to + 1);
         }
         if (I.pressed(BT_UP)) {
             funcUsed = true;
@@ -3559,7 +3649,7 @@ static void handleInput(Uint32 now, float dt) {
             Step& hs = holdS();
             hs.on = hs.on == 2 ? 1 : 2; aEdited = true;
             toast(hs.on == 2 ? TR("STEP %d: TRIGLESS (NUR LOCKS)", "STEP %d: TRIGLESS (LOCKS ONLY)") : "STEP %d: TRIG", holdStep + 1);
-        } else if (I.pressed(BT_A)) { funcUsed = true; eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? TR("SPUR %d STUMM", "TRACK %d MUTED") : TR("SPUR %d AN", "TRACK %d ON"), track + 1); }
+        } else if (I.pressed(BT_A)) { funcUsed = true; eng.toggleMute(track); toast(eng.muted(track) ? TR("SPUR %d STUMM", "TRACK %d MUTED") : TR("SPUR %d AN", "TRACK %d ON"), track + 1); }
         if (I.pressed(BT_B)) { funcUsed = true; undoStep(); }
         if (I.pressed(BT_X) || I.pressed(BT_Y)) {
             funcUsed = true;
@@ -3620,10 +3710,10 @@ static void handleInput(Uint32 now, float dt) {
             lockLatch = false; aHeld = false;
             toast(TR("LOCK-MODUS AUS", "LOCK MODE OFF"));
         } else if (I.pressed(BT_A)) {
-            if (mixP) { eng.mute[track] = !eng.mute[track]; toast(eng.mute[track] ? TR("SPUR %d STUMM", "TRACK %d MUTED") : TR("SPUR %d AN", "TRACK %d ON"), track + 1); }
+            if (mixP) { eng.toggleMute(track); toast(eng.muted(track) ? TR("SPUR %d STUMM", "TRACK %d MUTED") : TR("SPUR %d AN", "TRACK %d ON"), track + 1); }
             else if (prjAct) prjTrigger(slot);
             else {
-                holdPat = eng.curPat; holdTrack = track; holdStep = cursor;
+                holdPat = curPi(); holdTrack = track; holdStep = cursor;
                 Step& s = holdS();
                 aPrevOn = s.on; aJustOn = s.on == 0;
                 if (s.on == 0) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }   // trigless bleibt beim Halten trigless
@@ -4031,7 +4121,9 @@ static bool readPoolTrailer(const char* path, char (*names)[96]) {
     if (!f) return false;
     bool ok = false;
     char mg[4]; uint16_t n = 0;
-    if (fseek(f, (long)sizeof(Project), SEEK_SET) == 0 && fread(mg, 1, 4, f) == 4 && !memcmp(mg, "SPL1", 4) && fread(&n, 2, 1, f) == 1) {
+    uint32_t ver = 0;   // v9-v11 sind kuerzer: Namensliste steht direkt nach PROJECT_V11_SIZE
+    long at = (fseek(f, 4, SEEK_SET) == 0 && fread(&ver, 4, 1, f) == 1 && ver < 12) ? (long)PROJECT_V11_SIZE : (long)sizeof(Project);
+    if (fseek(f, at, SEEK_SET) == 0 && fread(mg, 1, 4, f) == 4 && !memcmp(mg, "SPL1", 4) && fread(&n, 2, 1, f) == 1) {
         ok = true;
         for (int k = 0; k < n; k++) {
             uint8_t hdr[2];
@@ -4172,20 +4264,20 @@ int main(int argc, char** argv) {
         if (page == PG_SRC || page == PG_SRC2 || shotPage == 27) { }
         if (shotPage == 27 || page == PG_SRC2) { page = PG_SRC2; track = 6; slot = 0; }
         if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
-        if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.mute[3] = true; for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
+        if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.setMute(3, true); for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
         if (page == PG_PRJ) { slot = 2; }
         if (shotPage >= 30 && shotPage <= 33) {   // Engine-Grafiken: 30 KICK, 31 WTBL, 32 CHOP, 33 GRAN
             static const int em[4] = {M_KICK, M_WTBL, M_CHOP, M_GRAN};
             page = PG_SRC; track = shotPage == 30 ? 0 : 5; slot = 1;
             if (shotPage != 30) { Engine::setMachine(curP(), 5, em[shotPage - 30]); if (shotPage >= 32) curP().p[5][P_S0] = 11; curP().p[5][P_S1] = shotPage == 31 ? 70 : (shotPage == 32 ? 7 : 40); }
-            for (int t2 = 0; t2 < 8; t2++) eng.mute[t2] = false;
+            for (int t2 = 0; t2 < 8; t2++) eng.setMute(t2, false);
             lockA(); eng.start(); unlockA();
             for (int k2 = 0; k2 < 5; k2++) { eng.render(tmp, 22050 / 2 + 300); animate(); }
         }
         if (shotPage == 34) { page = PG_TRG; track = 4; slot = 6; editSlot = 6; editAt = 1; Engine::setMachine(curP(), 4, M_WTBL); }
         if (shotPage == 35) {
             page = PG_TRG; track = 1; slot = 5; Pattern& Pp = curP(); Pp.s[1][4].lock[P_MTIM] = 23 - 9; Pp.s[1][12].lock[P_MTIM] = 23 + 12;
-            holdPat = eng.curPat; holdTrack = 1; holdStep = 12; aHeld = true; cursor = 12; editSlot = 5; editAt = 1;
+            holdPat = curPi(); holdTrack = 1; holdStep = 12; aHeld = true; cursor = 12; editSlot = 5; editAt = 1;
         }
         if (page == PG_SEQ) {
             track = 4; slot = 3; Pattern& Pp = curP();
@@ -4202,7 +4294,7 @@ int main(int argc, char** argv) {
         if (shotPage == 28) {   // 64 Steps, Cursor auf Seite 3, COND-Overlay
             page = PG_TRG; track = 4; Pattern& Pp = curP(); Pp.len[4] = 64; cursor = 37;
             Pp.s[4][37].on = 1; Pp.s[4][37].lock[P_COND] = CND_AB + 35 + 5; slot = 7; editSlot = 7; editAt = 1;
-            holdPat = eng.curPat; holdTrack = 4; holdStep = 37; aHeld = true; eng.fill = true;
+            holdPat = curPi(); holdTrack = 4; holdStep = 37; aHeld = true; eng.fill = true;
         }
         if (page == PG_SYS) { setSel = SI_OUT; setScroll = SI_OUT - 7.5f; animate(); }
         if (page == PG_CMP) {   // Sidechain-Beispiel
@@ -4212,8 +4304,9 @@ int main(int argc, char** argv) {
         }
         if (page == PG_TRG && shotPage == 0) { Step& tq = curP().s[4][5]; tq.on = 2; memset(tq.lock, NO_LOCK, NPARAMS); tq.lock[P_FREQ] = 20; }
         if (page == PG_ARP) { Pattern& Pa = curP(); Pa.p[track][P_AMOD] = 3; Pa.p[track][P_AOCT] = 1; Pa.p[track][P_ARAT] = 0; Pa.p[track][P_LEN] = 80; Pa.p[track][P_AACC] = 60; }
-        if (page == PG_SONG) { eng.proj.songLen = 5; uint8_t sp[5][2] = {{0, 4}, {1, 2}, {0, 2}, {2, 1}, {3, 4}}; for (int k = 0; k < 5; k++) { eng.proj.song[k].pat = sp[k][0]; eng.proj.song[k].rep = sp[k][1]; }
-                               eng.songOn = true; eng.songPos = 1; eng.songRep = 1; eng.playing = true; songSel = 2; }
+        if (page == PG_SONG) { eng.proj.songLen = 5; uint8_t sp[5][2] = {{0, 4}, {1, 2}, {0, 2}, {2, 1}, {3, 4}}; for (int k = 0; k < 5; k++) { Engine::rowFromPattern(eng.proj, eng.proj.row[k], sp[k][0]); eng.proj.row[k].rep = sp[k][1]; }
+                               eng.proj.row[2].pat[4] = 3; eng.proj.row[2].pat[7] = SONG_EMPTY; eng.proj.row[3].mute = 0x0C; songCol = SC_T1 + 4;
+                               eng.songOn = true; eng.songPos = 1; eng.songRep = 1; eng.applyRow(1); eng.playing = true; songSel = 2; }
         if (shotPage == 21) { holdPat = 0; holdTrack = 4; holdStep = 3; aHeld = true; page = 0; track = 4; slot = 0; }
         if (shotPage == 22) { page = PG_FLT; slot = 0; track = 4; animate(); editAt = 1; editSlot = 0; eng.recording = true; }
         if (shotPage == 23) { page = PG_TRG; slot = 6; track = 4; editSlot = 6; editAt = 1; }
