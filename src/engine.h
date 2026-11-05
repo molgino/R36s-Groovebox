@@ -209,6 +209,7 @@ public:
     // Summe: Brickwall-Limiter mit Vorausschau (statt die Summe in die Saettigung zu fahren)
     enum { LIM_LA = 64 };        // Vorausschau in Samples (1,5 ms), Zweierpotenz
     float limXL[LIM_LA] = {0}, limXR[LIM_LA] = {0}, limReq[LIM_LA], limR[LIM_LA];
+    float dcXL = 0, dcXR = 0, dcYL = 0, dcYR = 0;   // DC-Sperre der Summe (Hochpass 3 Hz)
     float limRel = 1.f; int limPos = 0; bool limReady = false;
     volatile float limGr = 0;    // groesste Absenkung des Limiters in dB (Anzeige/Diagnose)
     Voice v[NTRACKS];

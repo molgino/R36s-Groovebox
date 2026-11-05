@@ -11,7 +11,7 @@
 | Hüllkurven | 2 ADSR je Spur (Filter, Lautstärke) mit einstellbarer Kurvenform |
 | Modulation | 3 LFOs je Spur (9 Wellenformen, Sync, Fade, Trig-Modi), Ziel = jeder Spurparameter |
 | Effekte | Insert je Spur (Chorus, Phaser, Flanger, Drive, Ringmod, Auto-Pan) + Bitcrusher, Sample-Rate-Reduktion, Drive; Send-Delay (Ping-Pong, Band-Echo-Gleiten), Reverb; Bus-Kompressor mit Sidechain; DJ-Filter |
-| Audio | 44,1 kHz, 32 Bit Gleitkomma intern, Ausgabe 16 Bit |
+| Audio | 44,1 kHz, 32 Bit Gleitkomma intern, DC-Sperre + Limiter in der Summe; WAV-Aufnahme/-Export und USB-Audio 24 Bit (mit Dither), Kopfhörer/Lautsprecher je nach Codec |
 
 ## Sequencer
 | | |

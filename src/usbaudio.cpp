@@ -3,6 +3,7 @@
 // in einen Ringpuffer, ein eigener Thread schreibt sie nicht-blockierend auf das Gadget.
 // Liest der PC gerade nicht mit, laeuft der Puffer ueber und wird verworfen - der Sequencer bleibt nie stehen.
 #include "usbaudio.h"
+#include "pcm.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -16,7 +17,7 @@
 #include <SDL.h>
 
 enum { RING = 16384, RMASK = RING - 1, MAXLAT = 8192 };   // Frames
-static float g_ring[RING * 2];                 // Float: erst beim Senden auf 16 Bit (mit Dither) runter
+static float g_ring[RING * 2];                 // Float: erst beim Senden auf 24 (bzw. 16) Bit mit Dither runter
 static volatile unsigned g_w = 0, g_r = 0;     // Schreib-/Leseposition (Frames), nur je ein Thread schreibt
 static volatile Uint64 g_tPush = 0;            // Zeitpunkt der letzten Uebergabe (fuer die Taktregelung)
 static volatile int g_lastN = 256;             // Frames pro Uebergabe (Puffergroesse der internen Karte)
@@ -30,6 +31,31 @@ static volatile float g_gain = 1.f;      // USB-Lautstaerke (unabhaengig von der
 void usbAudioSetGain(float g) { g_gain = g; }
 static unsigned g_tonePh = 0;
 void usbAudioTestTone(int ms) { g_toneUntil = SDL_GetTicks() + (Uint32)ms; }
+static volatile int g_srcRate = 44100;   // Rate der Engine (= des Rings); der Audio-Ausgang kann z. B. 48 kHz liefern
+void usbAudioSetEngineRate(int sr) { if (sr >= 8000 && sr <= 192000) g_srcRate = sr; }
+
+// Sample-Format fuer das Gadget: 24 Bit bevorzugt (p_ssize/c_ssize = 3), sonst 32 oder 16 Bit.
+// Liefert die Bytes je Sample (3/4/2) oder 0, wenn nichts geht.
+static int openFormat(snd_pcm_t* pcm, unsigned rate, unsigned latUs) {
+    static const snd_pcm_format_t fm[3] = {SND_PCM_FORMAT_S24_3LE, SND_PCM_FORMAT_S32_LE, SND_PCM_FORMAT_S16_LE};
+    static const int by[3] = {3, 4, 2};
+    for (int k = 0; k < 3; k++) {
+        snd_pcm_hw_params_t* hw; snd_pcm_hw_params_alloca(&hw);
+        if (snd_pcm_hw_params_any(pcm, hw) < 0 || snd_pcm_hw_params_test_format(pcm, hw, fm[k]) < 0) continue;
+        if (snd_pcm_set_params(pcm, fm[k], SND_PCM_ACCESS_RW_INTERLEAVED, 2, rate, 0, latUs) == 0) return by[k];
+    }
+    return 0;
+}
+static inline void putSample(uint8_t* p, int bytes, float x, Dither& d) {
+    if (bytes == 2) { int16_t v = (int16_t)pcmQuant(x, 16, d); memcpy(p, &v, 2); }
+    else if (bytes == 3) put24(p, pcmQuant(x, 24, d));
+    else { int32_t v = pcmQuant(x, 24, d) * 256; memcpy(p, &v, 4); }
+}
+static inline float getSample(const uint8_t* p, int bytes) {
+    if (bytes == 2) { int16_t v; memcpy(&v, p, 2); return v * (1.f / 32768.f); }
+    if (bytes == 3) return get24(p) * (1.f / 8388608.f);
+    int32_t v; memcpy(&v, p, 4); return (float)v * (1.f / 2147483648.f);
+}
 
 // Hat die Karte einen Wiedergabe-PCM (Geraet 0..)? Liefert die Geraetenummer oder -1
 static int playbackDevice(int card) {
@@ -77,8 +103,8 @@ static bool findGadget(char* out, int n) {
     return true;
 }
 
-static inline float hermite(const float* r, unsigned i, float t, int c) {   // 4-Punkt, wie smpRead in der Engine
-    float y0 = r[((i - 1) & RMASK) * 2 + c], y1 = r[(i & RMASK) * 2 + c], y2 = r[((i + 1) & RMASK) * 2 + c], y3 = r[((i + 2) & RMASK) * 2 + c];
+static inline float hermite(const float* r, unsigned i, float t, int c, unsigned m = RMASK) {   // 4-Punkt, wie smpRead in der Engine
+    float y0 = r[((i - 1) & m) * 2 + c], y1 = r[(i & m) * 2 + c], y2 = r[((i + 1) & m) * 2 + c], y3 = r[((i + 2) & m) * 2 + c];
     float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.f * y2 - 0.5f * y3, c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
     return ((c3 * t + c2) * t + c1) * t + y1;
 }
@@ -129,24 +155,27 @@ static int usbThread(void*) {
         g_active = false; return 0;
     }
     const int rate = pickRate(pcm, gadgetRate(true));
-    if (snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, (unsigned)rate, 0, 40000) < 0) {
+    const int bps = openFormat(pcm, (unsigned)rate, 40000);
+    if (!bps) {
         printf("USB-Audio: Format nicht moeglich (%d Hz)\n", rate);
         snd_pcm_close(pcm); g_active = false; return 0;
     }
     g_rateOut = rate;
-    printf("USB-Audio zum PC aktiv (%s, %d Hz)\n", g_dev, rate);
-    const double base = 44100.0 / rate;   // Ring-Frames (44,1 kHz) je USB-Frame
+    const int src = g_srcRate;
+    printf("USB-Audio zum PC aktiv (%s, %d Hz, %d Bit, Engine %d Hz)\n", g_dev, rate, bps == 2 ? 16 : 24, src);
+    const double base = (double)src / rate;   // Ring-Frames (Engine-Rate) je USB-Frame
     Uint32 rateCheckAt = SDL_GetTicks();
     // Taktausgleich: interne Soundkarte und USB-Host laufen mit leicht unterschiedlicher Uhr. Wir lesen den Ring mit
     // fein geregelter Rate (kubische Interpolation). Der Fuellstand springt mit jeder Uebergabe um eine Puffergroesse;
     // dieser Saegezahn wird ueber den Zeitpunkt der letzten Uebergabe herausgerechnet, sonst zittert die Regelung.
     enum { OUT = 256, TARGET = 2048 };
-    static int16_t outb[OUT * 2];
+    static uint8_t outb[OUT * 2 * 4];
+    const int fb = bps * 2;            // Bytes je Frame
     int pendOff = 0, pendLen = 0;      // noch nicht geschriebener Teil von outb
     double frac = 0, ratio = base, fillAvg = TARGET;
     bool primed = false; int fadeIn = 0;   // nach Start/Neusynchronisation weich einblenden
     const double pf = (double)SDL_GetPerformanceFrequency();
-    uint32_t dith = 22222;
+    Dither dith;
     Uint32 lastOk = 0, statAt = SDL_GetTicks();
     unsigned long wrote = 0, full = 0, dropped = 0, errs = 0, starve = 0; int lastErr = 0;
     double ppmMin = 1e9, ppmMax = -1e9;
@@ -155,6 +184,7 @@ static int usbThread(void*) {
             rateCheckAt = SDL_GetTicks();
             int r = gadgetRate(true);
             if (r > 0 && r != rate) { printf("USB-Audio: PC wechselt auf %d Hz\n", r); break; }
+            if (g_srcRate != src) { printf("USB-Audio: Engine-Rate jetzt %d Hz\n", g_srcRate); break; }
         }
         if (SDL_GetTicks() - statAt >= 10000) {   // alle 10 s ins Log: kommt etwas beim PC an?
             snd_pcm_sframes_t av = snd_pcm_avail(pcm);
@@ -179,7 +209,7 @@ static int usbThread(void*) {
             if (fill < (unsigned)(OUT * ratio) + 4) { starve++; SDL_Delay(1); continue; }   // interne Karte haengt
             double dt = (double)(SDL_GetPerformanceCounter() - tp) / pf;
             if (dt > 0.05) dt = 0.05;
-            double est = (double)fill - frac + dt * 44100.0 - g_lastN * 0.5;   // stetiger Fuellstand
+            double est = (double)fill - frac + dt * src - g_lastN * 0.5;       // stetiger Fuellstand
             fillAvg += 0.01 * (est - fillAvg);                                 // ~0,6 s Mittelung
             double want = base * (1.0 + 1e-6 * (fillAvg - TARGET));            // 100 Frames zu voll -> 100 ppm schneller
             if (want > base * 1.002) want = base * 1.002;
@@ -189,22 +219,17 @@ static int usbThread(void*) {
             double pos = frac;
             for (int i = 0; i < OUT; i++, pos += ratio) {
                 unsigned ip = (unsigned)pos;
-                float t = (float)(pos - ip), g = fadeIn < 441 ? fadeIn++ / 441.f : 1.f;
-                for (int c = 0; c < 2; c++) {
-                    float x = hermite(g_ring, r + ip, t, c) * g;
-                    dith = dith * 1664525u + 1013904223u; float d1 = (dith >> 8) * (1.f / 16777216.f);
-                    dith = dith * 1664525u + 1013904223u; float d2 = (dith >> 8) * (1.f / 16777216.f);
-                    float v = x * 32767.f + (d1 - d2);   // TPDF-Dither (+-1 LSB) gegen Quantisierungs-Verzerrung bei leisen Stellen
-                    v = v < -32768.f ? -32768.f : (v > 32767.f ? 32767.f : v);
-                    outb[i * 2 + c] = (int16_t)lrintf(v);
-                }
+                const int fadeLen = rate / 100;   // 10 ms
+                float t = (float)(pos - ip), g = fadeIn < fadeLen ? fadeIn++ / (float)fadeLen : 1.f;
+                for (int c = 0; c < 2; c++)   // TPDF-Dither (+-1 LSB) gegen Quantisierungs-Verzerrung bei leisen Stellen
+                    putSample(&outb[i * fb + c * bps], bps, hermite(g_ring, r + ip, t, c) * g, dith);
             }
             unsigned used = (unsigned)pos;
             frac = pos - used;
             __atomic_store_n(&g_r, r + used, __ATOMIC_RELEASE);
             pendOff = 0; pendLen = OUT;
         }
-        snd_pcm_sframes_t n = snd_pcm_writei(pcm, &outb[pendOff * 2], (snd_pcm_uframes_t)pendLen);
+        snd_pcm_sframes_t n = snd_pcm_writei(pcm, &outb[pendOff * fb], (snd_pcm_uframes_t)pendLen);
         if (n > 0) { pendOff += (int)n; pendLen -= (int)n; wrote += (unsigned long)n; lastOk = SDL_GetTicks(); g_status = 2; }
         else if (n == -EAGAIN) { full++; snd_pcm_wait(pcm, 20); }
         else if (n == -EPIPE || n == -ESTRPIPE) { errs++; lastErr = (int)n; snd_pcm_prepare(pcm); fadeIn = 0; }
@@ -247,15 +272,16 @@ void usbAudioPush(const float* st, int frames) {   // nur aus dem Audio-Callback
     if ((w - g_r) + (unsigned)frames > RING - 1) return;   // voll: neue Daten verwerfen
     bool tone = g_toneUntil && (int)(g_toneUntil - SDL_GetTicks()) > 0;
     float gain = g_gain, pk = 0.f;
+    const int sr = g_srcRate;
     for (int i = 0; i < frames; i++) {
         unsigned k = ((w + i) & RMASK) * 2;
         for (int c = 0; c < 2; c++) {
-            float x = tone ? 0.5f * sinf((float)g_tonePh * (6.2831853f * 1000.f / 44100.f)) : st[i * 2 + c] * gain;
+            float x = tone ? 0.5f * sinf((float)g_tonePh * (6.2831853f * 1000.f / sr)) : st[i * 2 + c] * gain;
             g_ring[k + c] = x;
             float a = fabsf(x);
             if (a > pk) pk = a;
         }
-        if (tone) g_tonePh = (g_tonePh + 1) % 44100;
+        if (tone) g_tonePh = (g_tonePh + 1) % (unsigned)sr;
     }
     int ipk = (int)(fminf(pk, 1.f) * 32767.f);
     if (ipk > g_peak) g_peak = ipk;
@@ -268,18 +294,20 @@ void usbAudioPush(const float* st, int frames) {   // nur aus dem Audio-Callback
 // Ein Thread liest, was der PC auf "Synth City" abspielt; der Audio-Callback mischt es mit geregelter Rate
 // (Taktausgleich wie oben) in den Ausgang und kann es als Sample aufnehmen.
 enum { IRING = 16384, IMASK = IRING - 1, ITARGET = 2048 };
-static int16_t g_iring[IRING * 2];
+static float g_iring[IRING * 2];          // Float: 24 Bit vom PC bleiben erhalten
 static volatile unsigned g_iw = 0, g_ir = 0;
 static volatile bool g_irun = false, g_iactive = false;
 static volatile int g_istatus = 0;
 static SDL_Thread* g_ithread = nullptr;
 static double g_ifrac = 0, g_iratio = 1.0, g_ifill = ITARGET;
 static bool g_iprimed = false;
-static volatile double g_ibase = 1.0;     // USB-Frames je 44,1-kHz-Frame (48 kHz: 1,088)
+static volatile double g_ibase = 1.0;     // USB-Frames je Engine-Frame (48 kHz vom PC, Engine 44,1 kHz: 1,088)
 static volatile int g_ireset = 0;         // Rate gewechselt: Mischer faengt neu an
-static int16_t* g_rec = nullptr;
+static float* g_rec = nullptr;            // Aufnahme in Float (Stereo), Rate = Engine-Rate
 static volatile int g_recLen = 0, g_recState = 0;   // 0 aus, 1 wartet auf Signal, 2 nimmt auf, 3 fertig
-enum { REC_MAX = 44100 * 60 };
+static volatile int g_recRate = 44100;
+enum { REC_SEC = 60 };
+static int g_recAlloc = 0;                // Frames im Puffer
 
 static int pcInThread(void*) {
   while (g_irun) {   // neu oeffnen, wenn der PC die Abtastrate wechselt
@@ -287,12 +315,14 @@ static int pcInThread(void*) {
     int e = snd_pcm_open(&pcm, g_dev, SND_PCM_STREAM_CAPTURE, SND_PCM_NONBLOCK);
     if (e < 0) { printf("PC-Audio: %s nicht zu oeffnen (%s)\n", g_dev, snd_strerror(e)); g_iactive = false; return 0; }
     const int rate = pickRate(pcm, gadgetRate(false));
-    if (snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 2, (unsigned)rate, 0, 30000) < 0) {
+    const int bps = openFormat(pcm, (unsigned)rate, 30000);
+    if (!bps) {
         printf("PC-Audio: Format nicht moeglich (%d Hz)\n", rate); snd_pcm_close(pcm); g_iactive = false; return 0;
     }
-    g_ibase = rate / 44100.0; g_ireset = 1; g_rateIn = rate;
-    printf("PC-Audio vom PC aktiv (%s, %d Hz)\n", g_dev, rate);
-    static int16_t tmp[256 * 2];
+    const int src = g_srcRate;
+    g_ibase = (double)rate / src; g_ireset = 1; g_rateIn = rate;
+    printf("PC-Audio vom PC aktiv (%s, %d Hz, %d Bit)\n", g_dev, rate, bps == 2 ? 16 : 24);
+    static uint8_t tmp[256 * 2 * 4];
     Uint32 lastOk = 0, statAt = SDL_GetTicks(), rateCheckAt = SDL_GetTicks();
     unsigned long got = 0;
     snd_pcm_start(pcm);
@@ -301,12 +331,16 @@ static int pcInThread(void*) {
             rateCheckAt = SDL_GetTicks();
             int r = gadgetRate(false);
             if (r > 0 && r != rate) { printf("PC-Audio: PC wechselt auf %d Hz\n", r); break; }
+            if (g_srcRate != src) break;   // Engine-Rate gewechselt: Verhaeltnis neu
         }
         snd_pcm_sframes_t n = snd_pcm_readi(pcm, tmp, 256);
         if (n > 0) {
             unsigned w = g_iw;
             if ((w - g_ir) + (unsigned)n < IRING - 1) {
-                for (int i = 0; i < n; i++) { unsigned k = ((w + i) & IMASK) * 2; g_iring[k] = tmp[i * 2]; g_iring[k + 1] = tmp[i * 2 + 1]; }
+                for (int i = 0; i < n; i++) {
+                    unsigned k = ((w + i) & IMASK) * 2;
+                    g_iring[k] = getSample(&tmp[(i * 2) * bps], bps); g_iring[k + 1] = getSample(&tmp[(i * 2 + 1) * bps], bps);
+                }
                 __atomic_store_n(&g_iw, w + (unsigned)n, __ATOMIC_RELEASE);
             }
             got += (unsigned long)n; lastOk = SDL_GetTicks(); g_istatus = 2;
@@ -353,7 +387,7 @@ void pcInMix(float* st, int frames, float gain) {   // nur aus dem Audio-Callbac
     if (g_ireset) { g_ireset = 0; g_iprimed = false; }
     if (!g_iprimed) { if (fill < ITARGET) return; g_iprimed = true; g_ifrac = 0; g_iratio = base; g_ifill = fill; }
     if (fill > IRING / 2) { r = w - ITARGET; fill = ITARGET; g_ifrac = 0; }   // zu viel aufgelaufen
-    if (fill < (unsigned)(frames * base * 1.01) + 2) { g_iprimed = false; return; }   // PC spielt nicht mehr -> neu anlaufen
+    if (fill < (unsigned)(frames * base * 1.01) + 4) { g_iprimed = false; return; }   // PC spielt nicht mehr (+4: Hermite liest voraus)
     g_ifill += 0.02 * ((double)fill - g_ifill);
     double want = base * (1.0 + 0.003 * ((g_ifill - ITARGET) / ITARGET));
     if (want > base * 1.003) want = base * 1.003;
@@ -361,19 +395,18 @@ void pcInMix(float* st, int frames, float gain) {   // nur aus dem Audio-Callbac
     g_iratio += 0.05 * (want - g_iratio);
     double pos = g_ifrac;
     int rs = g_recState;
+    const int recMax = g_recAlloc;
     for (int i = 0; i < frames; i++, pos += g_iratio) {
         unsigned ip = (unsigned)pos;
         float f = (float)(pos - ip);
-        const int16_t* a = &g_iring[((r + ip) & IMASK) * 2];
-        const int16_t* b = &g_iring[((r + ip + 1) & IMASK) * 2];
-        float L = (a[0] + (b[0] - a[0]) * f) * (1.f / 32768.f), R = (a[1] + (b[1] - a[1]) * f) * (1.f / 32768.f);
+        float L = hermite(g_iring, r + ip, f, 0, IMASK), R = hermite(g_iring, r + ip, f, 1, IMASK);   // kubisch statt linear
         st[i * 2] += L * gain;
         st[i * 2 + 1] += R * gain;
         if (rs == 1 && (fabsf(L) > 0.01f || fabsf(R) > 0.01f)) rs = 2;   // Aufnahme beginnt mit dem ersten Signal
         if (rs == 2 && g_rec) {
             int n = g_recLen;
-            if (n >= REC_MAX) rs = 3;
-            else { g_rec[n * 2] = (int16_t)(L * 32767.f); g_rec[n * 2 + 1] = (int16_t)(R * 32767.f); g_recLen = n + 1; }
+            if (n >= recMax) rs = 3;
+            else { g_rec[n * 2] = L; g_rec[n * 2 + 1] = R; g_recLen = n + 1; }
         }
     }
     g_recState = rs;
@@ -384,15 +417,18 @@ void pcInMix(float* st, int frames, float gain) {   // nur aus dem Audio-Callbac
 
 bool pcRecStart() {
     if (g_recState == 1 || g_recState == 2) return true;
-    if (!g_rec) g_rec = (int16_t*)malloc(sizeof(int16_t) * 2 * REC_MAX);
+    const int need = g_srcRate * REC_SEC;
+    if (g_rec && g_recAlloc < need) { free(g_rec); g_rec = nullptr; g_recAlloc = 0; }
+    if (!g_rec) { g_rec = (float*)malloc(sizeof(float) * 2 * (size_t)need); if (g_rec) g_recAlloc = need; }
     if (!g_rec) return false;
-    g_recLen = 0; g_recState = 1;
+    g_recRate = g_srcRate; g_recLen = 0; g_recState = 1;
     return true;
 }
 void pcRecStop() { if (g_recState == 1) g_recState = 0; else if (g_recState == 2) g_recState = 3; }
 int pcRecState() { return g_recState; }
-float pcRecSeconds() { return g_recLen / 44100.f; }
-int pcRecTake(int16_t** data) {   // fertige Aufnahme abholen (Hauptthread), danach pcRecDone()
+float pcRecSeconds() { return g_recLen / (float)g_recRate; }
+int pcRecRate() { return g_recRate; }
+int pcRecTake(float** data) {   // fertige Aufnahme abholen (Hauptthread), danach pcRecDone()
     if (g_recState != 3) return 0;
     *data = g_rec; return g_recLen;
 }
@@ -409,7 +445,9 @@ bool pcRecStart() { return false; }
 void pcRecStop() {}
 int pcRecState() { return 0; }
 float pcRecSeconds() { return 0; }
-int pcRecTake(int16_t**) { return 0; }
+int pcRecTake(float**) { return 0; }
+int pcRecRate() { return 44100; }
+void usbAudioSetEngineRate(int) {}
 void pcRecDone() {}
 void usbAudioTestTone(int) {}
 bool usbAudioStart() { return false; }

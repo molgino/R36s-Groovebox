@@ -365,10 +365,12 @@ static void uiScenarios() {
         long wantSec = (long)(4 * 4 * 60.0 / 112 * 44100);
         UCHECK(labs(want - wantSec) < 64, "Export-Laenge %ld Frames statt %ld", want, wantSec);
         if (stat(expPath, &st) == 0) {
-            long frames = (st.st_size - 44) / 4;
+            long frames = (st.st_size - 44) / 6;   // 24 Bit Stereo
             UCHECK(frames >= want && frames <= want + 8 * eng.sr + 2048, "WAV hat %ld Frames (Song %ld + Ausklang)", frames, want);
             FILE* f = fopen(expPath, "rb"); float pk = 0;
-            if (f) { static int16_t buf[44100 * 2]; fseek(f, 44, SEEK_SET); size_t n = fread(buf, 2, 44100 * 2, f); for (size_t i = 0; i < n; i++) pk = fmaxf(pk, fabsf(buf[i] / 32768.f)); fclose(f); }
+            uint8_t wh[44] = {0};
+            if (f) { static uint8_t buf[44100 * 6]; fread(wh, 1, 44, f); size_t n = fread(buf, 3, 44100 * 2, f); for (size_t i = 0; i < n; i++) pk = fmaxf(pk, fabsf(get24(buf + i * 3) / 8388608.f)); fclose(f); }
+            UCHECK(wh[34] == 24 && wh[22] == 2, "Export nicht 24 Bit Stereo (%d Bit, %d Kanaele)", wh[34], wh[22]);
             UCHECK(pk > 0.05f, "Export ist still (Spitze %.3f)", pk);
             remove(expPath);
         } else UCHECK(false, "Export-Datei fehlt: %s", expPath);

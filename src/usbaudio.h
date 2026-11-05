@@ -8,6 +8,7 @@ int usbAudioRate();                           // vom PC gewaehlte Abtastrate (44
 void usbAudioSetGain(float g);                // USB-Lautstaerke 0..1
 void usbAudioTestTone(int ms);                // 1-kHz-Testton statt der Mischung
 void usbAudioPush(const float* stereo, int frames);   // aus dem Audio-Callback
+void usbAudioSetEngineRate(int sr);           // tatsaechliche Rate der Engine (nach dem Oeffnen des Audio-Geraets)
 
 // PC -> R36S: was der PC auf "Synth City" abspielt, in den Ausgang mischen und als Sample aufnehmen
 #include <stdint.h>
@@ -20,5 +21,6 @@ bool pcRecStart();                            // wartet auf das erste Signal, da
 void pcRecStop();
 int pcRecState();                             // 0 aus, 1 wartet, 2 nimmt auf, 3 fertig
 float pcRecSeconds();
-int pcRecTake(int16_t** data);                // Frames (stereo) der fertigen Aufnahme
+int pcRecTake(float** data);                  // Frames (stereo, Float) der fertigen Aufnahme
+int pcRecRate();                              // Abtastrate der Aufnahme (= Engine-Rate)
 void pcRecDone();

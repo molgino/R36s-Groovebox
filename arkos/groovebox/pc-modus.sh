@@ -125,8 +125,10 @@ aus)
   fi
   if [ -n "$AUDIO" ]; then
     if mkdir -p functions/uac2.usb0 2>/dev/null; then
-      echo 3 > functions/uac2.usb0/p_chmask; echo 48000 > functions/uac2.usb0/p_srate; echo 2 > functions/uac2.usb0/p_ssize
-      echo 3 > functions/uac2.usb0/c_chmask; echo 48000 > functions/uac2.usb0/c_srate; echo 2 > functions/uac2.usb0/c_ssize
+      echo 3 > functions/uac2.usb0/p_chmask; echo 48000 > functions/uac2.usb0/p_srate
+      echo 3 > functions/uac2.usb0/p_ssize 2>/dev/null || echo 2 > functions/uac2.usb0/p_ssize   # 24 Bit, sonst 16
+      echo 3 > functions/uac2.usb0/c_chmask; echo 48000 > functions/uac2.usb0/c_srate
+      echo 3 > functions/uac2.usb0/c_ssize 2>/dev/null || echo 2 > functions/uac2.usb0/c_ssize
       ln -s functions/uac2.usb0 configs/c.1/ && AUDOK="AUDIO"
     elif mkdir -p functions/uac1.usb0 2>/dev/null; then
       ln -s functions/uac1.usb0 configs/c.1/ && AUDOK="AUDIO(UAC1)"

@@ -22,6 +22,7 @@
 #include "midi.h"
 #include "drmout.h"
 #include "usbaudio.h"
+#include "pcm.h"
 #include "remote.h"
 #include "paramhelp.h"
 #include "factory.h"
@@ -395,9 +396,9 @@ static float oscDrift = 0;
 static int batPct = -1; static bool batChg = false; static Uint32 batAt = 0;
 static char batPath[300] = "";
 
-// Aufnahme vom PC als Sample speichern: samples/pc/pc-NN.wav (16 Bit Stereo), danach Samples neu laden
+// Aufnahme vom PC als Sample speichern: samples/pc/pc-NN.wav (24 Bit Stereo, Engine-Rate), danach Samples neu laden
 static void reloadSamples();
-static void savePcRecording(const int16_t* d, int frames) {
+static void savePcRecording(const float* d, int frames) {
     char dir[700], path[760];
     snprintf(dir, sizeof dir, "%ssamples/pc", basePath);
     mkdir(dir, 0755);
@@ -405,21 +406,23 @@ static void savePcRecording(const int16_t* d, int frames) {
     struct stat st;
     for (; no < 100; no++) { snprintf(path, sizeof path, "%s/pc-%02d.wav", dir, no); if (stat(path, &st) != 0) break; }
     // Stille am Ende abschneiden
-    while (frames > 1000 && abs(d[(frames - 1) * 2]) < 200 && abs(d[(frames - 1) * 2 + 1]) < 200) frames--;
+    while (frames > 1000 && fabsf(d[(frames - 1) * 2]) < 0.006f && fabsf(d[(frames - 1) * 2 + 1]) < 0.006f) frames--;
+    const int sr = pcRecRate();
     FILE* f = fopen(path, "wb");
     if (f) {
-        uint32_t bytes = (uint32_t)frames * 4, v32; uint16_t v16;
-        fwrite("RIFF", 1, 4, f); v32 = 36 + bytes; fwrite(&v32, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
-        v32 = 16; fwrite(&v32, 4, 1, f); v16 = 1; fwrite(&v16, 2, 1, f); v16 = 2; fwrite(&v16, 2, 1, f);
-        v32 = 44100; fwrite(&v32, 4, 1, f); v32 = 44100 * 4; fwrite(&v32, 4, 1, f); v16 = 4; fwrite(&v16, 2, 1, f); v16 = 16; fwrite(&v16, 2, 1, f);
-        fwrite("data", 1, 4, f); fwrite(&bytes, 4, 1, f); fwrite(d, 4, (size_t)frames, f);
+        uint8_t hdr[44]; wavHeader(hdr, sr, 2, 24, (uint32_t)frames); fwrite(hdr, 1, 44, f);
+        static uint8_t ob[1024 * 6]; Dither dt;
+        for (int i = 0; i < frames; i += 1024) {
+            int n = frames - i < 1024 ? frames - i : 1024;
+            pcmTo24(ob, d + (size_t)i * 2, n * 2, dt); fwrite(ob, 6, (size_t)n, f);
+        }
         fclose(f);
         sync();
     }
     pcRecDone();
     if (!f) { toast(TR("AUFNAHME: SPEICHERN FEHLGESCHLAGEN", "RECORDING: SAVING FAILED")); return; }
     reloadSamples();
-    toast(TR("SAMPLE pc/pc-%02d GESPEICHERT (%.1f s)", "SAMPLE pc/pc-%02d SAVED (%.1f s)"), no, frames / 44100.f);
+    toast(TR("SAMPLE pc/pc-%02d GESPEICHERT (%.1f s)", "SAMPLE pc/pc-%02d SAVED (%.1f s)"), no, frames / (float)sr);
     printf("PC-Aufnahme gespeichert: %s (%d Frames)\n", path, frames);
 }
 
@@ -585,7 +588,7 @@ static void animate() {
             if (!wantIn && pcInActive()) pcInStop();
         }
         {   // fertige PC-Aufnahme als Sample speichern
-            int16_t* d = nullptr;
+            float* d = nullptr;
             int n = pcRecTake(&d);
             if (n > 0) savePcRecording(d, n);
             else if (pcRecState() == 3) pcRecDone();
@@ -644,27 +647,25 @@ static void undoStep() {
 
 // WAV-Aufnahme der Summe (LIVE-Seite, R1): Puffer im Speicher, beim Stoppen in samples/rec/ schreiben (Thread)
 enum { REC_MAX_SEC = 300 };
-static int16_t* recBuf = nullptr;
-static volatile int recPos = 0, recCap = 0, recRate = 44100;
+static uint8_t* recBuf = nullptr;   // 24 Bit (3 Byte je Sample), Stereo verschraenkt
+static volatile int recPos = 0, recCap = 0, recRate = 44100;   // Positionen in Samples (nicht Bytes)
+static Dither recDith;
 static volatile bool recOn = false, recSaving = false;
 static volatile int recDoneNo = 0;   // > 0: gespeichert als rec-NN.wav (Meldung im Hauptthread)
 static void recPush(const float* in, int frames) {   // Audio-Thread
     if (!recOn) return;
     int n = frames * 2, room = recCap - recPos;
     if (n > room) { n = room; recOn = false; }
-    int16_t* d = recBuf + recPos;
-    for (int i = 0; i < n; i++) { float x = in[i] * 32767.f; d[i] = (int16_t)(x > 32767.f ? 32767 : (x < -32768.f ? -32768 : x)); }
+    pcmTo24(recBuf + (size_t)recPos * 3, in, n, recDith);
     recPos += n;
 }
 static int recWriter(void* arg) {
     char* path = (char*)arg;
     FILE* f = fopen(path, "wb");
-    int n = recPos, bytes = n * 2;
+    int n = recPos / 2;   // Frames
     if (f) {
-        auto w32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); }; auto w16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
-        fwrite("RIFF", 1, 4, f); w32(36 + bytes); fwrite("WAVEfmt ", 1, 8, f); w32(16); w16(1); w16(2);
-        w32(recRate); w32(recRate * 4); w16(4); w16(16); fwrite("data", 1, 4, f); w32(bytes);
-        fwrite(recBuf, 2, n, f);
+        uint8_t hdr[44]; wavHeader(hdr, recRate, 2, 24, (uint32_t)n); fwrite(hdr, 1, 44, f);
+        fwrite(recBuf, 6, (size_t)n, f);
         fclose(f);
     }
     free(recBuf); recBuf = nullptr; recCap = 0;
@@ -679,7 +680,7 @@ static void recToggle() {
     if (!recOn && !recBuf) {
         recRate = eng.sr;
         int cap = recRate * REC_MAX_SEC * 2;
-        recBuf = (int16_t*)malloc((size_t)cap * 2);
+        recBuf = (uint8_t*)malloc((size_t)cap * 3);
         if (!recBuf) { toast(TR("ZU WENIG SPEICHER FÜR DIE AUFNAHME", "NOT ENOUGH MEMORY FOR RECORDING")); return; }
         recPos = 0; recCap = cap; recOn = true;
         toast(TR("AUFNAHME LÄUFT (MAX. %d MIN)", "RECORDING (MAX. %d MIN)"), REC_MAX_SEC / 60);
@@ -3529,7 +3530,8 @@ static int exportThread(void*) {
     uint8_t hdr[44] = {0};
     fwrite(hdr, 1, 44, f);
     static float buf[2 * 1024];
-    static int16_t ob[2 * 1024];
+    static uint8_t ob[2 * 1024 * 3];
+    Dither dt;
     long done = 0, tailMax = (long)R.sr * 8, quiet = 0, tail = 0;
     long total = expFrames;
     bool ok = true, inTail = false;
@@ -3540,11 +3542,9 @@ static int exportThread(void*) {
         if (!inTail && n <= 0) { R.stop(); inTail = true; continue; }   // Song zu Ende: Toene ausklingen lassen (Hall/Delay)
         R.render(buf, n);
         float pk = 0;
-        for (int i = 0; i < n * 2; i++) {
-            float x = buf[i] * 32767.f; float a = fabsf(buf[i]); if (a > pk) pk = a;
-            ob[i] = (int16_t)(x > 32767.f ? 32767 : (x < -32768.f ? -32768 : x));
-        }
-        if (fwrite(ob, 4, (size_t)n, f) != (size_t)n) { ok = false; break; }
+        for (int i = 0; i < n * 2; i++) { float a = fabsf(buf[i]); if (a > pk) pk = a; }
+        pcmTo24(ob, buf, n * 2, dt);
+        if (fwrite(ob, 6, (size_t)n, f) != (size_t)n) { ok = false; break; }
         if (!inTail) done += n;
         else {
             tail += n;
@@ -3554,11 +3554,7 @@ static int exportThread(void*) {
         expProg = (float)(done + tail) / (float)(total + R.sr * 2);
     }
     long frames = done + tail;
-    uint32_t bytes = (uint32_t)(frames * 4), sr = (uint32_t)R.sr;
-    auto put32 = [&](int o, uint32_t v) { hdr[o] = v & 255; hdr[o + 1] = (v >> 8) & 255; hdr[o + 2] = (v >> 16) & 255; hdr[o + 3] = v >> 24; };
-    auto put16 = [&](int o, uint16_t v) { hdr[o] = v & 255; hdr[o + 1] = v >> 8; };
-    memcpy(hdr, "RIFF", 4); put32(4, 36 + bytes); memcpy(hdr + 8, "WAVEfmt ", 8); put32(16, 16); put16(20, 1); put16(22, 2);
-    put32(24, sr); put32(28, sr * 4); put16(32, 4); put16(34, 16); memcpy(hdr + 36, "data", 4); put32(40, bytes);
+    wavHeader(hdr, R.sr, 2, 24, (uint32_t)frames);
     if (ok) { fseek(f, 0, SEEK_SET); ok = fwrite(hdr, 1, 44, f) == 44; }
     if (fclose(f) != 0) ok = false;
     if (ok) { sync(); ok = rename(part, expPath) == 0; }
@@ -4354,15 +4350,11 @@ static void audioCb(void*, Uint8* stream, int len) {
 static bool writeWav(const char* path, const float* data, int frames, int sr) {
     FILE* f = fopen(path, "wb");
     if (!f) return false;
-    int bytes = frames * 4;
-    auto w32 = [&](uint32_t v) { fwrite(&v, 4, 1, f); };
-    auto w16 = [&](uint16_t v) { fwrite(&v, 2, 1, f); };
-    fwrite("RIFF", 1, 4, f); w32(36 + bytes); fwrite("WAVEfmt ", 1, 8, f);
-    w32(16); w16(1); w16(2); w32(sr); w32(sr * 4); w16(4); w16(16);
-    fwrite("data", 1, 4, f); w32(bytes);
-    for (int i = 0; i < frames * 2; i++) {
-        float x = data[i] < -1 ? -1 : (data[i] > 1 ? 1 : data[i]);
-        w16((uint16_t)(int16_t)(x * 32767));
+    uint8_t hdr[44]; wavHeader(hdr, sr, 2, 24, (uint32_t)frames); fwrite(hdr, 1, 44, f);
+    static uint8_t ob[1024 * 6]; Dither dt;
+    for (int i = 0; i < frames; i += 1024) {
+        int n = frames - i < 1024 ? frames - i : 1024;
+        pcmTo24(ob, data + (size_t)i * 2, n * 2, dt); fwrite(ob, 6, (size_t)n, f);
     }
     fclose(f);
     return true;
@@ -4388,6 +4380,7 @@ static void openAudio() {
     printf("Audio: %s, %d Hz, Puffer %d Frames (%.1f ms)\n", name ? name : "Standard", have.freq, have.samples,
            have.samples * 1000.0 / have.freq);
     eng.setRate(have.freq);
+    usbAudioSetEngineRate(eng.sr);   // USB/PC-Eingang rechnen von/auf die tatsaechliche Engine-Rate um
     SDL_PauseAudioDevice(audioDev, 0);
 }
 

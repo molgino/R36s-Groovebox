@@ -72,16 +72,17 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
         ln -s functions/midi.usb0 configs/c.1/
         if [ "$1" = 1 ]; then
             RATES=${GB_UAC_RATES:-44100,48000}
+            SS=${GB_UAC_SSIZE:-3}   # Bytes je Sample: 3 = 24 Bit (Standard), 2 = 16 Bit
             U=""
             if [ "${GB_UAC:-2}" = 1 ]; then          # UAC1: auch fuer Geraete ohne UAC2 (Windows 7/8, Konsolen, alte Recorder)
                 if mkdir functions/uac1.usb0 2>/dev/null; then
                     U=functions/uac1.usb0
-                    echo 3 > $U/p_chmask; echo 3 > $U/c_chmask; echo 2 > $U/p_ssize; echo 2 > $U/c_ssize
+                    echo 3 > $U/p_chmask; echo 3 > $U/c_chmask; echo $SS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize
                     echo $RATES > $U/p_srate 2>/dev/null || echo 44100 > $U/p_srate
                     echo $RATES > $U/c_srate 2>/dev/null || echo 44100 > $U/c_srate
                     echo "Synth City" > $U/function_name 2>/dev/null
                     echo ${GB_UAC_REQ:-4} > $U/req_number 2>/dev/null
-                    echo "UAC1: p_srate=$(cat $U/p_srate) c_srate=$(cat $U/c_srate)"
+                    echo "UAC1: p_srate=$(cat $U/p_srate) c_srate=$(cat $U/c_srate) ssize=$(cat $U/p_ssize)"
                 else
                     echo "WARNUNG: UAC1 fehlt im Kernel - nehme UAC2"
                 fi
@@ -89,8 +90,8 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
             if [ -z "$U" ]; then
                 mkdir -p functions/uac2.usb0
                 U=functions/uac2.usb0
-                echo 3 > $U/p_chmask; echo 2 > $U/p_ssize   # Groovebox -> PC
-                echo 3 > $U/c_chmask; echo 2 > $U/c_ssize   # PC -> Groovebox
+                echo 3 > $U/p_chmask; echo $SS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize   # Groovebox -> PC
+                echo 3 > $U/c_chmask; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize   # PC -> Groovebox
                 echo $RATES > $U/p_srate 2>/dev/null || echo 44100 > $U/p_srate   # mehrere Raten: Kernel >= 5.18
                 echo $RATES > $U/c_srate 2>/dev/null || echo 44100 > $U/c_srate
                 echo "Synth City" > $U/function_name 2>/dev/null
@@ -98,7 +99,7 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
                 # Zum Testen in config/groovebox.env: GB_UAC_BINT=1..4, GB_UAC_REQ=2..8
                 echo ${GB_UAC_BINT:-4} > $U/p_hs_bint 2>/dev/null; echo ${GB_UAC_BINT:-4} > $U/c_hs_bint 2>/dev/null
                 echo ${GB_UAC_REQ:-4} > $U/req_number 2>/dev/null
-                echo "UAC2: p_srate=$(cat $U/p_srate) c_srate=$(cat $U/c_srate) p_hs_bint=$(cat $U/p_hs_bint 2>/dev/null) c_hs_bint=$(cat $U/c_hs_bint 2>/dev/null) req_number=$(cat $U/req_number 2>/dev/null)"
+                echo "UAC2: p_srate=$(cat $U/p_srate) c_srate=$(cat $U/c_srate) ssize=$(cat $U/p_ssize) p_hs_bint=$(cat $U/p_hs_bint 2>/dev/null) c_hs_bint=$(cat $U/c_hs_bint 2>/dev/null) req_number=$(cat $U/req_number 2>/dev/null)"
             fi
             ln -s $U configs/c.1/
         fi

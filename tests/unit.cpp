@@ -4,6 +4,7 @@
 #include "../src/engine.h"
 #include "../src/samples.h"
 #include "../src/factory.h"
+#include "../src/pcm.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -364,6 +365,57 @@ static void testDeterminism() {
     CHECK(!memcmp(a, b, sizeof(float) * 44100), "zwei gleiche Durchlaeufe klingen verschieden (Zufall ohne festen Startwert)");
 }
 
+// 24-Bit-Ausgabe (WAV/USB): Rundung, Begrenzung, Dither, leise Signale bleiben erhalten, WAV liest sich wieder ein
+static void testPcm24(const char* sdir) {
+    curTest = "PCM 24 Bit";
+    Dither d;
+    float maxErr = 0;
+    for (int i = 0; i < 20000; i++) {
+        float x = sinf(i * 0.0137f) * 0.97f;
+        float y = pcmQuant(x, 24, d) / 8388607.f;
+        maxErr = fmaxf(maxErr, fabsf(x - y));
+    }
+    CHECK(maxErr < 3.f / 8388607.f, "24-Bit-Rundung zu ungenau (%.3g)", maxErr);
+    CHECK(pcmQuant(1.5f, 24, d) == 8388607 && pcmQuant(-1.5f, 24, d) == -8388608, "24 Bit nicht begrenzt");
+    CHECK(pcmQuant(1.5f, 16, d) == 32767 && pcmQuant(-1.5f, 16, d) == -32768, "16 Bit nicht begrenzt");
+    uint8_t b3[3];
+    put24(b3, -8388608); CHECK(get24(b3) == -8388608, "put24/get24 negativ");
+    put24(b3, 1234567); CHECK(get24(b3) == 1234567, "put24/get24 positiv");
+    // Stille -> nur Dither (+-1 LSB), mittelwertfrei
+    long sum = 0; int amax = 0;
+    for (int i = 0; i < 100000; i++) { int v = pcmQuant(0.f, 24, d); sum += v; if (abs(v) > amax) amax = abs(v); }
+    CHECK(amax <= 1 && labs(sum) < 2000, "Dither zu stark/unsymmetrisch (max %d, Summe %ld)", amax, sum);
+    // Sinus bei -100 dBFS: in 16 Bit fast weg (0,3 LSB), in 24 Bit sauber (84 LSB)
+    double sig = 0, err = 0;
+    for (int i = 0; i < 44100; i++) {
+        float x = 1e-5f * sinf(i * 2.f * 3.14159265f * 997.f / 44100.f);
+        float y = pcmQuant(x, 24, d) / 8388607.f;
+        sig += (double)x * x; err += (double)(x - y) * (x - y);
+    }
+    double snr = 10 * log10(sig / err);
+    CHECK(snr > 30, "leises Signal in 24 Bit verrauscht (SNR %.1f dB)", snr);
+    // WAV schreiben (Stereo, 24 Bit, 48 kHz) und mit dem Sample-Leser wieder einlesen
+    char path[600]; snprintf(path, sizeof path, "%s/zz-unit-24bit.wav", sdir);
+    FILE* f = fopen(path, "wb");
+    if (!f) { printf("  (WAV-Test uebersprungen: %s nicht beschreibbar)\n", sdir); return; }
+    enum { N = 4800 };
+    static float st[N * 2]; static uint8_t raw[N * 6];
+    for (int i = 0; i < N; i++) { st[i * 2] = 0.5f * sinf(i * 0.05f); st[i * 2 + 1] = 0.25f; }
+    uint8_t h[44]; wavHeader(h, 48000, 2, 24, N);
+    pcmTo24(raw, st, N * 2, d);
+    fwrite(h, 1, 44, f); fwrite(raw, 6, N, f); fclose(f);
+    Sample s;
+    bool ok = sampleRead("zz-unit-24bit", s);
+    remove(path);
+    CHECK(ok, "24-Bit-WAV nicht lesbar");
+    if (!ok) return;
+    CHECK(s.rate == 48000 && s.len == N, "WAV-Kopf falsch (Rate %d, Laenge %d)", s.rate, s.len);
+    float me = 0;
+    for (int i = 0; i < s.len && i < N; i++) me = fmaxf(me, fabsf(s.data[i] - (st[i * 2] + st[i * 2 + 1]) * 0.5f));
+    CHECK(me < 1e-5f, "24-Bit-WAV liest sich anders zurueck (%.3g)", me);
+    free(s.data);
+}
+
 int main(int argc, char** argv) {
     const char* sdir = argc > 1 ? argv[1] : "samples";
     printf("Samples: %d aus %s\n", samplesLoad(sdir), sdir);
@@ -383,6 +435,7 @@ int main(int argc, char** argv) {
     testSaveLoad();
     testDeterminism();
     testMultiCore();
+    testPcm24(sdir);
     printf("%s: %d Pruefungen ok, %d Fehler\n", nFail ? "FEHLGESCHLAGEN" : "OK", nPass, nFail);
     return nFail ? 1 : 0;
 }

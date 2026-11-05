@@ -29,7 +29,7 @@ Die 8 Spuren liegen auf dem Bildschirm genau so wie die Tasten: **Steuerkreuz �
 | Taste | Funktion |
 |---|---|
 | L1 halten | FILL (Trig-Bedingungen FILL) – auf allen anderen Seiten: START beim Spielen halten |
-| R1 | **WAV-Aufnahme** der Summe starten/stoppen (max. 5 Min.), gespeichert als `samples/rec/rec-NNN.wav` – im Browser unter Samples herunterladen |
+| R1 | **WAV-Aufnahme** der Summe starten/stoppen (max. 5 Min.), gespeichert als `samples/rec/rec-NNN.wav` (Stereo, 24 Bit) – im Browser unter Samples herunterladen |
 | L2 / R2 | Seite (wie überall); Pattern zurück/vor: SELECT + ←/→ |
 | rechter Stick ↑/↓ | DJ-Filter (Hoch-/Tiefpass) |
 | linker Stick ↑/↓ | Tempo ±1 BPM |
@@ -201,7 +201,7 @@ Der Song ist eine **Matrix wie in einer Clip-Ansicht**: jede **Zeile** ist eine 
 * Ein Pattern-Wechsel (SELECT + ←/→, SET) beendet den Song-Modus.
 * Im Kopf steht „SNG2/5“; START auf anderen Seiten setzt den Song fort. Seite wechseln wie überall mit L2/R2.
 
-**Song exportieren (WAV):** Unter der Matrix liegt die Leiste **EXPORT WAV** (in der letzten Zeile ↓ drücken). Mit ←/→ das Feld wählen, mit X/Y **VON** (Anfangszeile) und **BIS** (Schlusszeile) einstellen – Standard ist der ganze Song („ENDE“). Die gewählten Zeilen sind links mit einem cyanfarbenen Strich markiert, die Länge steht daneben. **A** startet den Export: Die Groovebox rechnet die Zeilen samt Wiederholungen offline (schneller als Echtzeit, die Wiedergabe stoppt dafür), lässt Hall und Delay ausklingen und speichert `samples/rec/<Projekt>-song-NN.wav` (Stereo, 44,1 kHz, 16 Bit). B bricht ab. Herunterladen im Browser unter Samples → rec.
+**Song exportieren (WAV):** Unter der Matrix liegt die Leiste **EXPORT WAV** (in der letzten Zeile ↓ drücken). Mit ←/→ das Feld wählen, mit X/Y **VON** (Anfangszeile) und **BIS** (Schlusszeile) einstellen – Standard ist der ganze Song („ENDE“). Die gewählten Zeilen sind links mit einem cyanfarbenen Strich markiert, die Länge steht daneben. **A** startet den Export: Die Groovebox rechnet die Zeilen samt Wiederholungen offline (schneller als Echtzeit, die Wiedergabe stoppt dafür), lässt Hall und Delay ausklingen und speichert `samples/rec/<Projekt>-song-NN.wav` (Stereo, 44,1 kHz, 24 Bit). B bricht ab. Herunterladen im Browser unter Samples → rec.
 * Projekte ab Version 12 speichern Matrix und Mutes; ältere Songs (Pattern-Kette) werden beim Laden in Zeilen mit demselben Pattern auf allen Spuren umgestellt.
 
 ## Pattern-Mutation (SET → PATTERN)
@@ -529,9 +529,10 @@ Dadurch funktioniert der R36S am PC als **echtes USB-Audiointerface und USB-MIDI
 * **Windows zeigt „Synth City“ nicht als MIDI-Gerät** (Windows 11 mit dem neuen MIDI-Dienst), obwohl Audio geht: R36S ab- und wieder anstecken; hilft das nicht, den Dienst „Windows MIDI Service“ (midisrv) neu starten oder Windows neu starten.
 * Der Klang geht im Modus **PC (MIDI + Audio)** automatisch **zusätzlich** zum PC (SET → „Audio an PC (USB)“, Standard AN). Lautsprecher/Kopfhörer laufen weiter und geben den Takt vor – liest der PC nicht mit, läuft der Sequencer trotzdem weiter. In SET steht, ob der PC gerade mitliest.
 * **Lautstärken getrennt:** Die Lautstärketasten regeln nur Lautsprecher/Kopfhörer des R36S, die USB-Lautstärke steht in SET („USB-Lautstärke“). Mit „Intern bei USB-Audio: STUMM“ (Standard) sind Lautsprecher und Kopfhörer stumm, solange USB-Audio zum PC läuft.
+* **Klangqualität USB:** 24 Bit in beide Richtungen, 44,1 oder 48 kHz (der PC wählt). Gerechnet wird intern in 32-Bit-Gleitkomma; erst am Ausgang wird mit Dither auf 24 Bit gewandelt. Macht ein älterer PC/Kernel Probleme, stellt `GB_UAC_SSIZE=2` in `config/groovebox.env` auf 16 Bit zurück.
 * Ein Taktausgleich regelt die USB-Spur unhörbar nach (Uhren von R36S und PC laufen minimal unterschiedlich) – keine Knackser bei langen Aufnahmen. Im Log steht die Abweichung als „Takt … ppm“.
 * **PC-Ton über den R36S:** Wählt man am PC „Synth City“ als Wiedergabegerät, klingt der PC-Ton aus Lautsprecher/Kopfhörer des R36S (SET → „PC-Ton über R36S“).
-* **Sampling vom PC:** SET → „PC-Ton als Sample aufnehmen“ → A. Die Aufnahme startet mit dem ersten Ton, den der PC abspielt (max. 60 s), A beendet sie. Das Sample landet als `samples/pc/pc-NN.wav` und steht sofort zur Verfügung.
+* **Sampling vom PC:** SET → „PC-Ton als Sample aufnehmen“ → A. Die Aufnahme startet mit dem ersten Ton, den der PC abspielt (max. 60 s), A beendet sie. Das Sample landet als `samples/pc/pc-NN.wav` (24 Bit) und steht sofort zur Verfügung.
 * SSH: `ssh ark@192.168.77.1`, Passwort `ark`.
 
 ### App aktualisieren ohne neues Image

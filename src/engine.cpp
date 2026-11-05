@@ -954,6 +954,7 @@ void Engine::initFx(int sampleRate) {
     for (int k = 0; k < 4; k++) { free(rev.al[k].b); free(rev.ar[k].b); rev.al[k] = Allpass(); rev.ar[k] = Allpass(); }
     rev.init(sr);
     memset(limXL, 0, sizeof limXL); memset(limXR, 0, sizeof limXR);   // Limiter: leerer Vorausschau-Puffer
+    dcXL = dcXR = dcYL = dcYR = 0.f;
     limReady = false; limPos = 0; limRel = 1.f;
 }
 
@@ -1605,6 +1606,7 @@ void Engine::processBlock(float* out, int n) {
     float cleanG = 0.6f * mv, satMix = mdrv * 8.f > 1.f ? 1.f : mdrv * 8.f;   // DRIVE 0 = sauber, ab ~16 voller Charakter
     const float LIM_CEIL = 0.891f;                                      // -1 dBFS (Reserve fuer Wandler/Zwischenwerte)
     const float limRelCo = 1.f - fastExpE(-1.f / (0.08f * sr));         // Rueckkehr ~80 ms
+    const float dcR = 1.f - 6.2831853f * 3.f / sr;                      // DC-Sperre: 1-Pol-Hochpass 3 Hz (30 Hz: -0,04 dB)
     if (!limReady) { for (int k = 0; k < LIM_LA; k++) { limReq[k] = limR[k] = 1.f; } limReady = true; }
     float limMin = 1.f;
 
@@ -1675,6 +1677,10 @@ void Engine::processBlock(float* out, int n) {
             oL = oL * cleanG + (fastTanh(oL * outG) * outC - oL * cleanG) * satMix;
             oR = oR * cleanG + (fastTanh(oR * outG) * outC - oR * cleanG) * satMix;
         } else { oL *= cleanG; oR *= cleanG; }
+        {   // DC-Sperre: Gleichanteil (asymmetrische Saettigung, Samples) kostet Headroom und knackt beim Start/Stopp
+            float yl = oL - dcXL + dcR * dcYL, yr = oR - dcXR + dcR * dcYR;
+            dcXL = oL; dcXR = oR; dcYL = yl; dcYR = yr; oL = yl; oR = yr;
+        }
         {   // Limiter: Mindest-Verstaerkung der naechsten LIM_LA Samples halten, dann ueber LIM_LA mitteln ->
             // die Kurve ist an jedem verzoegerten Sample <= Decke/Spitze (keine Uebersteuerung, kein Knacken)
             float pk = fmaxf(fabsf(oL), fabsf(oR));
