@@ -3696,7 +3696,11 @@ static void handleInput(Uint32 now, float dt) {
             int mul = (big && (I.heldMs(BT_X, now) > 1200 || I.heldMs(BT_Y, now) > 1200)) ? 5 : 1;
             if (I.pressed(BT_X) && trackPage(page)) {   // Sample-Regler: X oeffnet den Explorer (mit Unterordnern)
                 ParamDef sd; int sv, sb; bool sl; char slab[24];
-                if (knobInfo(slot, sd, sv, sl, sb, slab, sizeof slab) && sd.kind == K_SMPL) { openBrowser(FB_SAMPLE); return; }
+                if (knobInfo(slot, sd, sv, sl, sb, slab, sizeof slab)) {
+                    if (sd.kind == K_SMPL) { openBrowser(FB_SAMPLE); return; }
+                    if (sd.kind == K_LDEST) { fbParam = sp() * 8 + slot; openBrowser(FB_LDEST); return; }
+                    if (sd.kind == K_MACH && !aHeld) { openBrowser(FB_MACH); return; }
+                }
             }
             if (I.repeat(BT_X, now, 300, 45)) editValue(mul);
             if (I.repeat(BT_Y, now, 300, 45)) editValue(-mul);
@@ -4224,6 +4228,8 @@ int main(int argc, char** argv) {
             if (shotPage == 52) { page = PG_PRJ; openBrowser(FB_PROJECT); }
             if (shotPage == 53) { page = PG_PRJ; track = 4; openBrowser(FB_PRESET); fbPick(); fbSel = 3; }
         }
+        if (shotPage == 54) { page = PG_TRG; track = 4; slot = 6; openBrowser(FB_MACH); }   // Engine-Liste
+        if (shotPage == 55) { page = PG_LFO1; track = 4; slot = LF_DEST; fbParam = P_L1 + LF_DEST; openBrowser(FB_LDEST); }   // LFO-Ziel-Liste
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
         lastPage = page;

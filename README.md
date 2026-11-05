@@ -59,7 +59,7 @@ Im ARP-Modus **AKKD** spielt ein Trig alle Töne des gewählten Akkords (**CHRD*
 **Klangcharakter:** KICK, SNARE, HAT, CLAP und RIM sind an die klassischen analogen Drumcomputer angelehnt (Kick: Sinus mit schnellem Pitch-Sweep und Sättigung über BODY, Klick über CLCK; Snare: zwei verstimmte Töne mit eigenem Pitch-Abfall plus gefiltertes Rauschen, TONE = Helligkeit; Hihat: sechs Rechteck-Oszillatoren durch Bandpass + Hochpass; Clap: sägezahnförmige Einzelschläge vor der Fahne).
 SYNTH und WTBL starten mit dem **24-dB-Tiefpass** (LP24) mit sanfter Sättigung; die Oszillatoren driften leicht wie bei analogen Geräten. Weitere Filtertypen (Ladder, Kamm, Vokal …) siehe FLT.
 
-Die Engine wählst du pro Spur und Pattern: auf der TRG-Seite mit dem Regler ENGINE oder mit SELECT + X/Y.
+Die Engine wählst du pro Spur und Pattern: auf der TRG-Seite mit dem Regler ENGINE oder mit SELECT + X/Y. **X** auf dem Regler ENGINE öffnet eine **Liste aller Engines** (mit Symbol und Kurzbeschreibung): ↑/↓ wählt, A übernimmt, SELECT bricht ab. Y und der rechte Stick blättern weiter direkt.
 Beim Drehen erscheint der **Engine-Wähler** mit Symbolen für alle 13 Engines.
 
 Jede Spur spielt eine Stimme; SYNTH, FM, WTBL und die Sample-Engines spielen im ARP-Modus **AKKD** bis zu 4 Akkordtöne gleichzeitig.
@@ -309,6 +309,8 @@ Erlaubt sind 8/16/24/32-Bit-PCM und 32-Bit-Float in jeder Samplerate. Stereo wir
 Ältere Projekte und Sounds (gespeichert mit Sample-Nummern) werden beim Laden über die frühere Reihenfolge zugeordnet und beim nächsten Speichern auf Namen umgestellt.
 
 SET → **Samples** zeigt: Dateien in der Bibliothek, Samples im Projekt, fehlende Samples und Dateien in anderen Formaten.
+
+**Auswahllisten:** Wie beim Sample gibt es auch für das **LFO-Ziel** (Regler DEST auf LF1–LF3) eine Liste: **X** öffnet sie, die Wurzel zeigt „--- (kein Ziel)“ und einen Ordner je Seite (SRC, FLT, AMP …), darin die Parameter mit kurzer Erklärung. Sie startet beim aktuellen Ziel. Im Lock-Modus wird das Ziel als Lock gesetzt.
 
 **Sample-Explorer:** Auf dem Regler **SMPL** (Seite QUELLE von SMPL, CHOP, GRAN) öffnet **X** den Explorer mit allen Ordnern und Unterordnern (bis 8 Ebenen). Er startet im Ordner des aktuellen Samples. Steuerkreuz ↑/↓ wählt, **A** oder → öffnet einen Ordner bzw. übernimmt das Sample, **X** hört vorab hinein, **B** oder ← geht einen Ordner zurück, L1/R1 blättert seitenweise, SELECT bricht ab (das vorher eingestellte Sample bleibt). Im Lock-Modus (A lang halten) wird das gewählte Sample als **Lock auf den Step** gesetzt. Der rechte Stick blättert direkt durch die Samples des Projekts; „(leer)“ heißt, auf diesem Platz liegt kein Sample.
 

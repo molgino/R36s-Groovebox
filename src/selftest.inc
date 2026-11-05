@@ -252,8 +252,10 @@ static void goPage(int target) {
     }
 }
 static void goSlot(int target) {   // linker Stick: je Antippen ein Feld
-    while (slot / 4 != target / 4) flickL(0, slot / 4 < target / 4 ? -1 : 1);
-    while (slot % 4 != target % 4) flickL(slot % 4 < target % 4 ? 1 : -1, 0);
+    int guard = 0;
+    while (slot / 4 != target / 4 && guard++ < 40) flickL(0, slot / 4 < target / 4 ? -1 : 1);
+    while (slot % 4 != target % 4 && guard++ < 80) flickL(slot % 4 < target % 4 ? 1 : -1, 0);
+    if (guard >= 40) { printf("  goSlot(%d) haengt in '%s' (Seite %d, Slot %d, Explorer %d)\n", target, uiCase, page, slot, (int)fbOpen); fflush(stdout); }
 }
 static void goTrack(int t) { while (track != t) tap(track < t ? BT_DOWN : BT_UP); }
 static void goStep(int s) { while (cursor != s) tap(cursor < s ? BT_RIGHT : BT_LEFT); }
@@ -441,6 +443,36 @@ static void uiScenarios() {
         UCHECK(!fbOpen && curP().p[7][P_S0] == got && !sampleName(PREVIEW_SLOT)[0], "Abbruch nach Vorhoeren: Platz %d statt %d", curP().p[7][P_S0], got);
     }
 
+    uiCase = "Engine-Liste";
+    simReset(); goTrack(2); goPage(PG_TRG); slot = 6;   // ENGINE (TRG-Seite hat eigenes Raster)
+    tap(BT_X);
+    UCHECK(fbOpen && fbMode == FB_MACH && fbN == M_COUNT, "X auf ENGINE oeffnet keine Liste (%d Eintraege)", fbN);
+    UCHECK(fbEnt[fbSel].idx == curP().machine[2], "Liste steht nicht auf der aktuellen Engine");
+    for (int i = 0; i < fbN; i++) if (fbEnt[i].idx == M_FM) fbSel = i;
+    tap(BT_A);
+    UCHECK(!fbOpen && curP().machine[2] == M_FM, "Engine nicht gewechselt (%d)", curP().machine[2]);
+    tap(BT_X); tap(BT_SELECT);
+    UCHECK(!fbOpen && curP().machine[2] == M_FM, "Abbruch aendert die Engine");
+
+    uiCase = "LFO-Ziel-Liste";
+    simReset(); goTrack(4); goPage(PG_LFO1); slot = LF_DEST;
+    curP().p[4][P_L1 + LF_DEST] = 0;
+    tap(BT_X);
+    UCHECK(fbOpen && fbMode == FB_LDEST && !fbDir[0] && fbN > 3 && !fbEnt[fbSel].dir && fbEnt[fbSel].idx == 0, "X auf DEST oeffnet keine Ziel-Liste");
+    for (int i = 0; i < fbN; i++) if (fbEnt[i].dir && fbEnt[i].idx == 2) fbSel = i;   // Speicherseite 2 = FLT
+    tap(BT_A);
+    UCHECK(fbDir[0] && fbN > 0, "Seitenordner FLT leer");
+    for (int i = 0; i < fbN; i++) if (fbEnt[i].idx == P_FREQ + 1) fbSel = i;
+    tap(BT_A);
+    UCHECK(!fbOpen && curP().p[4][P_L1 + LF_DEST] == P_FREQ + 1, "LFO-Ziel nicht gesetzt (%d)", curP().p[4][P_L1 + LF_DEST]);
+    tap(BT_X);
+    UCHECK(fbOpen && fbDir[0] && fbEnt[fbSel].idx == P_FREQ + 1, "Liste oeffnet nicht beim aktuellen Ziel");
+    tap(BT_B); tap(BT_B);
+    UCHECK(!fbOpen && curP().p[4][P_L1 + LF_DEST] == P_FREQ + 1, "Zurueck/Abbruch aendert das Ziel");
+    { bool ok = true; int m = curP().machine[4];   // Liste enthaelt nur gueltige Ziele
+      for (int st = 0; st < NPAGES; st++) for (int k = 0; k < 8; k++) if (ldestValid(m, st * 8 + k) && ldestUiPage(st) < 0) ok = false;
+      UCHECK(ok, "Zielseite ohne Bedienseite"); }
+
     uiCase = "Sample-Pool";
     if (libCount() > 1) {
         simReset(); Engine::setMachine(curP(), 7, M_SAMPLE);
@@ -510,7 +542,10 @@ static void uiTasks() {
     combo(BT_SELECT, BT_A);
     simReset(); goPage(PG_MST); goSlot(MS_BPM); stickR(1.f, 300); rec("Tempo aendern", 3);
     simReset(); goTrack(1); goPage(PG_AMP); goSlot(6); stickR(1.f, 300); rec("Spur 2: Delay-Send", 4);
-    simReset(); goTrack(4); goPage(PG_LFO1); goSlot(LF_DEST); for (int i = 0; i < P_FREQ + 1; i++) tap(BT_X); goSlot(LF_DEPTH); stickR(1.f, 300); rec("Spur 5: LFO1 -> Filter", 5);
+    simReset(); goTrack(4); goPage(PG_LFO1); slot = LF_DEST; tap(BT_X);   // Ziel-Liste: Ordner FLT, dann FREQ
+    while (fbOpen && !fbDir[0] && !(fbEnt[fbSel].dir && fbEnt[fbSel].idx == 2) && fbSel < fbN - 1) tap(BT_DOWN);
+    tap(BT_A); while (fbOpen && fbEnt[fbSel].idx != P_FREQ + 1 && fbSel < fbN - 1) tap(BT_DOWN);
+    tap(BT_A); goSlot(LF_DEPTH); stickR(1.f, 300); rec("Spur 5: LFO1 -> Filter", 5);
     simReset(); goTrack(4); goPage(PG_AMP); goSlot(0); stickR(1.f, 200); goSlot(3); stickR(1.f, 200); rec("Spur 5: Attack + Release", 5);
     simReset(); goTrack(4); goPage(PG_ARP); goSlot(0); tap(BT_X); rec("Spur 5: Arpeggiator an", 3);
     simReset(); goTrack(4); goPage(PG_SEQ); goSlot(1); stickR(1.f, 200); rec("Spur 5: Spurlänge", 3);
@@ -638,7 +673,8 @@ static void langCheck() {
     page = PG_TRG; drawAll(true);                                     // Hilfe
     menuOpen = true; drawAll(false); menuOpen = false;
     for (int m = KB_SAVEAS; m <= KB_PSAVE; m++) { openKeyboard(m, "x"); drawAll(false); kbOpen = false; }
-    for (int m = FB_SAMPLE; m <= FB_PRESET; m++) { openBrowser(m); drawAll(false); fbClose(true); }
+    fbParam = P_L1 + LF_DEST;
+    for (int m = FB_SAMPLE; m <= FB_MACH; m++) { openBrowser(m); drawAll(false); if (m == FB_LDEST && fbN > 1) { fbSel = 1; fbPick(); drawAll(false); } fbClose(true); }
     eng.recording = true; drawAll(false); eng.recording = false;
     textHook = nullptr; g_lang = saveLang;
     int bad = 0;

@@ -192,12 +192,13 @@ static void drawKeyboard() {
 
 // ---------------------------------------------------------------- Explorer
 
-enum { FB_SAMPLE = 1, FB_PROJECT, FB_PRESET };
+enum { FB_SAMPLE = 1, FB_PROJECT, FB_PRESET, FB_LDEST, FB_MACH };
 struct FbEnt { char name[96]; bool dir; int idx; };
 static int fbMode = 0, fbSel = 0, fbN = 0, fbOrig = -1, fbOrigLib = -1;   // Samples: Pool-Platz bzw. Bibliotheksindex beim Oeffnen
 static float fbScroll = 0;
 static char fbDir[128];
 static FbEnt fbEnt[MAX_LIB + 64];
+static int fbParam = -1;   // FB_LDEST: Parameterindex des LFO-Ziels
 static const char* FB_FACTORY = "WERK";   // Ordnername der Werksklaenge im Sound-Explorer (Anzeige uebersetzt)
 
 static int fbCmp(const void* a, const void* b) {
@@ -223,8 +224,33 @@ static void fbListFiles(const char* dir, const char* ext, int idx) {
     }
     closedir(d);
 }
+static bool ldestValid(int m, int pi) {   // pi = Parameterindex; nur echte Klangparameter als LFO-Ziel
+    int k = paramDef(m, pi).kind;
+    return k != K_NONE && k != K_MACH && k != K_TLEN && k != K_TSPD;
+}
+static int ldestUiPage(int store) { for (int u = 0; u < NUI_PAGES; u++) if (PG_STORE[u] == store) return u; return -1; }
+static int fbCurValue() {   // aktueller Wert des Reglers, fuer den die Liste offen ist (Lock bei gehaltenem Step)
+    if (fbMode == FB_MACH) return curP().machine[track];
+    return aHeld && holdS().lock[fbParam] != NO_LOCK ? holdS().lock[fbParam] : curP().p[track][fbParam];
+}
 static void fbBuild() {
     fbN = 0;
+    if (fbMode == FB_MACH) {
+        for (int i = 0; i < M_COUNT; i++) fbAdd(MACHINE_NAMES[MACHINE_ORDER[i]], false, MACHINE_ORDER[i]);
+    } else if (fbMode == FB_LDEST) {
+        int m = curP().machine[track];
+        if (!fbDir[0]) {   // Wurzel: "kein Ziel" + ein Ordner je Seite in Bedien-Reihenfolge
+            fbAdd("---", false, 0);
+            for (int u = 0; u < NUI_PAGES; u++) {
+                int st = PG_STORE[u]; if (st < 0) continue;
+                bool any = false; for (int k = 0; k < 8; k++) any |= ldestValid(m, st * 8 + k);
+                if (any) fbAdd(PAGE_NAMES[u], true, st);
+            }
+        } else {
+            int st = -1; for (int u = 0; u < NUI_PAGES; u++) if (PG_STORE[u] >= 0 && !strncmp(fbDir, PAGE_NAMES[u], strlen(PAGE_NAMES[u])) && fbDir[strlen(PAGE_NAMES[u])] == '/') st = PG_STORE[u];
+            if (st >= 0) for (int k = 0; k < 8; k++) if (ldestValid(m, st * 8 + k)) fbAdd(paramDef(m, st * 8 + k).name, false, st * 8 + k + 1);
+        }
+    }
     if (fbMode == FB_SAMPLE) {
         size_t pl = strlen(fbDir);
         for (int i = 0; i < libCount(); i++) {
@@ -260,7 +286,7 @@ static void fbBuild() {
         }
     }
     bool factoryDir = fbMode == FB_PRESET && fbDir[0] && !strncmp(fbDir, FB_FACTORY, strlen(FB_FACTORY));
-    if (!factoryDir && !(fbMode == FB_PRESET && !fbDir[0])) qsort(fbEnt, fbN, sizeof(FbEnt), fbCmp);
+    if (!factoryDir && !(fbMode == FB_PRESET && !fbDir[0]) && fbMode != FB_LDEST && fbMode != FB_MACH) qsort(fbEnt, fbN, sizeof(FbEnt), fbCmp);
     if (fbSel >= fbN) fbSel = fbN ? fbN - 1 : 0;
 }
 static void openBrowser(int mode) {
@@ -280,6 +306,15 @@ static void openBrowser(int mode) {
     } else if (mode == FB_PROJECT) {
         fbBuild();
         for (int i = 0; i < fbN; i++) if (!strcmp(fbEnt[i].name, cfg.project)) fbSel = i;
+    } else if (mode == FB_MACH) {
+        fbBuild();
+        for (int i = 0; i < fbN; i++) if (fbEnt[i].idx == curP().machine[track]) fbSel = i;
+    } else if (mode == FB_LDEST) {   // im Seitenordner des aktuellen Ziels starten
+        int cur = fbCurValue();
+        int u = cur > 0 ? ldestUiPage((cur - 1) / 8) : -1;
+        if (u >= 0) snprintf(fbDir, sizeof fbDir, "%s/", PAGE_NAMES[u]);
+        fbBuild();
+        for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir && fbEnt[i].idx == cur) fbSel = i;
     } else {
         fbBuild();
         for (int i = 0; i < fbN; i++) if (fbEnt[i].dir && fbEnt[i].idx == curP().machine[track]) fbSel = i;   // Ordner der aktuellen Engine
@@ -309,6 +344,20 @@ static void fbPick() {
         return;
     }
     switch (fbMode) {
+    case FB_MACH:
+        fbClose(false);
+        if (aHeld || e.idx == curP().machine[track]) return;   // Engine ist nicht lockbar
+        lockA(); Engine::setMachine(curP(), track, e.idx); unlockA();
+        lockA(); eng.preview(track, nullptr); unlockA();
+        toast("ENGINE: %s", MACHINE_LONG[e.idx]);
+        break;
+    case FB_LDEST:
+        lockA();
+        if (aHeld || lockLatch) { holdS().lock[fbParam] = (uint8_t)e.idx; aEdited = true; }
+        else curP().p[track][fbParam] = (uint8_t)e.idx;
+        unlockA();
+        fbClose(false);
+        break;
     case FB_SAMPLE: {
         lockA(); curP().p[track][P_S0] = (uint8_t)fbOrig; unlockA();   // Vorhoer-Platz nicht stehen lassen
         int sl = poolAssign(libName(e.idx));
@@ -365,11 +414,14 @@ static void drawBrowser() {
     rrect(x0, y0, w, h, 14, C_CYAN);
     rrect(x0 + 2, y0 + 2, w - 4, h - 4, 13, C_BG);
     const char* title = fbMode == FB_SAMPLE ? TR("SAMPLE WÄHLEN", "CHOOSE SAMPLE")
-                      : (fbMode == FB_PROJECT ? TR("PROJEKT LADEN", "LOAD PROJECT") : TR("SOUND LADEN", "LOAD SOUND"));
+                      : fbMode == FB_PROJECT ? TR("PROJEKT LADEN", "LOAD PROJECT")
+                      : fbMode == FB_LDEST ? TR("LFO-ZIEL WÄHLEN", "CHOOSE LFO TARGET")
+                      : fbMode == FB_MACH ? TR("ENGINE WÄHLEN", "CHOOSE ENGINE") : TR("SOUND LADEN", "LOAD SOUND");
     text(x0 + 16, y0 + 10, title, C_CYAN, 2);
     // Pfad
     char path[160];
-    const char* root = fbMode == FB_SAMPLE ? "samples" : (fbMode == FB_PROJECT ? "projects" : TR("sounds", "sounds"));
+    const char* root = fbMode == FB_SAMPLE ? "samples" : fbMode == FB_PROJECT ? "projects" : fbMode == FB_LDEST ? TR("ziel", "target")
+                     : fbMode == FB_MACH ? "engine" : "sounds";
     char shown[128]; snprintf(shown, sizeof shown, "%s", fbDir);
     if (fbMode == FB_PRESET && !strncmp(shown, FB_FACTORY, strlen(FB_FACTORY))) snprintf(shown, sizeof shown, "%s/", TR("WERKSKLÄNGE", "FACTORY SOUNDS"));
     snprintf(path, sizeof path, "/%s/%s", root, shown);
@@ -388,16 +440,24 @@ static void drawBrowser() {
         int i = first + r, y = ly + r * rh;
         FbEnt& e = fbEnt[i];
         bool sel = i == fbSel;
-        bool cur = (fbMode == FB_PROJECT && !strcmp(e.name, cfg.project)) || (fbMode == FB_SAMPLE && !e.dir && e.idx == fbOrigLib);
+        bool cur = (fbMode == FB_PROJECT && !strcmp(e.name, cfg.project)) || (fbMode == FB_SAMPLE && !e.dir && e.idx == fbOrigLib) ||
+                   ((fbMode == FB_LDEST || fbMode == FB_MACH) && !e.dir && e.idx == fbCurValue());
+        const char* info = nullptr;   // zweite Spalte: Langname bzw. Erklaerung
+        if (fbMode == FB_MACH) info = MACHINE_LONG[e.idx];
+        else if (fbMode == FB_LDEST && e.dir) info = PAGE_LONG[ldestUiPage(e.idx)];
+        else if (fbMode == FB_LDEST) info = e.idx ? paramHelp(e.name) : TR("kein Ziel (LFO aus)", "no target (LFO off)");
         if (sel) rrect(x0 + 10, y - 2, w - 20, rh, 5, C_SEL);
         if (e.dir) {   // Ordnersymbol
             fill(x0 + 20, y + 4, 7, 3, C_LOCK); fill(x0 + 20, y + 6, 14, 10, C_LOCK);
             const char* dn = (fbMode == FB_PRESET && !strcmp(e.name, FB_FACTORY)) ? TR("WERKSKLÄNGE", "FACTORY SOUNDS") : e.name;
             text(x0 + 42, y + 1, dn, sel ? C_LOCK : C_TEXT);
+            if (info) text(x0 + 130, y + 1, info, C_DIM);
             text(x0 + w - 30, y + 1, ">", C_DIM);
         } else {
-            fill(x0 + 22, y + 4, 10, 13, sel ? C_CYAN : C_OFF2); fill(x0 + 24, y + 7, 6, 1, C_BG); fill(x0 + 24, y + 10, 6, 1, C_BG);
+            if (fbMode != FB_MACH) { fill(x0 + 22, y + 4, 10, 13, sel ? C_CYAN : C_OFF2); fill(x0 + 24, y + 7, 6, 1, C_BG); fill(x0 + 24, y + 10, 6, 1, C_BG); }
+            if (fbMode == FB_MACH) { drawIcon(e.idx, x0 + 19, y + 1, 18, sel ? C_CYAN : TCOL[track]); }
             text(x0 + 42, y + 1, e.name, sel ? C_PLAY : C_TEXT);
+            if (info && info[0]) { char ib[64]; snprintf(ib, sizeof ib, "%.46s", info); text(x0 + 130, y + 1, ib, C_DIM); }
             if (cur) text(x0 + w - 24 - textW(TR("AKTIV", "ACTIVE")), y + 1, TR("AKTIV", "ACTIVE"), C_GREEN);
         }
     }
@@ -407,7 +467,8 @@ static void drawBrowser() {
     }
     char cnt[32]; snprintf(cnt, sizeof cnt, "%d/%d", fbN ? fbSel + 1 : 0, fbN);
     text(x0 + w - 16 - textW(cnt), y0 + h - 26, cnt, C_DIM);
-    const char* h1 = fbMode == FB_SAMPLE ? TR("[A]WÄHLEN [X]HÖREN [B]ZURÜCK [L1/R1]SEITE [SEL]ABBRUCH", "[A]PICK [X]LISTEN [B]BACK [L1/R1]PAGE [SEL]CANCEL")
+    const char* h1 = (fbMode == FB_LDEST || fbMode == FB_MACH) ? TR("[A]WÄHLEN [B]ZURÜCK [L1/R1]SEITE [SEL]ABBRUCH", "[A]PICK [B]BACK [L1/R1]PAGE [SEL]CANCEL")
+                   : fbMode == FB_SAMPLE ? TR("[A]WÄHLEN [X]HÖREN [B]ZURÜCK [L1/R1]SEITE [SEL]ABBRUCH", "[A]PICK [X]LISTEN [B]BACK [L1/R1]PAGE [SEL]CANCEL")
                                          : TR("[A]ÖFFNEN/LADEN [B]ZURÜCK [L1/R1]SEITE [SEL]ABBRUCH", "[A]OPEN/LOAD [B]BACK [L1/R1]PAGE [SEL]CANCEL");
     hint(x0 + 16, y0 + h - 26, h1, C_ACC, C_DIM);
 }
