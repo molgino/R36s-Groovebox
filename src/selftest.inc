@@ -232,21 +232,21 @@ static int uiPass = 0, uiFail = 0;
 static const char* uiCase = "";
 #define UCHECK(c, ...) do { if (c) uiPass++; else { uiFail++; printf("  FEHLER [%s] Zeile %d: ", uiCase, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// Weg zur Seite wie in der Signalweg-Oberflaeche: Bloecke L1/R1, Modulation L2/R2, sonst SELECT-Menue
-static int sigIndex(const int* list, int n, int p) { for (int i = 0; i < n; i++) if (list[i] == p) return i; return -1; }
+// Weg zur Seite: in derselben Gruppe mit L2/R2, sonst ueber die Seitenkarte (SELECT, Steuerkreuz, A)
 static void goPage(int target) {
     for (int guard = 0; guard < 24 && page != target; guard++) {
-        int ci = sigIndex(SIG_CHAIN, SIG_NCH, target), mi = sigIndex(SIG_MOD, SIG_NMOD, target);
-        if (trackPage(page) && (ci >= 0 || mi >= 0)) {
-            const int* list = ci >= 0 ? SIG_CHAIN : SIG_MOD;
-            int n = ci >= 0 ? SIG_NCH : SIG_NMOD, tgt = ci >= 0 ? ci : mi;
-            int cur = sigIndex(list, n, page);
-            int dir = (cur < 0 || cur < tgt) ? 1 : -1;
-            tap(ci >= 0 ? (dir > 0 ? BT_R1 : BT_L1) : (dir > 0 ? BT_R2 : BT_L2));
-        } else {   // Menue: SELECT, Gruppe/Seite mit dem Steuerkreuz, A
+        const int *r1, *r2; int n1, n2;
+        pageRing(page, r1, n1); pageRing(target, r2, n2);
+        if (r1 == r2) {
+            int ci = 0, ti = 0;
+            for (int i = 0; i < n1; i++) { if (r1[i] == page) ci = i; if (r1[i] == target) ti = i; }
+            int fw = (ti - ci + n1) % n1;
+            tap(fw <= n1 - fw ? BT_R2 : BT_L2);   // kuerzerer Weg im Ring
+        } else {
             tap(BT_SELECT);
-            for (int k = 0; k < 6 && PG_GROUP[menuSel] != PG_GROUP[target]; k++) tap(PG_GROUP[menuSel] < PG_GROUP[target] ? BT_DOWN : BT_UP);
-            for (int k = 0; k < NUI_PAGES && menuSel != target; k++) tap(menuSel < target ? BT_RIGHT : BT_LEFT);
+            int tr, tc, r, c; mapPos(target, tr, tc);
+            for (int k = 0; k < 6; k++) { mapPos(menuSel, r, c); if (r == tr) break; tap(r < tr ? BT_DOWN : BT_UP); }
+            for (int k = 0; k < 8 && menuSel != target; k++) { mapPos(menuSel, r, c); tap(c < tc ? BT_RIGHT : BT_LEFT); }
             tap(BT_A);
         }
     }
@@ -273,9 +273,14 @@ static void uiScenarios() {
     UCHECK(cursor == 2 && track == 1, "Cursor %d Spur %d statt 2/1", cursor, track);
     tap(BT_R2); UCHECK(page == PG_SEQ, "R2: Modulationsreihe -> SEQ erwartet (Seite %d)", page);
     tap(BT_L2); UCHECK(page == PG_TRG, "L2 kehrt nicht zurueck (Seite %d)", page);
-    tap(BT_R1); UCHECK(page == PG_SRC, "R1: Signalweg -> QUELLE erwartet (Seite %d)", page);
-    tap(BT_R1); UCHECK(page == PG_FLT || page == PG_SRC2, "R1: naechster Block (Seite %d)", page);
-    page = PG_TRG; simWait(32);
+    tap(BT_R1); UCHECK(slot == 1, "R1: Regler 2 erwartet (Regler %d)", slot + 1);
+    tap(BT_L1); UCHECK(slot == 0, "L1: Regler 1 erwartet (Regler %d)", slot + 1);
+    tap(BT_L2); UCHECK(page == PG_LFO3, "L2 von TRIG: Ring -> LFO3 erwartet (Seite %d)", page);
+    tap(BT_SELECT); UCHECK(menuOpen, "SELECT oeffnet die Seitenkarte nicht");
+    tap(BT_UP); tap(BT_RIGHT); tap(BT_RIGHT);   // LFO3 -> Klang-Zeile -> ...
+    { int r, c; mapPos(menuSel, r, c); UCHECK(r == 1, "Karte: Steuerkreuz runter erreicht die Klang-Zeile nicht (Zeile %d)", r); }
+    tap(BT_A); UCHECK(!menuOpen && trackPage(page), "Karte: A oeffnet keine Spurseite");
+    page = PG_TRG; slot = 0; simWait(32);
     flickL(1, 0); UCHECK(slot == 1, "Linker Stick: Kachel %d statt 1", slot);
     flickL(0, -1); UCHECK(slot == 5, "Linker Stick runter: Kachel %d statt 5", slot);
 
@@ -302,14 +307,24 @@ static void uiScenarios() {
     UCHECK(lockLatch, "A lang halten rastet den Lock-Modus nicht ein");
     tap(BT_X); tap(BT_RIGHT);
     UCHECK(cursor == 1 && lockLatch, "im Lock-Modus: Rechts -> Step %d", cursor);
+    tap(BT_R1); UCHECK(lockLatch && slot == 1, "im Lock-Modus: R1 waehlt keinen Regler (Regler %d)", slot + 1);
+    tap(BT_R2); UCHECK(lockLatch && page != PG_FLT, "im Lock-Modus: R2 wechselt die Seite nicht");
+    goPage(PG_SRC); UCHECK(lockLatch && page == PG_SRC, "im Lock-Modus: Klangseite nicht erreichbar (Seite %d)", page);
+    tap(BT_X); UCHECK(holdS().lock[P_S0 + slot] != NO_LOCK || slot > 7, "im Lock-Modus: Lock auf der Klangseite fehlt");
     tap(BT_A); UCHECK(!lockLatch, "A beendet den Lock-Modus nicht");
+
+    uiCase = "FILL mit START";
+    simReset(); tap(BT_START); UCHECK(eng.playing, "START spielt nicht");
+    holdDown(BT_START); simWait(400); UCHECK(eng.fill, "START halten beim Spielen: kein FILL");
+    release(BT_START); simWait(2); UCHECK(!eng.fill && eng.playing, "START loslassen nach FILL: FILL aus und weiter spielen erwartet");
+    tap(BT_START); UCHECK(!eng.playing, "START kurz stoppt nicht");
 
     uiCase = "Trig kopieren";
     simReset();
     curP().s[0][0].on = 1; curP().s[0][0].lock[P_VEL] = 33;
-    holdDown(BT_A); tap(BT_L1); release(BT_A);
+    holdDown(BT_A); combo(BT_SELECT, BT_L1); release(BT_A);
     goStep(3);
-    holdDown(BT_A); tap(BT_R1); release(BT_A);
+    holdDown(BT_A); combo(BT_SELECT, BT_R1); release(BT_A);
     UCHECK(curP().s[0][3].on == 1 && curP().s[0][3].lock[P_VEL] == 33, "eingefuegter Trig: on=%d VEL-Lock=%d", curP().s[0][3].on, curP().s[0][3].lock[P_VEL]);
 
     uiCase = "Mute/Play";
@@ -332,6 +347,34 @@ static void uiScenarios() {
     tap(BT_R2); UCHECK(page != PG_SONG, "R2 verlaesst die Song-Seite nicht");
     page = PG_SONG; simWait(50);
     tap(BT_L2); UCHECK(page != PG_SONG, "L2 verlaesst die Song-Seite nicht");
+
+    uiCase = "Song-Export";
+    {
+        static Project keep; memcpy(&keep, &eng.proj, sizeof(Project));
+        simReset();
+        lockA(); buildDemo(eng); unlockA();
+        expFrom = 1; expTo = 1;   // nur Zeile 2 (Groove, 4 Durchlaeufe)
+        int a, b; expRange(a, b);
+        UCHECK(a == 1 && b == 1, "Export-Bereich %d-%d statt 2-2", a + 1, b + 1);
+        startExport();
+        UCHECK(expState == 1, "Export startet nicht (Zustand %d)", expState);
+        for (int k = 0; k < 1200 && expState == 1; k++) SDL_Delay(50);
+        UCHECK(expState == 2, "Export nicht fertig (Zustand %d)", expState);
+        struct stat st;
+        long want = expFrames;   // 4 Takte bei 112 BPM
+        long wantSec = (long)(4 * 4 * 60.0 / 112 * 44100);
+        UCHECK(labs(want - wantSec) < 64, "Export-Laenge %ld Frames statt %ld", want, wantSec);
+        if (stat(expPath, &st) == 0) {
+            long frames = (st.st_size - 44) / 4;
+            UCHECK(frames >= want && frames <= want + 8 * eng.sr + 2048, "WAV hat %ld Frames (Song %ld + Ausklang)", frames, want);
+            FILE* f = fopen(expPath, "rb"); float pk = 0;
+            if (f) { static int16_t buf[44100 * 2]; fseek(f, 44, SEEK_SET); size_t n = fread(buf, 2, 44100 * 2, f); for (size_t i = 0; i < n; i++) pk = fmaxf(pk, fabsf(buf[i] / 32768.f)); fclose(f); }
+            UCHECK(pk > 0.05f, "Export ist still (Spitze %.3f)", pk);
+            remove(expPath);
+        } else UCHECK(false, "Export-Datei fehlt: %s", expPath);
+        expFrom = 0; expTo = -1; expState = 0;
+        lockA(); memcpy(&eng.proj, &keep, sizeof(Project)); eng.songOn = false; unlockA();
+    }
 
     uiCase = "Clip-Matrix";
     {

@@ -921,8 +921,12 @@ void Engine::init(int sampleRate) {
         if (cpus >= 2 && !(env && atoi(env) == 1) && sem_init(&wkGo, 0, 0) == 0
             && pthread_create(&wkThread, nullptr, wkMain, this) == 0) { wkOn = true; audioThreads = 2; }
     }
-    buildWavetables();
-    for (int i = 0; i <= 2048; i++) SINT[i] = sinf(i / 2048.f * 6.2831853f);
+    static bool tablesBuilt = false;   // globale Tabellen nur einmal (eine zweite Engine, z. B. Song-Export, darf sie nicht neu schreiben)
+    if (!tablesBuilt) {
+        buildWavetables();
+        for (int i = 0; i <= 2048; i++) SINT[i] = sinf(i / 2048.f * 6.2831853f);
+        tablesBuilt = true;
+    }
     initFx(sampleRate);
     for (int t = 0; t < NTRACKS; t++) {
         v[t].rng.s = 0x1234567u * (t + 1);

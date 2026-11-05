@@ -735,8 +735,40 @@ static bool pageAvail(int p) {
     if (p == PG_ARP) return !machineIsDrum(curP().machine[track]);   // Arpeggiator nur fuer Klangerzeuger mit Tonhoehe
     return true;
 }
+// Seitenringe fuer L2/R2: innerhalb der Gruppe (Spur / Live, Mix & FX / Projekt), Reihenfolge wie der Signalfluss
+static const int RING_TRK[] = {PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS, PG_LFO1, PG_LFO2, PG_LFO3};
+static const int RING_MIX[] = {PG_LIVE, PG_MIX, PG_FX, PG_CMP};
+static const int RING_PRJ[] = {PG_SONG, PG_PRJ, PG_MST, PG_SYS};
+static void pageRing(int p, const int*& r, int& n) {
+    for (int i = 0; i < 4; i++) if (RING_MIX[i] == p) { r = RING_MIX; n = 4; return; }
+    for (int i = 0; i < 4; i++) if (RING_PRJ[i] == p) { r = RING_PRJ; n = 4; return; }
+    r = RING_TRK; n = 12;
+}
 static void gotoPage(int dir) {
-    for (int i = 0; i < NUI_PAGES; i++) { page = (page + dir + NUI_PAGES) % NUI_PAGES; if (pageAvail(page)) break; }
+    const int* r; int n; pageRing(page, r, n);
+    int cur = 0; for (int i = 0; i < n; i++) if (r[i] == page) cur = i;
+    for (int k = 0; k < n; k++) { cur = (cur + dir + n) % n; if (pageAvail(r[cur])) { page = r[cur]; return; } }
+}
+// START: gestoppt -> sofort Play; beim Spielen kurz = Stop (beim Loslassen), halten = FILL solange gedrueckt
+static bool startHeldPlaying = false, startFill = false;
+static bool startTap(Input& I, Uint32 now) {
+    if (I.pressed(BT_START)) {
+        if (!eng.playing) { startHeldPlaying = false; return true; }
+        startHeldPlaying = true; startFill = false;
+    }
+    if (startHeldPlaying && I.down[BT_START] && !startFill && I.heldMs(BT_START, now) > 250) { startFill = true; eng.fill = true; }
+    if (startHeldPlaying && !I.down[BT_START]) {
+        startHeldPlaying = false;
+        if (startFill) { startFill = false; eng.fill = false; return false; }
+        return true;
+    }
+    return false;
+}
+static void startStop() {
+    lockA();
+    if (eng.playing) eng.stop(); else eng.start();
+    unlockA();
+    if (!eng.playing && eng.clockMode == 2) toast(TR("WARTE AUF MIDI-START", "WAITING FOR MIDI START"));
 }
 static int curScale() { return eng.proj.mst[MS_SCALE]; }
 
@@ -822,7 +854,8 @@ static void drawHeader() {
     {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
         int g = PG_GROUP[page], x = 334, right = 612;
         int list[NUI_PAGES], n = 0, cur = 0;
-        for (int p = 0; p < NUI_PAGES; p++) if (PG_GROUP[p] == g && pageAvail(p)) { if (p == page) cur = n; list[n++] = p; }
+        const int* ring; int rn; pageRing(page, ring, rn); (void)g;   // gleiche Reihenfolge wie L2/R2 und die Seitenkarte
+        for (int k = 0; k < rn; k++) { int p = ring[k]; if (pageAvail(p)) { if (p == page) cur = n; list[n++] = p; } }
         // zu viele Reiter: so weit nach links schieben, dass die aktuelle Seite sichtbar bleibt
         int first = 0;
         auto widthFrom = [&](int f, int upto) { int w = 0; for (int i = f; i <= upto; i++) w += textW(PAGE_NAMES[list[i]]) + 5; return w; };
@@ -1968,34 +2001,122 @@ static void drawMixer(int ox) {
     text(640 - 8 - textW("A=MUTE  B=SOLO"), 222, "A=MUTE  B=SOLO", C_DIM);
 }
 
-// Seitenmenue (SELECT kurz antippen)
+// Seitenkarte (SELECT kurz antippen): alle Seiten als Signalweg + Gruppen, Steuerkreuz waehlt, A oeffnet
+static const char* sigName(int p);
+static void sigSummary(int p, char* b, int n);
+static const int MAP_ROWS[5][6] = {
+    {PG_TRG, PG_SEQ, PG_ARP, -1, -1, -1},
+    {PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS},
+    {PG_LFO1, PG_LFO2, PG_LFO3, -1, -1, -1},
+    {PG_LIVE, PG_MIX, PG_FX, PG_CMP, -1, -1},
+    {PG_SONG, PG_PRJ, PG_MST, PG_SYS, -1, -1}};
+static const char* const PAGE_DESC_DE[NUI_PAGES] = {
+    "Werte des Steps: Note, Anschlag, Länge, Wahrscheinlichkeit, Bedingung, Engine",
+    "Laufrichtung, Länge, Tempo-Faktor, Euklid und Zufalls-Generator",
+    "Arpeggiator und Akkorde: Modus, Akkord, Tempo, Oktaven",
+    "Klangerzeuger der Spur (je nach Engine)",
+    "Weitere Klang-Regler der Engine",
+    "Filter 1: Typ, Grenzfrequenz, Resonanz, Hüllkurve",
+    "Filter 2 (Hoch-/Tiefpass), Key-Tracking, Hüllkurvenform",
+    "Lautstärke-Hüllkurve, Pegel, Panorama, Effekt-Sends",
+    "LFO 1: moduliert einen Regler der Spur",
+    "LFO 2: moduliert einen Regler der Spur",
+    "LFO 3: moduliert einen Regler der Spur",
+    "Insert-Effekt der Spur: Verzerrer, Bitcrusher, Chorus ...",
+    "Mixer: Lautstärke, Panorama, Sends, Mute und Solo aller Spuren",
+    "Delay und Reverb (für alle Spuren)",
+    "Kompressor auf der Summe mit Sidechain",
+    "Projekte laden/speichern, Sounds der Spur laden/speichern",
+    "Song als Clip-Matrix: Pattern je Spur, Mutes, Export als WAV",
+    "Tempo, Swing, Tonskala, Lautstärke und Summen-Klang",
+    "Einstellungen: Pattern, Audio, MIDI, USB/PC, Samples, System",
+    "Performance: Mutes auf den Tasten, FILL, WAV-Aufnahme, DJ-Filter"};
+static const char* const PAGE_DESC_EN[NUI_PAGES] = {
+    "Step values: note, velocity, length, probability, condition, engine",
+    "Direction, length, tempo factor, Euclid and random generator",
+    "Arpeggiator and chords: mode, chord, rate, octaves",
+    "Sound generator of the track (depends on the engine)",
+    "More sound controls of the engine",
+    "Filter 1: type, cutoff, resonance, envelope",
+    "Filter 2 (high/low cut), key tracking, envelope shape",
+    "Amp envelope, level, panorama, effect sends",
+    "LFO 1: modulates a control of the track",
+    "LFO 2: modulates a control of the track",
+    "LFO 3: modulates a control of the track",
+    "Insert effect of the track: drive, bitcrusher, chorus ...",
+    "Mixer: level, pan, sends, mute and solo of all tracks",
+    "Delay and reverb (for all tracks)",
+    "Compressor on the master with sidechain",
+    "Load/save projects, load/save sounds of the track",
+    "Song as clip matrix: pattern per track, mutes, WAV export",
+    "Tempo, swing, scale, volume and master sound",
+    "Settings: pattern, audio, MIDI, USB/PC, samples, system",
+    "Performance: mutes on the buttons, FILL, WAV recording, DJ filter"};
+#define PAGE_DESC (g_lang ? PAGE_DESC_EN : PAGE_DESC_DE)
+static void mapPos(int p, int& r, int& c) { r = c = 0; for (int i = 0; i < 5; i++) for (int k = 0; k < 6; k++) if (MAP_ROWS[i][k] == p) { r = i; c = k; } }
+static int mapCols(int r) { int n = 0; while (n < 6 && MAP_ROWS[r][n] >= 0) n++; return n; }
+static void mapBox(int r, int c, int& x, int& y, int& w, int& h) {   // Spur-Zeilen: Raster mit 6 Spalten, untere Zeilen: 4 breite Felder
+    static const int RY[5] = {82, 148, 214, 290, 356};
+    h = 42; y = RY[r];
+    if (r <= 2) { w = 88; x = 26 + c * (w + 12); }
+    else { w = 136; x = 26 + c * (w + 12); }
+}
+static void mapSummary(int p, char* b, int n) {
+    if (trackPage(p)) { sigSummary(p, b, n); return; }
+    switch (p) {
+    case PG_LIVE: snprintf(b, n, TR("MUTES  FILL  REC", "MUTES  FILL  REC")); break;
+    case PG_MIX: snprintf(b, n, TR("8 KANÄLE", "8 CHANNELS")); break;
+    case PG_FX: snprintf(b, n, "DELAY  REVERB"); break;
+    case PG_CMP: snprintf(b, n, "SIDECHAIN"); break;
+    case PG_SONG: snprintf(b, n, TR("%d ZEILEN%s", "%d ROWS%s"), eng.proj.songLen, eng.songOn ? TR("  AN", "  ON") : ""); break;
+    case PG_PRJ: snprintf(b, n, "%.15s", cfg.project); break;
+    case PG_MST: snprintf(b, n, "%d BPM", eng.proj.bpm); break;
+    case PG_SYS: snprintf(b, n, TR("AUDIO  USB  SYSTEM", "AUDIO  USB  SYSTEM")); break;
+    default: b[0] = 0;
+    }
+}
+static void drawExportModal();
 static void drawMenu() {
-    rrect(50, 40, 540, 360, 14, C_ACC);
-    rrect(52, 42, 536, 356, 13, C_BG);
-    textC(320, 50, TR("SEITE WÄHLEN", "CHOOSE PAGE"), C_ACC, 2);
-    int y = 104;
-    for (int g = 0; g < 3; g++) {
-        text(72, y - 20, GROUP_NAMES[g], C_DIM);
-        int x = 72;
-        for (int p = 0; p < NUI_PAGES; p++) {
-            if (PG_GROUP[p] != g || !pageAvail(p)) continue;
-            bool sel = p == menuSel, cur = p == page;
-            int w = textW(PAGE_NAMES[p]) + 22;
-            if (x + w > 568) { x = 72; y += 36; }   // Zeile umbrechen (viele Spurseiten)
-            rrect(x, y, w, 30, 8, sel ? C_ACC : (cur ? C_SEL : C_PANEL));
-            text(x + 11, y + 7, PAGE_NAMES[p], sel ? C_BG : (cur ? C_ACC : C_TEXT));
-            x += w + 8;
+    rrect(10, 30, 620, 420, 14, C_ACC);
+    rrect(12, 32, 616, 416, 13, C_BG);
+    char b[64];
+    textC(320, 40, TR("SEITEN", "PAGES"), C_ACC, 2);
+    Col tc = TCOL[track];
+    snprintf(b, sizeof b, TR("SPUR %d - %s - P%02d", "TRACK %d - %s - P%02d"), track + 1, MACHINE_NAMES[curP().machine[track] % M_COUNT], curPi() + 1);
+    text(26, 46, b, tc);
+    static const char* const RL_DE[5] = {"SEQUENZ", "KLANG (SIGNALWEG)", "MODULATION", "LIVE, MIX & FX", "PROJEKT"};
+    static const char* const RL_EN[5] = {"SEQUENCE", "SOUND (SIGNAL PATH)", "MODULATION", "LIVE, MIX & FX", "PROJECT"};
+    for (int r = 0; r < 5; r++) {
+        int x, y, w, h; mapBox(r, 0, x, y, w, h);
+        text(26, y - 15, g_lang ? RL_EN[r] : RL_DE[r], r <= 2 ? dimC(tc, 0.85f) : C_DIM);
+        if (r == 3) fill(26, y - 22, 588, 1, C_OFF2);
+        for (int c = 0; c < mapCols(r); c++) {
+            int p = MAP_ROWS[r][c];
+            mapBox(r, c, x, y, w, h);
+            bool av = pageAvail(p), sel = p == menuSel, cur = p == page;
+            if (r == 1 && c > 0) {   // Pfeil im Signalweg
+                Col ac = av ? tc : C_OFF2;
+                fill(x - 11, y + h / 2, 9, 2, ac); fill(x - 5, y + h / 2 - 2, 2, 6, ac); fill(x - 4, y + h / 2 - 1, 2, 4, ac);
+            }
+            Col bg = sel ? (r <= 2 ? tc : C_ACC) : (cur ? C_SEL : C_PANEL);
+            rrect(x, y, w, h, 7, av ? bg : C_BG);
+            if (cur && !sel) { Col fc = r <= 2 ? tc : C_ACC; rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); }
+            if (!av) { rrect(x, y, w, h, 7, C_DARK); text(x + 8, y + 5, r <= 2 ? sigName(p) : PAGE_LONG[p], C_OFF2); continue; }
+            const char* nm = r <= 2 ? sigName(p) : PAGE_LONG[p];
+            text(x + 8, y + 5, nm, sel ? C_BG : (cur ? (r <= 2 ? tc : C_ACC) : C_TEXT));
+            mapSummary(p, b, sizeof b);
+            char sb[40]; snprintf(sb, sizeof sb, "%.*s", (w - 14) / FONT_W, b);
+            text(x + 8, y + 23, sb, sel ? C_BG : C_DIM);
         }
-        y += 64;
     }
-    textC(320, 344, PAGE_LONG[menuSel], C_TEXT);
+    textC(320, 408, PAGE_DESC[menuSel], C_TEXT);
+    char hb[96];
     if (PG_STORE[menuSel] >= 0) {
-        char hb[80];
         int cq = 0; for (int q = 0; q < NUI_PAGES; q++) if (PG_STORE[q] == pageClipStore) { cq = q; break; }
-        if (pageClipStore >= 0) snprintf(hb, sizeof hb, TR("[X] SEITE KOPIEREN  [Y] EINFÜGEN (%s VON T%d)", "[X] COPY PAGE  [Y] PASTE (%s OF T%d)"), PAGE_NAMES[cq], pageClipTrack + 1);
-        else snprintf(hb, sizeof hb, TR("[X] SEITE DER SPUR KOPIEREN  [Y] EINFÜGEN", "[X] COPY TRACK PAGE  [Y] PASTE"));
-        hint(320 - textW(hb) / 2, 368, hb, C_ACC, C_DIM);
-    }
+        if (pageClipStore >= 0) snprintf(hb, sizeof hb, TR("[A]ÖFFNEN [X]SEITE KOPIEREN [Y]EINFÜGEN (%s VON T%d) [B]ZURÜCK", "[A]OPEN [X]COPY PAGE [Y]PASTE (%s OF T%d) [B]BACK"), PAGE_NAMES[cq], pageClipTrack + 1);
+        else snprintf(hb, sizeof hb, TR("[A]ÖFFNEN [X]SEITE DER SPUR KOPIEREN [Y]EINFÜGEN [B]ZURÜCK", "[A]OPEN [X]COPY TRACK PAGE [Y]PASTE [B]BACK"));
+    } else snprintf(hb, sizeof hb, TR("[STEUERKREUZ]WÄHLEN [A]ÖFFNEN [B]ZURÜCK", "[D-PAD]SELECT [A]OPEN [B]BACK"));
+    hint(320 - textW(hb) / 2, 428, hb, C_ACC, C_DIM);
 }
 
 static void drawConfirm() {
@@ -2266,12 +2387,13 @@ static void drawSteps() {
         textC(x + 18, y + 22 - lift, b, st.on == 1 ? C_BG : (st.on == 2 ? tc : C_DIM));
     }
     const char* h;
-    if (lockLatch) h = TR("LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [L1/R1]KOPIE/EINF [A]OK", "LOCK [R-ST]VALUE [</>]STEP [B]CLEAR [SEL+A]TRIGLESS [L1/R1]COPY/PASTE [A]OK");
-    else if (aHeld) h = TR("[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN  LANG = LOCK-MODUS", "[X/Y/R-STICK]LOCK [B]CLEAR [L1]COPY [R1]PASTE  LONG = LOCK MODE");
-    else if (in.down[BT_SELECT]) h = TR("[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE", "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LENGTH");
-    else if (page == PG_MIX) h = TR("[^/v]KANAL [L-STICK]ZEILE/KANAL [R-STICK^v]WERT [A]MUTE [B]SOLO", "[^/v]CHANNEL [L-STICK]ROW/CHANNEL [R-STICK^v]VALUE [A]MUTE [B]SOLO");
-    else if (page == PG_PRJ) h = TR("[L-STICK]WÄHLEN [A]AUSFÜHREN [SEL]MENÜ", "[L-STICK]SELECT [A]RUN [SEL]MENU");
-    else h = TR("[A]TRIG [B]HÖR [L-STICK]REGLER [R-STICK]WERT [SEL+R-STICK]SEITE", "[A]TRIG [B]LISTEN [L-STICK]CONTROL [R-STICK]VALUE [SEL+R-STICK]PAGE");
+    if (lockLatch) h = TR("LOCK [X/Y]WERT [L1/R1]REGLER [L2/R2]SEITE [</>]STEP [B]WEG [SEL+L1/R1]KOPIE [A]OK", "LOCK [X/Y]VALUE [L1/R1]CONTROL [L2/R2]PAGE [</>]STEP [B]CLEAR [SEL+L1/R1]COPY [A]OK");
+    else if (aHeld) h = TR("[X/Y]LOCK [L1/R1]REGLER [L2/R2]SEITE [B]LÖSCHEN [SEL+L1/R1]KOPIE  LANG = LOCK-MODUS", "[X/Y]LOCK [L1/R1]CONTROL [L2/R2]PAGE [B]CLEAR [SEL+L1/R1]COPY  LONG = LOCK MODE");
+    else if (in.down[BT_SELECT]) h = TR("[</>]PATTERN [^]REC [v]TAP [A]MUTE [B]UNDO [X/Y]ENGINE [L1/R1]4 STEPS [L2/R2]16 STEPS", "[</>]PATTERN [^]REC [v]TAP [A]MUTE [B]UNDO [X/Y]ENGINE [L1/R1]4 STEPS [L2/R2]16 STEPS");
+    else if (page == PG_MIX) h = TR("[</>]KANAL [^v]ZEILE [X/Y]WERT [A]MUTE [B]SOLO [L2/R2]SEITE [SEL]KARTE", "[</>]CHANNEL [^v]ROW [X/Y]VALUE [A]MUTE [B]SOLO [L2/R2]PAGE [SEL]MAP");
+    else if (page == PG_PRJ) h = TR("[</>]FELD [^v]SPUR [A]AUSFÜHREN [X/Y]WERT [L2/R2]SEITE [SEL]KARTE", "[</>]FIELD [^v]TRACK [A]RUN [X/Y]VALUE [L2/R2]PAGE [SEL]MAP");
+    else if (!trackPage(page)) h = TR("[STEUERKREUZ/L1/R1]REGLER [X/Y]WERT [L2/R2]SEITE [SEL]KARTE", "[D-PAD/L1/R1]CONTROL [X/Y]VALUE [L2/R2]PAGE [SEL]MAP");
+    else h = TR("[^v]SPUR [</>]STEP [L1/R1]REGLER [X/Y]WERT [L2/R2]SEITE [SEL]KARTE", "[^v]TRACK [</>]STEP [L1/R1]CONTROL [X/Y]VALUE [L2/R2]PAGE [SEL]MAP");
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -2279,28 +2401,26 @@ static void drawHelp() {
     rrect(30, 22, 580, 436, 12, C_ACC);
     rrect(32, 24, 576, 432, 11, C_BG);
     const char* lines[] = {
+        TR("ÜBERALL", "EVERYWHERE"),
+        TR("  SELECT tippen  Karte aller Seiten (Signalweg, Mix, Projekt)", "  tap SELECT     Map of all pages (signal path, mix, project)"),
+        TR("  L2 / R2        Seite zurück / vor", "  L2 / R2        Page back / forward"),
+        TR("  START          Play / Stop  (beim Spielen halten = FILL)", "  START          Play / stop  (hold while playing = FILL)"),
+        TR("SPURSEITEN", "TRACK PAGES"),
+        TR("  HOCH/RUNTER    Spur      LINKS/RECHTS  Step", "  UP/DOWN        Track     LEFT/RIGHT    Step"),
+        TR("  L1 / R1        Regler wählen     X / Y  Wert -/+", "  L1 / R1        Select control    X / Y  Value -/+"),
+        TR("  A / A lang     Trig / LOCK-MODUS (L1/R1/L2/R2 gehen)", "  A / A long     Trig / LOCK MODE (L1/R1/L2/R2 work)"),
+        TR("  B              Spur vorhören", "  B              Preview track"),
+        TR("  Sticks         optional: links Regler, rechts Wert", "  Sticks         optional: left control, right value"),
         TR("SELECT GEHALTEN +", "HOLD SELECT +"),
-        TR("  LINKS/RECHTS   Pattern wechseln", "  LEFT/RIGHT     Change pattern"),
-        TR("  HOCH / RUNTER  Aufnahme an/aus / Tap-Tempo", "  UP / DOWN      Record on/off / tap tempo"),
+        TR("  LINKS/RECHTS   Pattern     HOCH/RUNTER  Aufnahme / Tap", "  LEFT/RIGHT     Pattern     UP/DOWN      Record / tap"),
         TR("  A / B          Spur stumm / RÜCKGÄNGIG", "  A / B          Mute track / UNDO"),
         TR("  X / Y          Engine wechseln", "  X / Y          Change engine"),
-        TR("  L1 / R1        Step-Cursor 1 Schlag (4 Steps) zurück/vor", "  L1 / R1        Step cursor 1 beat (4 steps) back/fwd"),
-        TR("  L2 / R2        Spurlänge -/+", "  L2 / R2        Track length -/+"),
-        TR("  START          Speichern (2s halten: Ende)", "  START          Save (hold 2s: quit)"),
-        "",
-        TR("OHNE SELECT", "WITHOUT SELECT"),
-        TR("  A / A lang     Trig / LOCK-MODUS (Stick, X/Y lockt)", "  A / A long     Trig / LOCK MODE (stick, X/Y lock)"),
-        TR("  A halten+L1/R1 Trig kopieren / einfügen", "  hold A+L1/R1   Copy / paste trig"),
-        TR("  B              Spur vorhören", "  B              Preview track"),
-        TR("  HOCH / RUNTER  Spur wählen", "  UP / DOWN      Select track"),
-        TR("  L1 / R1        Block im Signalweg (Quelle..Insert)", "  L1 / R1        Block in signal path (source..insert)"),
-        TR("  L2 / R2        Reihe SEQ: Trig, Seq, Arp, LFOs", "  L2 / R2        SEQ row: trig, seq, arp, LFOs"),
-        TR("  L-Stick/R-St.  Regler wählen / Wert ändern", "  L-stick/R-st.  Select control / change value"),
-        TR("  SELECT tippen  Menü: LIVE, Mixer, FX, Song, Projekt", "  tap SELECT     Menu: LIVE, mixer, FX, song, project"),
-        TR("  START          Play / Stop", "  START          Play / stop"),
+        TR("  L1/R1  L2/R2   4 Steps / 16 Steps springen", "  L1/R1  L2/R2   Jump 4 steps / 16 steps"),
+        TR("  L1 / R1        im Lock-Modus: Trig kopieren / einfügen", "  L1 / R1        in lock mode: copy / paste trig"),
+        TR("  START          Speichern (2 s halten: Ende)", "  START          Save (hold 2 s: quit)"),
     };
     for (unsigned i = 0; i < sizeof lines / sizeof *lines; i++)
-        text(48, 36 + i * 22, lines[i], i == 0 || i == 9 ? C_ACC : C_TEXT);
+        text(48, 36 + i * 22, lines[i], i == 0 || i == 4 || i == 10 ? C_ACC : C_TEXT);
 }
 
 
@@ -2404,7 +2524,7 @@ static void drawSigB() {
     int X0 = 118, W = 518;
     snprintf(b, sizeof b, TR("SIGNALWEG  SPUR %d", "SIGNAL PATH  TRACK %d"), track + 1);
     text(X0, 44, b, C_DIM);
-    text(X0 + W - textW("L1/R1"), 44, "L1/R1", dimC(C_ACC, 0.8f));
+    { const char* lh = TR("L2/R2 = SEITE  SELECT = KARTE", "L2/R2 = PAGE  SELECT = MAP"); text(X0 + W - textW(lh), 44, lh, dimC(C_ACC, 0.8f)); }
     // Spalten: zusammengehoerige Seiten untereinander (QUELLE/QUELLE 2, FILTER 1/FILTER 2)
     static const int COLS[4][2] = {{PG_SRC, PG_SRC2}, {PG_FLT, PG_FLT2}, {PG_AMP, -1}, {PG_INS, -1}};
     int gap = 14, bw = (W - gap * 3) / 4;
@@ -2435,7 +2555,6 @@ static void drawSigB() {
     }
     // --- Modulation / Sequenz
     text(X0, 108, "SEQ", C_DIM);
-    text(X0 + W - textW("L2/R2"), 108, "L2/R2", dimC(C_ACC, 0.8f));
     int x = X0 + 34;
     for (int i = 0; i < SIG_NMOD; i++) {
         int p = SIG_MOD[i];
@@ -2502,10 +2621,10 @@ static void drawSigB() {
     }
     if (npg > 1) text(X0 - 40, sy + 12, b, C_DIM);
     const char* h;
-    if (lockLatch) h = TR("LOCK [R-ST]WERT [</>]STEP [B]WEG [SEL+A]TRIGLESS [A]OK", "LOCK [R-ST]VALUE [</>]STEP [B]CLEAR [SEL+A]TRIGLESS [A]OK");
-    else if (aHeld) h = TR("[X/Y/R-STICK]LOCK [B]LÖSCHEN [L1]KOPIE [R1]EINFÜGEN", "[X/Y/R-STICK]LOCK [B]CLEAR [L1]COPY [R1]PASTE");
-    else if (in.down[BT_SELECT]) h = TR("[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LÄNGE", "[</>]PTN [^]REC [v]TAP [A]MUTE [B]UNDO [L1/R1]4 STEPS [L2/R2]LENGTH");
-    else h = TR("[^v]SPUR [L1/R1]BLOCK [L2/R2]SEQ [L-ST]REGLER [R-ST]WERT [SEL]MENÜ", "[^v]TRACK [L1/R1]BLOCK [L2/R2]SEQ [L-ST]CONTROL [R-ST]VALUE [SEL]MENU");
+    if (lockLatch) h = TR("LOCK [X/Y]WERT [L1/R1]REGLER [L2/R2]SEITE [</>]STEP [B]WEG [SEL+L1/R1]KOPIE [A]OK", "LOCK [X/Y]VALUE [L1/R1]CONTROL [L2/R2]PAGE [</>]STEP [B]CLEAR [SEL+L1/R1]COPY [A]OK");
+    else if (aHeld) h = TR("[X/Y]LOCK [L1/R1]REGLER [L2/R2]SEITE [B]LÖSCHEN [SEL+L1/R1]KOPIE  LANG = LOCK-MODUS", "[X/Y]LOCK [L1/R1]CONTROL [L2/R2]PAGE [B]CLEAR [SEL+L1/R1]COPY  LONG = LOCK MODE");
+    else if (in.down[BT_SELECT]) h = TR("[</>]PATTERN [^]REC [v]TAP [A]MUTE [B]UNDO [X/Y]ENGINE [L1/R1]4 STEPS [L2/R2]16 STEPS", "[</>]PATTERN [^]REC [v]TAP [A]MUTE [B]UNDO [X/Y]ENGINE [L1/R1]4 STEPS [L2/R2]16 STEPS");
+    else h = TR("[^v]SPUR [</>]STEP [L1/R1]REGLER [X/Y]WERT [L2/R2]SEITE [SEL]KARTE", "[^v]TRACK [</>]STEP [L1/R1]CONTROL [X/Y]VALUE [L2/R2]PAGE [SEL]MAP");
     hint(6, 452, h, C_ACC, C_DIM);
 }
 
@@ -2546,7 +2665,7 @@ static void drawLive() {
     int y = 340;
     struct Chip { const char* key; const char* name; bool on; Col c; } ch[4] = {
         {"L1", TR("FILL (HALTEN)", "FILL (HOLD)"), eng.fill, C_LOCK}, {"R1", recOn ? TR("REC LÄUFT", "RECORDING") : (recSaving ? TR("SPEICHERT", "SAVING") : TR("WAV-AUFNAHME", "WAV RECORDING")), recOn, C_TRIG},
-        {"L2/R2", "PATTERN -/+", eng.nextPat >= 0, C_ACC}, {"START", eng.playing ? "STOP" : "PLAY", eng.playing, C_GREEN}};
+        {"SEL + </>", "PATTERN -/+", eng.nextPat >= 0, C_ACC}, {"START", eng.playing ? "STOP" : "PLAY", eng.playing, C_GREEN}};
     for (int i = 0; i < 4; i++) {
         int x = 6 + i * 158;
         bool blink = ch[i].on && (i != 1 || (SDL_GetTicks() / 400) % 2);
@@ -2563,7 +2682,7 @@ static void drawLive() {
     int dx = (int)(eng.dj * 150);
     if (dx) fill(dx > 0 ? 320 : 320 + dx, fy + 6, dx > 0 ? dx : -dx, 4, eng.dj > 0 ? C_CYAN : C_ACC);
     text(480, fy, "L-STICK TEMPO", C_DIM);
-    hint(6, 452, TR("[STEUERKREUZ/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PATTERN [R-ST]DJ [SEL]MENÜ", "[D-PAD/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PATTERN [R-ST]DJ [SEL]MENU"), C_ACC, C_DIM);
+    hint(6, 452, TR("[STEUERKREUZ/XABY]MUTE [L1]FILL [R1]REC [L2/R2]SEITE [R-ST]DJ [SEL]KARTE", "[D-PAD/XABY]MUTE [L1]FILL [R1]REC [L2/R2]PAGE [R-ST]DJ [SEL]MAP"), C_ACC, C_DIM);
 }
 
 static bool fbOpen, kbOpen;
@@ -2585,6 +2704,7 @@ static void drawAll(bool help) {
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
     if (menuOpen) drawMenu();
+    drawExportModal();
     if (fbOpen) drawBrowser();
     if (kbOpen) drawKeyboard();
     if (confirmOpen) drawConfirm();
@@ -2954,10 +3074,12 @@ static int flick(float v, int& state, Uint32& t, Uint32 now) {
 // ---------------------------------------------------------------- Einstellungen (Liste, Seite SET)
 
 enum SetItem {
-    SI_H_PAT, SI_PATTERN, SI_LEN, SI_LENALL, SI_SPEED, SI_FILL, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_COPY, SI_PASTE, SI_CLEAR, SI_CLRTRK, SI_TMPL, SI_MUTATE, SI_UNDO, SI_REDO, SI_DEMO,
+    SI_H_PAT, SI_PATTERN, SI_BPM, SI_SWING, SI_SCALE, SI_ROOT, SI_LENALL, SI_FILL, SI_COPY, SI_PASTE, SI_CLEAR, SI_MUTATE, SI_UNDO, SI_REDO, SI_DEMO,
+    SI_H_TRK, SI_LEN, SI_SPEED, SI_TMPL, SI_CLRTRK,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_WEB, SI_DRIVE, SI_SAMPLES, SI_OLDSMP,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP,
+    SI_H_SMP, SI_SAMPLES, SI_WEB, SI_DRIVE, SI_OLDSMP,
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
@@ -2984,7 +3106,59 @@ static void applyRhythm(int k) {
     toast(TR("SPUR %d: %s (SELECT+B = RÜCKGÄNGIG)", "TRACK %d: %s (SELECT+B = UNDO)"), track + 1, RHY_NAMES[k]);
 }
 static float setScroll = 0;
-static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SYS; }
+static bool setIsHeader(int i) { return i == SI_H_PAT || i == SI_H_TRK || i == SI_H_AUDIO || i == SI_H_MIDI || i == SI_H_USB || i == SI_H_SMP || i == SI_H_SYS; }
+static int setCatOf(int i) { while (i > 0 && !setIsHeader(i)) i--; return i; }   // Bereich = vorangehende Ueberschrift
+static int setCatEnd(int h) { int e = h + 1; while (e < SI_COUNT && !setIsHeader(e)) e++; return e; }
+// kurze Erklaerung je Eintrag (unten in den Einstellungen)
+static const char* setHelp(int i) {
+    switch (i) {
+    case SI_PATTERN: return TR("Welches Pattern spielt (beim Abspielen am Pattern-Ende). Kurz: SELECT + links/rechts", "Which pattern plays (switches at the pattern end). Shortcut: SELECT + left/right");
+    case SI_BPM: return TR("Tempo. Tap-Tempo: SELECT + runter mehrmals im Takt", "Tempo. Tap tempo: SELECT + down several times in time");
+    case SI_SWING: return TR("Jeder zweite Sechzehntel kommt später", "Every second sixteenth comes later");
+    case SI_SCALE: return TR("Töne aller Spuren rasten in diese Tonleiter ein", "Notes of all tracks snap to this scale");
+    case SI_ROOT: return TR("Grundton der Tonleiter", "Root note of the scale");
+    case SI_LENALL: return TR("Setzt alle 8 Spuren auf dieselbe Länge", "Sets all 8 tracks to the same length");
+    case SI_FILL: return TR("FILL dauerhaft an. Kurz: START beim Spielen halten, LIVE: L1 halten", "FILL permanently on. Shortcut: hold START while playing, LIVE: hold L1");
+    case SI_COPY: return TR("Kopiert das ganze Pattern in die Ablage", "Copies the whole pattern to the clipboard");
+    case SI_PASTE: return TR("Überschreibt das Pattern mit der Ablage", "Overwrites the pattern with the clipboard");
+    case SI_CLEAR: return TR("Löscht alle Steps aller Spuren (Klänge bleiben)", "Clears all steps of all tracks (sounds stay)");
+    case SI_MUTATE: return TR("Variiert Trigs, Töne und Anschlag. Stärke mit links/rechts, A = los", "Varies trigs, notes and velocity. Amount with left/right, A = go");
+    case SI_UNDO: return TR("Letzte Änderung zurücknehmen. Kurz: SELECT + B", "Undo the last change. Shortcut: SELECT + B");
+    case SI_REDO: return TR("Zurückgenommene Änderung wiederherstellen", "Restores the last undone change");
+    case SI_DEMO: return TR("Legt den Demo-Song als eigenes Projekt an", "Creates the demo song as a separate project");
+    case SI_LEN: return TR("Steps der gewählten Spur (1-128). Unterschiedliche Längen = Polymetrie", "Steps of the selected track (1-128). Different lengths = polymeter");
+    case SI_SPEED: return TR("Tempo der Spur relativ zum Song (1/8x bis 2x)", "Tempo of the track relative to the song (1/8x to 2x)");
+    case SI_TMPL: return TR("Fertiger Rhythmus für die Spur. Links/rechts wählen, A setzt ihn", "Ready-made rhythm for the track. Choose with left/right, A applies it");
+    case SI_CLRTRK: return TR("Löscht alle Steps der gewählten Spur", "Clears all steps of the selected track");
+    case SI_OUT: return TR("Audio-Ausgang (intern, USB-Interface ...)", "Audio output (internal, USB interface ...)");
+    case SI_BUF: return TR("Kleiner = weniger Verzögerung, größer = sicherer gegen Aussetzer", "Smaller = less latency, larger = safer against dropouts");
+    case SI_VOL: return TR("Gesamtlautstärke der Groovebox", "Overall volume of the groovebox");
+    case SI_CORES: return TR("2 Kerne verteilen die Stimmen (weniger Aussetzer)", "2 cores share the voices (fewer dropouts)");
+    case SI_MIN: return TR("Noten und Regler von einem MIDI-Gerät empfangen", "Receive notes and controls from a MIDI device");
+    case SI_NOUT: return TR("Spuren senden ihre Noten als MIDI (Spur = Kanal)", "Tracks send their notes as MIDI (track = channel)");
+    case SI_CLK: return TR("MIDI-Clock senden oder als Taktgeber folgen", "Send MIDI clock or follow it");
+    case SI_MCH: return TR("Welche Spur MIDI-Noten spielt", "Which track plays incoming MIDI notes");
+    case SI_USB: return TR("HOST: Geräte am R36S. PC: Netzwerk, MIDI und Audio zum Computer", "HOST: devices on the R36S. PC: network, MIDI and audio to the computer");
+    case SI_USBAUDIO: return TR("Summe als USB-Audio an den PC", "Master as USB audio to the PC");
+    case SI_USBVOL: return TR("Lautstärke des USB-Audios zum PC", "Volume of the USB audio to the PC");
+    case SI_INTUSB: return TR("Lautsprecher/Kopfhörer stumm, solange USB-Audio läuft", "Mute speaker/headphones while USB audio runs");
+    case SI_USBTONE: return TR("Prüft, ob der PC Ton von der Groovebox bekommt", "Checks whether the PC receives sound from the groovebox");
+    case SI_PCIN: return TR("Ton vom PC über den R36S hören", "Hear PC audio through the R36S");
+    case SI_PCREC: return TR("Ton vom PC als Sample aufnehmen (samples/pc)", "Record PC audio as a sample (samples/pc)");
+    case SI_IP: return TR("Adresse des R36S im PC-Modus", "Address of the R36S in PC mode");
+    case SI_SAMPLES: return TR("WAVs in der Bibliothek / im Projekt geladen / fehlend", "WAVs in the library / loaded in the project / missing");
+    case SI_WEB: return TR("Im Browser öffnen: Samples hochladen, Projekte sichern, Bildschirm", "Open in a browser: upload samples, back up projects, screen");
+    case SI_DRIVE: return TR("Speicher als USB-Laufwerk am PC (Samples kopieren)", "Storage as a USB drive on the PC (copy samples)");
+    case SI_OLDSMP: return TR("Nur alte Projekte: andere Zuordnung der Sample-Nummern probieren", "Old projects only: try another mapping of the sample numbers");
+    case SI_LANG: return TR("Sprache der Oberfläche", "Language of the interface");
+    case SI_DISP: return TR("Bild verschoben oder Farben falsch? Hier ausgleichen", "Picture shifted or colours wrong? Adjust here");
+    case SI_LEARN: return TR("Tasten und Sticks neu zuordnen", "Map buttons and sticks again");
+    case SI_BENCH: return TR("Misst Audio- und Bildleistung (Bericht: Logs/bench.txt)", "Measures audio and display performance (report: logs/bench.txt)");
+    case SI_INFO: return TR("Version, Samples, Aussetzer seit dem Start", "Version, samples, dropouts since start");
+    case SI_QUIT: return TR("Speichert das Projekt und beendet die Groovebox", "Saves the project and quits the groovebox");
+    }
+    return "";
+}
 static bool setIsAction(int i) { return i == SI_DEMO || i == SI_UNDO || i == SI_REDO || i == SI_CLRTRK || i == SI_BENCH || i == SI_PCREC || i == SI_USBTONE || i == SI_DRIVE || i == SI_COPY || i == SI_PASTE || i == SI_CLEAR || i == SI_LEARN || i == SI_QUIT; }
 static bool runLearn();
 static char versionStr[32] = "";
@@ -2994,11 +3168,13 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     v[0] = 0;
     switch (i) {
     case SI_H_PAT: snprintf(l, ln, "PATTERN"); break;
+    case SI_H_TRK: snprintf(l, ln, TR("SPUR %d", "TRACK %d"), track + 1); break;
+    case SI_H_SMP: snprintf(l, ln, "SAMPLES"); break;
     case SI_PATTERN: snprintf(l, ln, "Pattern"); snprintf(v, vn, "P%02d%s", curPi() + 1, eng.nextPat >= 0 ? " >" : ""); break;
-    case SI_LEN: snprintf(l, ln, TR("Länge Spur %d", "Length track %d"), track + 1); snprintf(v, vn, "%d Steps", P.len[track]); break;
+    case SI_LEN: snprintf(l, ln, TR("Länge", "Length")); snprintf(v, vn, "%d Steps", P.len[track]); break;
     case SI_LENALL: snprintf(l, ln, TR("Länge alle Spuren", "Length all tracks")); snprintf(v, vn, "%d Steps", P.len[track]); break;
-    case SI_SPEED: snprintf(l, ln, TR("Tempo-Faktor Spur %d", "Tempo factor track %d"), track + 1); snprintf(v, vn, "%s", SPEED_NAMES[P.speed[track] % 7]); break;
-    case SI_FILL: snprintf(l, ln, TR("FILL-Modus (SELECT+L1)", "FILL mode")); snprintf(v, vn, "%s", eng.fill ? TR("AN", "ON") : TR("AUS", "OFF")); break;
+    case SI_SPEED: snprintf(l, ln, TR("Tempo-Faktor", "Tempo factor")); snprintf(v, vn, "%s", SPEED_NAMES[P.speed[track] % 7]); break;
+    case SI_FILL: snprintf(l, ln, TR("FILL dauerhaft", "FILL latched")); snprintf(v, vn, "%s", eng.fill ? TR("AN", "ON") : TR("AUS", "OFF")); break;
     case SI_BPM: snprintf(l, ln, "Tempo"); snprintf(v, vn, "%d BPM", eng.proj.bpm); break;
     case SI_SWING: snprintf(l, ln, "Swing"); snprintf(v, vn, "%d%%", 50 + eng.proj.mst[MS_SWNG]); break;
     case SI_SCALE: snprintf(l, ln, TR("Tonskala", "Scale"));
@@ -3011,8 +3187,8 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         snprintf(l, ln, TR("Pattern mutieren (A = los)", "Mutate pattern (A = go)")); snprintf(v, vn, "%s", AM[mutAmt % 3]); } break;
     case SI_PASTE: snprintf(l, ln, TR("Pattern einfügen", "Paste pattern")); snprintf(v, vn, "%s", haveClip ? "" : TR("(leer)", "(empty)")); break;
     case SI_CLEAR: snprintf(l, ln, TR("Pattern leeren", "Clear pattern")); break;
-    case SI_CLRTRK: snprintf(l, ln, TR("Spur %d leeren", "Clear track %d"), track + 1); break;
-    case SI_TMPL: snprintf(l, ln, TR("Rhythmus-Vorlage für Spur %d", "Rhythm template for track %d"), track + 1); snprintf(v, vn, "< %s >", RHY_NAMES[tmplSel]); break;
+    case SI_CLRTRK: snprintf(l, ln, TR("Spur leeren", "Clear track")); break;
+    case SI_TMPL: snprintf(l, ln, TR("Rhythmus-Vorlage", "Rhythm template")); snprintf(v, vn, "< %s >", RHY_NAMES[tmplSel]); break;
     case SI_UNDO: snprintf(l, ln, TR("Rückgängig (SELECT + B)", "Undo (SELECT + B)")); snprintf(v, vn, TR("%d Schritte", "%d steps"), undoCnt); break;
     case SI_DEMO: snprintf(l, ln, TR("Demo-Song 'Neon Nights' laden", "Load demo song 'Neon Nights'")); snprintf(v, vn, ">>"); break;
     case SI_REDO: snprintf(l, ln, TR("Wiederholen", "Redo")); snprintf(v, vn, "%s", redoPat >= 0 ? ">>" : TR("(nichts)", "(nothing)")); break;
@@ -3029,7 +3205,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_NOUT: snprintf(l, ln, TR("Noten ausgeben", "Send notes")); snprintf(v, vn, "%s", cfg.notesOut ? TR("AN (Spur = Kanal)", "ON (track = channel)") : TR("AUS", "OFF")); break;
     case SI_CLK: snprintf(l, ln, "Clock"); snprintf(v, vn, "%s", cfg.clk == 1 ? TR("SENDEN", "SEND") : (cfg.clk == 2 ? TR("EMPFANGEN", "RECEIVE") : TR("AUS", "OFF"))); break;
     case SI_MCH: snprintf(l, ln, TR("Eingangskanäle", "Input channels")); snprintf(v, vn, "%s", cfg.chm ? TR("Kanal 1-8 = Spur 1-8", "Channel 1-8 = track 1-8") : TR("AUTO (gewählte Spur)", "AUTO (selected track)")); break;
-    case SI_H_USB: snprintf(l, ln, "USB"); break;
+    case SI_H_USB: snprintf(l, ln, "USB & PC"); break;
     case SI_USB: snprintf(l, ln, TR("USB-Modus", "USB mode"));
         snprintf(v, vn, "%s", usbMode == 0 ? TR("HOST (Geräte am R36S)", "HOST (devices on R36S)") : (usbMode == 1 ? TR("PC (Netz-MIDI, SSH)", "PC (network MIDI, SSH)") : "PC + AUDIO"));
         break;
@@ -3294,10 +3470,17 @@ static void setAction(int i) {
 
 static void settingsInput(Input& I, Uint32 now, float dt) {
     int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
-    if (dy) {
-        int s2 = setSel;
-        do { s2 = (s2 + dy + SI_COUNT) % SI_COUNT; } while (setIsHeader(s2));
-        setSel = s2;
+    if (setIsHeader(setSel)) setSel++;
+    if (dy) {   // innerhalb des Bereichs (im Kreis)
+        int h = setCatOf(setSel), e = setCatEnd(h), n = e - h - 1;
+        setSel = h + 1 + ((setSel - h - 1 + dy) % n + n) % n;
+    }
+    int dc = (I.pressed(BT_R1) ? 1 : 0) - (I.pressed(BT_L1) ? 1 : 0);
+    if (dc) {   // L1/R1: Bereich wechseln
+        int h = setCatOf(setSel);
+        if (dc > 0) { h = setCatEnd(h); if (h >= SI_COUNT) h = 0; }
+        else { h = h > 0 ? setCatOf(h - 1) : setCatOf(SI_COUNT - 1); }
+        setSel = h + 1; setScroll = 0;
     }
     int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + (I.repeat(BT_X, now) ? 1 : 0) - (I.repeat(BT_Y, now) ? 1 : 0);
     if (fabsf(I.rx) > fabsf(I.ry)) dx += flick(I.rx, flRX, flRXt, now); else flRX = 0;
@@ -3310,13 +3493,135 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
     } else if (fabsf(ry) <= 0.25f) stickAcc = 0;
     if (I.pressed(BT_A)) setAction(setSel);
     if (I.pressed(BT_B)) page = prevPage == PG_SYS ? PG_TRG : prevPage;
-    if (I.pressed(BT_START)) { lockA(); if (eng.playing) eng.stop(); else eng.start(); unlockA(); }
+    if (I.pressed(BT_L2)) gotoPage(-1);
+    if (I.pressed(BT_R2)) gotoPage(1);
+    if (startTap(I, now)) startStop();
+}
+
+// ---------------------------------------------------------------- Song-Export (WAV): Zeilen von..bis offline in einer zweiten Engine rendern
+static Engine renderEng;                      // eigene Instanz, laeuft im Export-Thread (die Wiedergabe-Engine bleibt unberuehrt)
+static volatile int expState = 0;             // 0 aus, 1 laeuft, 2 fertig, 3 Fehler, 4 abgebrochen
+static volatile float expProg = 0;
+static volatile bool expCancel = false;
+static int expFrom = 0, expTo = -1;           // Zeilen (0-basiert), expTo -1 = bis zum Ende
+static long expFrames = 0;
+static char expPath[800], expName[96];
+// Laenge der Zeilen from..to in Sequencer-Ticks (12 pro 16tel), wie doTick: laengste belegte Spur x Wiederholungen
+static long songTicks(const Project& J, int from, int to) {
+    long tot = 0;
+    for (int i = from; i <= to && i < J.songLen; i++) {
+        const Project::SongRow& r = J.row[i];
+        long m = 0;
+        for (int t = 0; t < NTRACKS; t++) {
+            if (r.pat[t] == SONG_EMPTY) continue;
+            const Pattern& P = J.pat[r.pat[t] % NPATTERNS];
+            long l = (long)(P.len[t] < 1 ? 1 : P.len[t]) * SPEED_TPS[P.speed[t] % 7];
+            if (l > m) m = l;
+        }
+        if (m <= 0) m = 16 * 12;
+        tot += m * (r.rep < 1 ? 1 : r.rep);
+    }
+    return tot;
+}
+static void expRange(int& a, int& b) {
+    int n = eng.proj.songLen;
+    a = clampi(expFrom, 0, n > 0 ? n - 1 : 0);
+    b = expTo < 0 ? n - 1 : clampi(expTo, 0, n - 1);
+    if (b < a) { int t = a; a = b; b = t; }
+}
+static int exportThread(void*) {
+    Engine& R = renderEng;
+    char part[820]; snprintf(part, sizeof part, "%s.part", expPath);
+    FILE* f = fopen(part, "wb");
+    if (!f) { expState = 3; return 0; }
+    uint8_t hdr[44] = {0};
+    fwrite(hdr, 1, 44, f);
+    static float buf[2 * 1024];
+    static int16_t ob[2 * 1024];
+    long done = 0, tailMax = (long)R.sr * 8, quiet = 0, tail = 0;
+    long total = expFrames;
+    bool ok = true, inTail = false;
+    for (;;) {
+        if (expCancel) { ok = false; break; }
+        int n = 1024;
+        if (!inTail && total - done < n) n = (int)(total - done);
+        if (!inTail && n <= 0) { R.stop(); inTail = true; continue; }   // Song zu Ende: Toene ausklingen lassen (Hall/Delay)
+        R.render(buf, n);
+        float pk = 0;
+        for (int i = 0; i < n * 2; i++) {
+            float x = buf[i] * 32767.f; float a = fabsf(buf[i]); if (a > pk) pk = a;
+            ob[i] = (int16_t)(x > 32767.f ? 32767 : (x < -32768.f ? -32768 : x));
+        }
+        if (fwrite(ob, 4, (size_t)n, f) != (size_t)n) { ok = false; break; }
+        if (!inTail) done += n;
+        else {
+            tail += n;
+            quiet = pk < 0.0005f ? quiet + n : 0;
+            if (quiet > R.sr / 2 || tail >= tailMax) break;
+        }
+        expProg = (float)(done + tail) / (float)(total + R.sr * 2);
+    }
+    long frames = done + tail;
+    uint32_t bytes = (uint32_t)(frames * 4), sr = (uint32_t)R.sr;
+    auto put32 = [&](int o, uint32_t v) { hdr[o] = v & 255; hdr[o + 1] = (v >> 8) & 255; hdr[o + 2] = (v >> 16) & 255; hdr[o + 3] = v >> 24; };
+    auto put16 = [&](int o, uint16_t v) { hdr[o] = v & 255; hdr[o + 1] = v >> 8; };
+    memcpy(hdr, "RIFF", 4); put32(4, 36 + bytes); memcpy(hdr + 8, "WAVEfmt ", 8); put32(16, 16); put16(20, 1); put16(22, 2);
+    put32(24, sr); put32(28, sr * 4); put16(32, 4); put16(34, 16); memcpy(hdr + 36, "data", 4); put32(40, bytes);
+    if (ok) { fseek(f, 0, SEEK_SET); ok = fwrite(hdr, 1, 44, f) == 44; }
+    if (fclose(f) != 0) ok = false;
+    if (ok) { sync(); ok = rename(part, expPath) == 0; }
+    if (!ok) unlink(part);
+    expProg = 1.f;
+    expState = ok ? 2 : (expCancel ? 4 : 3);
+    return 0;
+}
+static void startExport() {
+    Project& J = eng.proj;
+    if (!J.songLen) { toast(TR("SONG IST LEER (L1 = NEUE ZEILE)", "SONG IS EMPTY (L1 = NEW ROW)")); return; }
+    if (expState == 1) return;
+    int a, b; expRange(a, b);
+    char dir[700]; snprintf(dir, sizeof dir, "%ssamples", basePath); mkdir(dir, 0755);
+    snprintf(dir, sizeof dir, "%ssamples/rec", basePath); mkdir(dir, 0755);
+    char base[64]; cleanName(cfg.project[0] ? cfg.project : "song", base, sizeof base);
+    struct stat st;
+    for (int i = 1; i < 1000; i++) {
+        snprintf(expName, sizeof expName, "%s-song-%02d.wav", base, i);
+        snprintf(expPath, sizeof expPath, "%s/%s", dir, expName);
+        if (stat(expPath, &st)) break;
+    }
+    lockA();
+    if (eng.playing) eng.stop();
+    renderEng.init(eng.sr);
+    renderEng.audioThreads = eng.audioThreads;
+    memcpy(&renderEng.proj, &J, sizeof(Project));
+    unlockA();
+    renderEng.fill = false; renderEng.dj = 0; renderEng.recording = false; renderEng.notesOut = false; renderEng.clockMode = 0;
+    for (int t = 0; t < NTRACKS; t++) renderEng.solo[t] = false;
+    renderEng.songOn = true; renderEng.songStart(a); renderEng.start();
+    long ticks = songTicks(J, a, b);
+    expFrames = (long)((double)ticks * renderEng.sr * 60.0 / (J.bpm * 48.0) + 0.5);
+    expProg = 0; expCancel = false; expState = 1;
+    SDL_Thread* th = SDL_CreateThread(exportThread, "export", nullptr);
+    if (th) SDL_DetachThread(th); else { expState = 3; }
+}
+static void drawExport();
+static void drawExportModal() { if (expState == 1) drawExport(); }
+static void drawExport() {   // Fortschritt (modal)
+    rrect(100, 170, 440, 130, 14, C_ACC);
+    rrect(102, 172, 436, 126, 13, C_BG, 250);
+    textC(320, 186, TR("SONG WIRD EXPORTIERT ...", "EXPORTING SONG ..."), C_ACC);
+    textC(320, 210, expName, C_TEXT);
+    fill(130, 238, 380, 10, C_OFF2);
+    fill(130, 238, (int)(380 * fminf(fmaxf(expProg, 0.f), 1.f)), 10, C_ACC);
+    textC(320, 266, TR("B = ABBRECHEN", "B = CANCEL"), C_DIM);
 }
 
 // ---------------------------------------------------------------- Song-Seite (SNG): Clip-Matrix
 // Zeilen = Szenen (Song-Eintraege), Spalten: ALLE, Spur 1-8 (Pattern je Spur + Mute), WDH (Wiederholungen)
 static int songSel = 0, songCol = 0;
 static float songScroll = 0;
+static bool songExp = false;   // Cursor in der Export-Leiste unter der Matrix
+static int expField = 2;       // 0 VON, 1 BIS, 2 EXPORT
 enum { SC_ALL = 0, SC_T1 = 1, SC_REP = SC_T1 + NTRACKS, SC_N };
 static int rowAllPat(const Project::SongRow& r) {   // gemeinsames Pattern aller Spuren, sonst -1
     int p = -1;
@@ -3333,7 +3638,8 @@ static void drawSong() {
     bool on = eng.songOn;
     rrect(440, 54, 186, 28, 8, on ? C_ACC : C_OFF2);
     textC(533, 60, on ? TR("SONG-MODUS AN", "SONG MODE ON") : TR("SONG-MODUS AUS", "SONG MODE OFF"), on ? C_BG : C_TEXT);
-    const int rowH = 30, top = 116, visible = 10;
+    const int rowH = 30, top = 116, visible = 9;
+    int ea = 0, eb = -1; if (J.songLen) expRange(ea, eb);
     const int xAll = 50, wAll = 58, xT = 112, wT = 54, xRep = xT + NTRACKS * wT + 4, wRep = 628 - xRep - 6;
     // Spaltenkoepfe
     bool hs = songCol == SC_ALL;
@@ -3359,7 +3665,8 @@ static void drawSong() {
         int y = (int)yf;
         const Project::SongRow& r = J.row[i];
         bool sel = i == songSel, play = eng.songOn && eng.playing && eng.songPos == i;
-        if (sel) { rrect(10, y - 1, 620, rowH - 2, 6, C_SEL); rrect(10, y + 4, 3, rowH - 12, 1, C_ACC); }
+        if (sel && !songExp) { rrect(10, y - 1, 620, rowH - 2, 6, C_SEL); rrect(10, y + 4, 3, rowH - 12, 1, C_ACC); }
+        if (i >= ea && i <= eb) fill(6, y - 1, 2, rowH, dimC(C_CYAN, 0.6f));   // Export-Bereich
         snprintf(b, sizeof b, "%02d", i + 1); text(20, y + 6, b, play ? C_PLAY : C_DIM);
         // ALLE
         int ap = rowAllPat(r);
@@ -3367,7 +3674,7 @@ static void drawSong() {
         Col ac = ap >= 0 ? TCOL[ap % NTRACKS] : C_DIM;
         rrect(xAll, y + 2, wAll, rowH - 8, 5, play ? ac : dimC(ac, 0.3f));
         textC(xAll + wAll / 2, y + 6, b, play ? C_BG : C_TEXT);
-        if (sel && songCol == SC_ALL) { rrect(xAll - 2, y, wAll + 4, 2, 1, C_ACC); rrect(xAll - 2, y + rowH - 6, wAll + 4, 2, 1, C_ACC); }
+        if (sel && !songExp && songCol == SC_ALL) { rrect(xAll - 2, y, wAll + 4, 2, 1, C_ACC); rrect(xAll - 2, y + rowH - 6, wAll + 4, 2, 1, C_ACC); }
         // Spuren
         for (int t = 0; t < NTRACKS; t++) {
             int x = xT + t * wT;
@@ -3382,15 +3689,47 @@ static void drawSong() {
                 textC(x + wT / 2 - (mu ? 6 : 0), y + 6, b, mu ? C_DIM : (play ? C_BG : C_TEXT));
                 if (mu) text(x + wT - 15, y + 6, "M", C_TRIG);
             }
-            if (sel && songCol == SC_T1 + t) { rrect(x, y, wT, 2, 1, C_ACC); rrect(x, y + rowH - 6, wT, 2, 1, C_ACC); }
+            if (sel && !songExp && songCol == SC_T1 + t) { rrect(x, y, wT, 2, 1, C_ACC); rrect(x, y + rowH - 6, wT, 2, 1, C_ACC); }
         }
         // Wiederholungen: Zahl + laufender Durchgang
         int rep = r.rep < 1 ? 1 : r.rep;
         snprintf(b, sizeof b, play ? "%d/%d" : "x%d", play ? eng.songRep + 1 : rep, rep);
         text(xRep + 6, y + 6, b, sel && songCol == SC_REP ? C_ACC : (play ? C_PLAY : C_TEXT));
-        if (sel && songCol == SC_REP) { rrect(xRep, y, wRep, 2, 1, C_ACC); rrect(xRep, y + rowH - 6, wRep, 2, 1, C_ACC); }
+        if (sel && !songExp && songCol == SC_REP) { rrect(xRep, y, wRep, 2, 1, C_ACC); rrect(xRep, y + rowH - 6, wRep, 2, 1, C_ACC); }
     }
-    hint(6, 452, TR("[^v<>]ZELLE [X/Y]PATTERN/WDH [A]MUTE [L1]NEU [B]LÖSCHEN [R1]SONG [START]AB HIER",
+    // Export-Leiste: Zeilen von..bis als WAV (Standard: ganzer Song)
+    {
+        int y = 392, x = 10;
+        rrect(x, y, 620, 44, 8, songExp ? C_SEL : C_BG);
+        if (songExp) rrect(x, y + 6, 3, 32, 1, C_ACC);
+        text(x + 12, y + 6, TR("EXPORT WAV", "EXPORT WAV"), songExp ? C_ACC : C_DIM);
+        if (J.songLen) {
+            long tk = songTicks(J, ea, eb);
+            int sec = (int)(tk * 60.0 / (J.bpm * 48.0) + 0.5);
+            snprintf(b, sizeof b, TR("Länge %d:%02d", "Length %d:%02d"), sec / 60, sec % 60);
+        } else snprintf(b, sizeof b, TR("Song leer", "Song empty"));
+        text(x + 12, y + 24, b, C_DIM);
+        const char* lab[3] = {TR("VON", "FROM"), TR("BIS", "TO"), ""};
+        char val[3][24];
+        snprintf(val[0], sizeof val[0], "%02d", ea + 1);
+        if (expTo < 0) snprintf(val[1], sizeof val[1], TR("ENDE (%02d)", "END (%02d)"), eb + 1); else snprintf(val[1], sizeof val[1], "%02d", eb + 1);
+        snprintf(val[2], sizeof val[2], TR("EXPORT STARTEN", "START EXPORT"));
+        int fx[3] = {170, 290, 450}, fw[3] = {100, 140, 160};
+        for (int k = 0; k < 3; k++) {
+            bool fs = songExp && expField == k;
+            if (k < 2) {
+                text(fx[k], y + 14, lab[k], C_DIM);
+                int vx = fx[k] + textW(lab[k]) + 8;
+                rrect(vx - 4, y + 9, fw[k] - textW(lab[k]) - 4, 26, 6, fs ? C_ACC : C_PANEL);
+                text(vx + 2, y + 14, val[k], fs ? C_BG : C_TEXT);
+            } else {
+                rrect(fx[k], y + 9, fw[k], 26, 6, fs ? C_ACC : C_PANEL);
+                textC(fx[k] + fw[k] / 2, y + 14, val[k], fs ? C_BG : C_TEXT);
+            }
+        }
+    }
+    if (songExp) hint(6, 452, TR("[</>]FELD [X/Y]ZEILE [A]EXPORT STARTEN [^]ZUR MATRIX [START]PLAY", "[</>]FIELD [X/Y]ROW [A]START EXPORT [^]BACK TO MATRIX [START]PLAY"), C_ACC, C_DIM);
+    else hint(6, 452, TR("[^v<>]ZELLE [X/Y]PATTERN/WDH [A]MUTE [L1]NEU [B]LÖSCHEN [R1]SONG [START]AB HIER",
                     "[^v<>]CELL [X/Y]PATTERN/REP [A]MUTE [L1]NEW [B]DELETE [R1]SONG [START]FROM HERE"), C_ACC, C_DIM);
 }
 
@@ -3422,6 +3761,23 @@ static void songInput(Input& I, Uint32 now) {
     if (I.pressed(BT_R2)) { gotoPage(1); return; }
     if (rsAxis == 2) { int f = flick(I.rx, flRX, flRXt, now); if (f) { gotoPage(f); return; } } else flRX = 0;
     int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
+    if (!J.songLen) songExp = false;
+    if (songExp) {   // Export-Leiste
+        if (dy < 0) { songExp = false; return; }
+        int fx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + flick(I.lx, flLX, flLXt, now);
+        if (fx) expField = clampi(expField + fx, 0, 2);
+        int dv = (I.repeat(BT_X, now) ? 1 : 0) - (I.repeat(BT_Y, now) ? 1 : 0);
+        if (dv) {
+            int a, b; expRange(a, b);
+            if (expField == 0) expFrom = clampi(a + dv, 0, J.songLen - 1);
+            else if (expField == 1) { int nb = clampi(b + dv, 0, J.songLen - 1); expTo = nb >= J.songLen - 1 ? -1 : nb; }   // letzte Zeile = "bis Ende"
+            if (expField == 2) expField = dv > 0 ? 2 : 1;
+        }
+        if (I.pressed(BT_A)) startExport();
+        if (startTap(I, now)) startStop();
+        return;
+    }
+    if (dy > 0 && J.songLen && songSel >= J.songLen - 1) { songExp = true; expField = 2; return; }
     if (dy && J.songLen) songSel = clampi(songSel + dy, 0, J.songLen - 1);
     int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + flick(I.lx, flLX, flLXt, now);
     if (dx) songCol = clampi(songCol + dx, 0, SC_N - 1);
@@ -3475,10 +3831,10 @@ static void songInput(Input& I, Uint32 now) {
             toast(eng.songOn ? TR("SONG-MODUS AN", "SONG MODE ON") : TR("SONG-MODUS AUS", "SONG MODE OFF"));
         }
     }
-    if (I.pressed(BT_START)) {
+    if (startTap(I, now)) {
         lockA();
         if (eng.playing) eng.stop();
-        else if (J.songLen) { eng.songStart(songSel); eng.start(); }
+        else if (J.songLen) { eng.songStart(songSel < J.songLen ? songSel : 0); eng.start(); }
         else eng.start();
         unlockA();
     }
@@ -3486,36 +3842,61 @@ static void songInput(Input& I, Uint32 now) {
 
 static void drawSettings() {
     rrect(4, 46, 632, 398, 10, C_PANEL);
-    const int rowH = 25, top = 54, visible = 15;
-    // Zeile der Auswahl in Sichtweite halten (weich scrollen)
-    float target = setSel - visible / 2.f;
-    if (target < 0) target = 0;
-    if (target > SI_COUNT - visible) target = SI_COUNT - visible;
-    setScroll += (target - setScroll) * (1.f - expf(-animDt * 14.f));
-    char l[48], v[64];
+    char l[64], v[64];
+    // links: Bereiche
+    int cat = setCatOf(setSel), cy = 56;
     for (int i = 0; i < SI_COUNT; i++) {
-        float yf = top + (i - setScroll) * rowH;
+        if (!setIsHeader(i)) continue;
+        setLabel(i, l, sizeof l, v, sizeof v);
+        bool sel = i == cat;
+        rrect(10, cy, 140, 30, 7, sel ? C_ACC : C_BG);
+        text(20, cy + 7, l, sel ? C_BG : C_TEXT);
+        cy += 36;
+    }
+    text(12, cy + 6, TR("L1/R1 = BEREICH", "L1/R1 = SECTION"), C_DIM);
+    // rechts: Eintraege des Bereichs
+    const int X0 = 158, W = 470, rowH = 27, top = 56, visible = 13;
+    int first = cat + 1, end = setCatEnd(cat), n = end - first;
+    float target = (setSel - first) - visible / 2.f;
+    if (target > n - visible) target = (float)(n - visible);
+    if (target < 0) target = 0;
+    static int lastCat = -1;
+    if (cat != lastCat || setScroll > n || setScroll < 0) { lastCat = cat; setScroll = target; }
+    setScroll += (target - setScroll) * (1.f - expf(-animDt * 14.f));
+    for (int k = 0; k < n; k++) {
+        int i = first + k;
+        float yf = top + (k - setScroll) * rowH;
         if (yf < top - 4 || yf > top + (visible - 1) * rowH + 4) continue;
         int y = (int)yf;
         setLabel(i, l, sizeof l, v, sizeof v);
-        if (setIsHeader(i)) {
-            text(18, y + 4, l, C_ACC);
-            fill(18 + textW(l) + 10, y + 12, 600 - textW(l) - 10, 1, C_OFF2);
-            continue;
-        }
         bool sel = i == setSel;
-        if (sel) { rrect(12, y, 616, rowH - 2, 6, C_SEL); rrect(12, y + 4, 3, rowH - 10, 1, C_ACC); }
-        text(32, y + 4, l, sel ? C_TEXT : C_DIM);
+        if (sel) { rrect(X0, y, W, rowH - 3, 6, C_SEL); rrect(X0, y + 4, 3, rowH - 11, 1, C_ACC); }
+        text(X0 + 12, y + 5, l, sel ? C_TEXT : C_DIM);
         if (setIsAction(i)) {
             int w = textW(v[0] ? v : ">>") + 16;
-            if (v[0]) text(612 - textW(v), y + 4, v, C_DIM);
-            else { rrect(612 - w + 8, y + 3, w - 8, rowH - 8, 5, sel ? C_ACC : C_OFF2); text(612 - w + 12, y + 4, ">>", sel ? C_BG : C_TEXT); }
+            if (v[0]) text(X0 + W - 8 - textW(v), y + 5, v, C_DIM);
+            else { rrect(X0 + W - w, y + 3, w - 8, rowH - 9, 5, sel ? C_ACC : C_OFF2); text(X0 + W - w + 4, y + 5, ">>", sel ? C_BG : C_TEXT); }
         } else {
-            text(604 - textW(v), y + 4, v, sel ? C_ACC : C_TEXT);
-            if (sel) { text(604 - textW(v) - 16, y + 4, "<", C_DIM); text(608, y + 4, ">", C_DIM); }
+            char vb[64]; snprintf(vb, sizeof vb, "%s", v);
+            while (textW(vb) > W - 40 - textW(l) && strlen(vb) > 3) vb[strlen(vb) - 1] = 0;
+            text(X0 + W - 18 - textW(vb), y + 5, vb, sel ? C_ACC : C_TEXT);
+            if (sel) { text(X0 + W - 18 - textW(vb) - 14, y + 5, "<", C_DIM); text(X0 + W - 12, y + 5, ">", C_DIM); }
         }
     }
-    hint(6, 452, TR("[^/v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [B]ZURÜCK [SEL]MENÜ", "[^/v]SELECT [</>]CHANGE [A]RUN [B]BACK [SEL]MENU"), C_ACC, C_DIM);
+    // Erklaerung des gewaehlten Eintrags
+    fill(X0, 410, W, 1, C_OFF2);
+    const char* hs = setHelp(setSel);
+    if (*hs) {
+        char hb[128]; snprintf(hb, sizeof hb, "%s", hs);
+        if (textW(hb) <= W) text(X0, 418, hb, C_TEXT);
+        else {   // zweizeilig: letztes Leerzeichen, bis zu dem die erste Zeile passt
+            int cut = 0;
+            for (int k = 1; hb[k]; k++) if (hb[k] == ' ') { char c = hb[k]; hb[k] = 0; bool fits = textW(hb) <= W; hb[k] = c; if (fits) cut = k; else break; }
+            if (cut > 0) { hb[cut] = 0; text(X0, 413, hb, C_TEXT); text(X0, 428, hb + cut + 1, C_TEXT); }
+            else text(X0, 418, hb, C_TEXT);
+        }
+    }
+    hint(6, 452, TR("[^v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [L1/R1]BEREICH [L2/R2]SEITE [B]ZURÜCK", "[^v]SELECT [</>]CHANGE [A]RUN [L1/R1]SECTION [L2/R2]PAGE [B]BACK"), C_ACC, C_DIM);
 }
 
 // (frueher) Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
@@ -3534,21 +3915,31 @@ static void drawSettings() {
 }
 
 static void menuInput(Input& I, Uint32 now) {
-    // Seitenmenue: 3 Zeilen (Gruppen), Steuerkreuz/Stick waehlt, A oeffnet
-    int g = PG_GROUP[menuSel];
+    // Seitenkarte: Steuerkreuz (oder linker Stick) im Raster, A oeffnet
     int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + flick(I.lx, flLX, flLXt, now);
     int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
+    if (I.pressed(BT_R1) || I.pressed(BT_R2)) dx++;
+    if (I.pressed(BT_L1) || I.pressed(BT_L2)) dx--;
+    int r, c; mapPos(menuSel, r, c);
     if (dx) {
-        int p = menuSel;
-        for (int i = 0; i < NUI_PAGES; i++) { p = (p + dx + NUI_PAGES) % NUI_PAGES; if (PG_GROUP[p] == g && pageAvail(p)) break; }
-        menuSel = p;
+        int n = mapCols(r);
+        for (int k = 0; k < n; k++) { c = (c + dx + n) % n; if (pageAvail(MAP_ROWS[r][c])) break; }
+        menuSel = MAP_ROWS[r][c];
     }
     if (dy) {
-        int ng = (g + dy + 3) % 3, col = 0;
-        for (int p = 0; p < menuSel; p++) if (PG_GROUP[p] == g && pageAvail(p)) col++;
-        int best = -1, c = 0;
-        for (int p = 0; p < NUI_PAGES; p++) if (PG_GROUP[p] == ng && pageAvail(p)) { if (c <= col) best = p; c++; }
-        if (best >= 0) menuSel = best;
+        int x, y, w, h; mapBox(r, c, x, y, w, h);
+        int cx = x + w / 2;
+        for (int k = 0; k < 5; k++) {
+            r = (r + dy + 5) % 5;
+            int best = -1, bd = 1 << 30;
+            for (int c2 = 0; c2 < mapCols(r); c2++) {
+                if (!pageAvail(MAP_ROWS[r][c2])) continue;
+                mapBox(r, c2, x, y, w, h);
+                int d = abs(x + w / 2 - cx);
+                if (d < bd) { bd = d; best = c2; }
+            }
+            if (best >= 0) { menuSel = MAP_ROWS[r][best]; break; }
+        }
     }
     if (I.pressed(BT_X) && PG_STORE[menuSel] >= 0) {   // Seite (8 Werte der Spur) kopieren
         const Pattern& P = curP();
@@ -3582,11 +3973,9 @@ static void liveInput(Input& I, Uint32 now, float dt) {
     if (I.pressed(BT_L1)) eng.fill = true;
     if (I.released(BT_L1)) eng.fill = false;
     if (I.pressed(BT_R1)) recToggle();
-    if (I.pressed(BT_L2) || I.pressed(BT_R2)) {
-        int d = I.pressed(BT_R2) ? 1 : -1;
-        switchPattern((eng.nextPat >= 0 ? eng.nextPat : curPi()) + d);
-    }
-    if (I.pressed(BT_START)) { lockA(); if (eng.playing) eng.stop(); else eng.start(); unlockA(); }
+    if (I.pressed(BT_L2)) gotoPage(-1);   // Seiten wie ueberall; Pattern: SELECT + links/rechts
+    if (I.pressed(BT_R2)) gotoPage(1);
+    if (startTap(I, now)) startStop();
     if (fabsf(I.ry) > 0.2f) { eng.dj = I.ry > 0 ? (I.ry - 0.2f) / 0.8f : (I.ry + 0.2f) / 0.8f; stickDj = true; }
     else if (stickDj) { eng.dj = 0.f; stickDj = false; }
     int f = flick(I.ly, flLY, flLYt, now);
@@ -3602,6 +3991,12 @@ static void handleInput(Uint32 now, float dt) {
     }
     if (kbOpen) { kbInput(I, now); return; }
     if (fbOpen) { fbInput(I, now); return; }
+    if (expState == 1) { if (I.pressed(BT_B)) expCancel = true; return; }   // Export laeuft: nur Abbrechen
+    if (expState >= 2) {
+        if (expState == 2) toast(TR("EXPORT FERTIG: SAMPLES/REC/%s", "EXPORT DONE: SAMPLES/REC/%s"), expName);
+        else toast(expState == 4 ? TR("EXPORT ABGEBROCHEN", "EXPORT CANCELLED") : TR("EXPORT FEHLGESCHLAGEN (SPEICHER VOLL?)", "EXPORT FAILED (STORAGE FULL?)"));
+        expState = 0;
+    }
     if (menuOpen) { menuInput(I, now); return; }
     if (driveOn) { if (I.pressed(BT_A) || I.pressed(BT_START)) stopDrive(); return; }
     {   // rechter Stick: Achse beim Auslenken festlegen, erst in der Mitte wieder frei
@@ -3657,16 +4052,27 @@ static void handleInput(Uint32 now, float dt) {
             lockA(); Engine::setMachine(curP(), track, m); unlockA();
             toast("ENGINE: %s", MACHINE_NAMES[m]);
         }
-        if (I.repeat(BT_L1, now) || I.repeat(BT_R1, now)) {   // Step-Cursor um einen Schlag (4 Steps)
+        if (aHeld && I.pressed(BT_L1)) {   // Lock-Modus: Trig kopieren (Zustand vor dem Druck, mit allen Locks)
+            funcUsed = true;
+            Step& hs = holdS();
+            if (aPrevOn == 0) { hs.on = 0; memset(hs.lock, NO_LOCK, NPARAMS); }   // leerer Step: nicht anlegen
+            else hs.on = (uint8_t)aPrevOn;
+            trigClip = hs; haveTrigClip = true; aEdited = true;
+            toast(aPrevOn == 0 ? TR("LEEREN STEP KOPIERT", "EMPTY STEP COPIED") : (aPrevOn == 2 ? TR("TRIGLESS STEP KOPIERT", "TRIGLESS STEP COPIED") : TR("TRIG KOPIERT (MIT LOCKS)", "TRIG COPIED (WITH LOCKS)")));
+        } else if (aHeld && I.pressed(BT_R1)) {   // Lock-Modus: Trig in den gehaltenen Step einfuegen
+            funcUsed = true;
+            if (!haveTrigClip) toast(TR("TRIG-ABLAGE LEER (LOCK-MODUS: SELECT + L1)", "TRIG CLIPBOARD EMPTY (LOCK MODE: SELECT + L1)"));
+            else { lockA(); holdS() = trigClip; unlockA(); aEdited = true; toast(TR("TRIG EINGEFÜGT IN STEP %d", "TRIG PASTED INTO STEP %d"), holdStep + 1); }
+        } else if (!aHeld && (I.repeat(BT_L1, now) || I.repeat(BT_R1, now))) {   // Step-Cursor um einen Schlag (4 Steps)
             funcUsed = true;
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             cursor = ((cursor + (I.down[BT_R1] ? 4 : -4)) % cl + cl) % cl;
         }
-        if (I.repeat(BT_L2, now) || I.repeat(BT_R2, now)) {
+        if (!aHeld && (I.repeat(BT_L2, now) || I.repeat(BT_R2, now))) {   // Step-Seite (16 Steps)
             funcUsed = true;
-            Pattern& P = curP();
-            P.len[track] = (uint8_t)clampi(P.len[track] + (I.down[BT_R2] ? 1 : -1), 1, NSTEPS);
-            toast(TR("SPURLÄNGE %d", "TRACK LENGTH %d"), P.len[track]);
+            int cl = curP().len[track] < 1 ? 1 : curP().len[track];
+            if (cl > 16) { cursor = ((cursor + (I.down[BT_R2] ? 16 : -16)) % cl + cl) % cl; toast(TR("STEPS %d-%d", "STEPS %d-%d"), cursor / 16 * 16 + 1, cursor / 16 * 16 + 16); }
+            else toast(TR("SPUR HAT NUR %d STEPS (LÄNGE: SEITE SEQ)", "TRACK HAS ONLY %d STEPS (LENGTH: SEQ PAGE)"), cl);
         }
         if (I.pressed(BT_START)) {
             funcUsed = true;
@@ -3696,14 +4102,26 @@ static void handleInput(Uint32 now, float dt) {
                 toast("LOCK STEP %d", cursor + 1);
             }
         }
+        bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
+        bool knobPg = page == PG_FX || page == PG_CMP || page == PG_MST;   // globale Reglerseiten: Steuerkreuz waehlt den Regler
         if (!aHeld) {
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
-            if (I.repeat(BT_LEFT, now, 250, 70)) cursor = (cursor % cl + cl - 1) % cl;
-            if (I.repeat(BT_RIGHT, now, 250, 70)) cursor = (cursor % cl + 1) % cl;
-            if (I.repeat(BT_UP, now)) track = (track + NTRACKS - 1) % NTRACKS;
-            if (I.repeat(BT_DOWN, now)) track = (track + 1) % NTRACKS;
+            int dx = (I.repeat(BT_RIGHT, now, 250, 70) ? 1 : 0) - (I.repeat(BT_LEFT, now, 250, 70) ? 1 : 0);
+            int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0);
+            if (mixP) {   // Mixer: links/rechts = Kanal, hoch/runter = Zeile
+                if (dx) track = (track + NTRACKS + dx) % NTRACKS;
+                if (dy) mixRow = clampi(mixRow + dy, 0, 3);
+            } else if (knobPg) {
+                if (dx) slot = (slot + 8 + dx) % 8;
+                if (dy) slot = (slot + 4) % 8;
+            } else if (page == PG_PRJ) {   // Projekt: links/rechts = Feld, hoch/runter = Spur (Sounds)
+                if (dx) slot = (slot + 8 + dx) % 8;
+                if (dy) track = (track + NTRACKS + dy) % NTRACKS;
+            } else {
+                if (dx) cursor = ((cursor + dx) % cl + cl) % cl;
+                if (dy) track = (track + NTRACKS + dy) % NTRACKS;
+            }
         }
-        bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
         if (I.pressed(BT_A) && lockLatch) {   // Lock-Modus beenden
             Step& s = holdS();
             if (aPrevOn == 0 && !aEdited) { s.on = 0; memset(s.lock, NO_LOCK, NPARAMS); }
@@ -3743,42 +4161,25 @@ static void handleInput(Uint32 now, float dt) {
             if (fx) slot = (slot / 4) * 4 + clampi(slot % 4 + fx, 0, 3);
             if (fy) slot = clampi(slot - fy * 4, slot % 4, 4 + slot % 4);
         }
-        // Rechter Stick: links/rechts = Seite, hoch/runter = Wert
-        flRX = 0;   // Seite wechseln nur mit SELECT + rechtem Stick, L2/R2 oder dem Menue
-        if (aHeld && I.pressed(BT_L1)) {   // Trig kopieren (Zustand vor dem Druck, mit allen Locks)
-            Step& hs = holdS();
-            if (aPrevOn == 0) { hs.on = 0; memset(hs.lock, NO_LOCK, NPARAMS); }   // leerer Step: nicht anlegen
-            else hs.on = (uint8_t)aPrevOn;
-            trigClip = hs; haveTrigClip = true; aEdited = true;
-            toast(aPrevOn == 0 ? TR("LEEREN STEP KOPIERT", "EMPTY STEP COPIED") : (aPrevOn == 2 ? TR("TRIGLESS STEP KOPIERT", "TRIGLESS STEP COPIED") : TR("TRIG KOPIERT (MIT LOCKS)", "TRIG COPIED (WITH LOCKS)")));
-        }
-        if (aHeld && I.pressed(BT_R1)) {   // Trig einfuegen in den gehaltenen Step
-            if (!haveTrigClip) toast(TR("TRIG-ABLAGE LEER (A HALTEN + L1)", "TRIG CLIPBOARD EMPTY (HOLD A + L1)"));
-            else { lockA(); holdS() = trigClip; unlockA(); aEdited = true; toast(TR("TRIG EINGEFÜGT IN STEP %d", "TRIG PASTED INTO STEP %d"), holdStep + 1); }
-        }
-        if (!aHeld) {   // L1/R1: Mixer-Zeile, auf Spurseiten Step-Seite (16 Steps), sonst Regler
-            int cl = curP().len[track] < 1 ? 1 : curP().len[track];
-            int dl = (I.repeat(BT_R1, now) ? 1 : 0) - (I.repeat(BT_L1, now) ? 1 : 0);
-            if (dl && trackPage(page)) sigStep(SIG_CHAIN, SIG_NCH, dl);   // Signalweg: Block
+        // Rechter Stick: hoch/runter = Wert (Seite wechseln: L2/R2, SELECT-Karte oder SELECT + rechter Stick)
+        flRX = 0;
+        {   // L1/R1: Regler waehlen (auch im Lock-Modus), Mixer: Zeile
+            int dl = (I.repeat(BT_R1, now, 300, 110) ? 1 : 0) - (I.repeat(BT_L1, now, 300, 110) ? 1 : 0);
+            if (dl && mixP) mixRow = (mixRow + 4 + dl) % 4;
             else if (dl) {
-                if (mixP) mixRow = (mixRow + 4 + dl) % 4;
-                else if (trackPage(page) && cl > 16) cursor = ((cursor + dl * 16) % cl + cl) % cl;
-                else slot = (slot + 8 + dl) % 8;
+                int s2 = slot;
+                for (int k = 0; k < 8; k++) {   // leere Felder ueberspringen
+                    s2 = (s2 + 8 + dl) % 8;
+                    ParamDef kd; int kv, kb; bool kl; char kn[24];
+                    int o = slot; slot = s2; bool ok = knobInfo(s2, kd, kv, kl, kb, kn, sizeof kn); slot = o;
+                    if (ok) break;
+                }
+                slot = s2;
             }
         }
-        if (trackPage(page)) {   // Signalweg: Modulationsreihe
-            if (I.pressed(BT_L2)) sigStep(SIG_MOD, SIG_NMOD, -1);
-            if (I.pressed(BT_R2)) sigStep(SIG_MOD, SIG_NMOD, 1);
-        } else {
-            if (I.pressed(BT_L2)) gotoPage(-1);
-            if (I.pressed(BT_R2)) gotoPage(1);
-        }
-        if (I.pressed(BT_START)) {
-            lockA();
-            if (eng.playing) eng.stop(); else eng.start();
-            unlockA();
-            if (!eng.playing && eng.clockMode == 2) toast(TR("WARTE AUF MIDI-START", "WAITING FOR MIDI START"));
-        }
+        if (I.pressed(BT_L2)) gotoPage(-1);   // L2/R2: Seite (auch im Lock-Modus)
+        if (I.pressed(BT_R2)) gotoPage(1);
+        if (startTap(I, now)) startStop();
         if (prjAct) {
             if (I.pressed(BT_X)) prjTrigger(slot);
         } else {
@@ -4458,7 +4859,7 @@ int main(int argc, char** argv) {
             char wm[96];
             int sq = webLastEvent(wm, sizeof wm);
             if (sq != webSeq) { webSeq = sq; toast("%s", wm); }
-            if (webTakeChange(now, 1500)) { reloadSamples(); toast(TR("%d SAMPLES GELADEN", "%d SAMPLES LOADED"), sampleCount()); }
+            if (expState != 1 && webTakeChange(now, 1500)) { reloadSamples(); toast(TR("%d SAMPLES GELADEN", "%d SAMPLES LOADED"), sampleCount()); }
             static Uint32 updAt = 0;
             if (webUpdateReady() && !updAt) { updAt = now; toast(TR("UPDATE EMPFANGEN - NEUSTART ...", "UPDATE RECEIVED - RESTARTING ...")); msgUntil = now + 5000; saveProject(); }
             if (updAt && now - updAt > 1500) quitReq = true;   // Dienst startet neu, groovebox-run installiert

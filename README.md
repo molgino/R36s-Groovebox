@@ -8,14 +8,15 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 ## Schnellstart
 
 * Beim **ersten Start** ist der Demo-Song **„Neon Nights“** geladen: **START** spielt ihn ab (Song-Modus, 4 Patterns). Jederzeit wieder: SET → „Demo-Song laden“.
-* **SELECT antippen** öffnet das Menü mit allen Seiten (LIVE, Mixer, FX, Song, Projekt, SET). **SELECT halten** zeigt die Tastenhilfe.
+* **Bedienen geht komplett mit Steuerkreuz und Tasten** – die Sticks sind nur Abkürzungen. Überall gilt: **L2/R2 = Seite**, **SELECT antippen = Seitenkarte**, **START = Play/Stop** (beim Spielen halten = **FILL**). Auf Spurseiten: **L1/R1 = Regler**, **X/Y = Wert**.
+* **SELECT antippen** öffnet die **Seitenkarte** mit allen Seiten (Signalweg der Spur, LIVE/Mix/FX, Song/Projekt/Einstellungen). **SELECT halten** zeigt die Tastenhilfe.
 * Unten im Bedienfeld steht zu jedem Regler eine kurze Erklärung.
 * Fertige Klänge: Seite PRJ → **PRESET** über Platz 32 hinaus drehen → **Werksklänge** (z. B. „NIGHT DRIVE BASS“, „PUNCH KICK“, „HAZE PAD“) → **P.LADEN**. Ein Werksklang setzt auch die Engine.
 * Vertan? **SELECT + B** macht die letzte Änderung rückgängig (12 Schritte), SET → „Wiederholen“ stellt sie wieder her.
 
 ## Oberfläche: Signalweg
 
-Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke **QUELLE → FILTER → AMP → INSERT** (zusammengehörige Seiten untereinander: QUELLE/QUELLE 2, FILTER 1/FILTER 2), Auswahl mit **L1/R1**. Darunter die Reihe **SEQ**: TRIG · SEQ · ARP · LFO1–3 (**L2/R2**). Der gewählte Block zeigt Grafik, 8 Regler und eine Erklärung des gewählten Reglers, unten liegen die 16 Steps der Spur.
+Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke **QUELLE → FILTER → AMP → INSERT** (zusammengehörige Seiten untereinander: QUELLE/QUELLE 2, FILTER 1/FILTER 2), darunter die Reihe **SEQ**: TRIG · SEQ · ARP · LFO1–3. **L2/R2** gehen alle Spurseiten der Reihe nach durch (TRIG → SEQ → ARP → QUELLE → QUELLE 2 → FILTER 1 → FILTER 2 → AMP → INSERT → LFO 1–3, im Kreis), direkt springen über die Seitenkarte (SELECT). **L1/R1** wählen den Regler. Der gewählte Block zeigt Grafik, 8 Regler und eine Erklärung des gewählten Reglers, unten liegen die 16 Steps der Spur.
 
 * **SELECT + L1/R1** springt einen Schlag (4 Steps) – vier Kicks auf 1/5/9/13 sind so in wenigen Tastendrücken gesetzt.
 * **Rhythmus-Vorlagen** für die gewählte Spur: SET → „Rhythmus-Vorlage“ (Four on the Floor, Backbeat, Offbeat, Achtel, Sechzehntel, Breakbeat, Clave, Tresillo, Dembow …), mit ←/→ wählen, A setzt sie.
@@ -27,9 +28,9 @@ Die 8 Spuren liegen auf dem Bildschirm genau so wie die Tasten: **Steuerkreuz �
 
 | Taste | Funktion |
 |---|---|
-| L1 halten | FILL (Trig-Bedingungen FILL) |
+| L1 halten | FILL (Trig-Bedingungen FILL) – auf allen anderen Seiten: START beim Spielen halten |
 | R1 | **WAV-Aufnahme** der Summe starten/stoppen (max. 5 Min.), gespeichert als `samples/rec/rec-NNN.wav` – im Browser unter Samples herunterladen |
-| L2 / R2 | Pattern zurück/vor (beim Abspielen am Pattern-Ende) |
+| L2 / R2 | Seite (wie überall); Pattern zurück/vor: SELECT + ←/→ |
 | rechter Stick ↑/↓ | DJ-Filter (Hoch-/Tiefpass) |
 | linker Stick ↑/↓ | Tempo ±1 BPM |
 | START | Play / Stop |
@@ -118,9 +119,9 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 
 ## Steps, Seiten und Geschwindigkeit
 
-* Jede Spur hat **1 bis 128 Steps**. Die Länge stellst du über SELECT + L2/R2 oder in SET ein.
+* Jede Spur hat **1 bis 128 Steps**. Die Länge stellst du auf der Seite SEQ (LEN) oder in SET → SPUR ein.
 * Angezeigt werden immer 16 Steps. Die Leiste über den Step-Tasten zeigt die bis zu 8 Seiten: Die Cursor-Seite ist hell, die laufende Seite in Spurfarbe.
-* Das Steuerkreuz läuft durch alle Steps. **L1/R1 springt eine Seite** (16 Steps) weiter.
+* Das Steuerkreuz läuft durch alle Steps. **SELECT + L2/R2 springt eine Step-Seite** (16 Steps), SELECT + L1/R1 einen Schlag (4 Steps).
 * **Tempo-Faktor pro Spur** (SET → „Tempo-Faktor Spur“): 1/8×, 1/4×, 1/2×, 3/4×, 1×, 3/2× und 2×.
 * Ein Pattern-Wechsel greift, wenn die längste Spur durchgelaufen ist.
 
@@ -147,8 +148,8 @@ Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 
 | Was | Kopieren | Einfügen |
 |---|---|---|
-| **Trig** (mit allen Locks, auch trigless) | Step mit **A halten + L1** | Ziel-Step **A halten + R1** – geht auch auf anderen Spuren; im Lock-Modus mit ←/→ weiterspringen und mehrfach einfügen |
-| **Seite** (die 8 Werte einer Spurseite) | Seitenmenü (SELECT antippen), Seite markieren, **X** | Zur Ziel-Spur wechseln, Seitenmenü, gleiche Seite markieren, **Y** |
+| **Trig** (mit allen Locks, auch trigless) | Step mit **A halten** (oder im Lock-Modus) **+ SELECT + L1** | Ziel-Step **A halten + SELECT + R1** – geht auch auf anderen Spuren; im Lock-Modus mit ←/→ weiterspringen und mehrfach einfügen |
+| **Seite** (die 8 Werte einer Spurseite) | Seitenkarte (SELECT antippen), Seite markieren, **X** | Zur Ziel-Spur wechseln, Seitenkarte, gleiche Seite markieren, **Y** |
 | **Pattern** | SET → „Pattern kopieren“ | SET → „Pattern einfügen“ |
 
 Die Seite SRC/SR2 lässt sich nur zwischen Spuren mit gleicher Engine übertragen (die Regler sind je Engine verschieden). Bei SEQ werden Länge und Tempo mitkopiert.
@@ -197,8 +198,10 @@ Der Song ist eine **Matrix wie in einer Clip-Ansicht**: jede **Zeile** ist eine 
 
 * Die Länge einer Zeile richtet sich nach der längsten belegten Spur. Spuren, deren Pattern in der nächsten Zeile gleich bleibt, laufen ohne Neustart weiter.
 * Im Song-Modus zeigen die Spurseiten das Pattern, das die gewählte Spur gerade spielt (Kopf „P04“). Bearbeiten wirkt auf dieses Pattern.
-* Ein Pattern-Wechsel (SELECT + ←/→, LIVE L2/R2, SET) beendet den Song-Modus.
+* Ein Pattern-Wechsel (SELECT + ←/→, SET) beendet den Song-Modus.
 * Im Kopf steht „SNG2/5“; START auf anderen Seiten setzt den Song fort. Seite wechseln wie überall mit L2/R2.
+
+**Song exportieren (WAV):** Unter der Matrix liegt die Leiste **EXPORT WAV** (in der letzten Zeile ↓ drücken). Mit ←/→ das Feld wählen, mit X/Y **VON** (Anfangszeile) und **BIS** (Schlusszeile) einstellen – Standard ist der ganze Song („ENDE“). Die gewählten Zeilen sind links mit einem cyanfarbenen Strich markiert, die Länge steht daneben. **A** startet den Export: Die Groovebox rechnet die Zeilen samt Wiederholungen offline (schneller als Echtzeit, die Wiedergabe stoppt dafür), lässt Hall und Delay ausklingen und speichert `samples/rec/<Projekt>-song-NN.wav` (Stereo, 44,1 kHz, 16 Bit). B bricht ab. Herunterladen im Browser unter Samples → rec.
 * Projekte ab Version 12 speichern Matrix und Mutes; ältere Songs (Pattern-Kette) werden beim Laden in Zeilen mit demselben Pattern auf allen Spuren umgestellt.
 
 ## Pattern-Mutation (SET → PATTERN)
@@ -219,7 +222,7 @@ COND auf der TRG-Seite gilt für die Spur. Meist lockst du COND aber pro Step: A
 |---|---|
 | `A:B` | im A-ten von je B Durchläufen der Spur, z. B. `1:2` = jeder zweite Durchlauf, `4:4` = jeder vierte |
 | `!A:B` | in allen Durchläufen außer dem A-ten von je B, z. B. `!1:4` |
-| `FILL` / `!FILL` | nur bei eingeschaltetem bzw. ausgeschaltetem FILL-Modus (LIVE-Seite: **L1 halten**, oder SET → FILL; im Header blinkt FILL) |
+| `FILL` / `!FILL` | nur bei eingeschaltetem bzw. ausgeschaltetem FILL-Modus (**START beim Spielen halten** auf jeder Seite, LIVE: L1 halten, dauerhaft: SET → FILL; im Header blinkt FILL) |
 | `PRE` / `!PRE` | die vorige Bedingung auf dieser Spur erfüllt war bzw. nicht |
 | `NEI` / `!NEI` | die letzte Bedingung der Nachbarspur (Spur davor) erfüllt war bzw. nicht |
 | `1ST` / `!1ST` | nur im ersten Durchlauf nach Start bzw. Pattern-Wechsel, bzw. in allen außer dem ersten |
@@ -262,22 +265,24 @@ Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im 
 
 ## Einstellungen (SET-Seite)
 
-Über das SELECT-Menü (Gruppe PROJEKT) oder mit SELECT + rechtem Stick erreichst du die Einstellungsliste:
+Über die Seitenkarte (SELECT → Zeile PROJEKT → EINSTELLUNGEN) oder L2/R2 auf den Projektseiten. Links stehen die **Bereiche**, rechts deren Einträge, unten eine kurze Erklärung zum gewählten Eintrag:
 
-* **PATTERN:** Pattern wählen, Länge der Spur bzw. aller Spuren, Tempo, Swing, Tonskala, Grundton, Pattern kopieren/einfügen/leeren
-* **AUDIO:** Ausgang (interner Lautsprecher, S-1, USB-Interface …), Puffer mit Latenz in ms, Lautstärke
+* **PATTERN:** Pattern wählen, Tempo, Swing, Tonskala, Grundton, Länge aller Spuren, FILL dauerhaft, Pattern kopieren/einfügen/leeren/mutieren, Rückgängig/Wiederholen, Demo-Song
+* **SPUR n:** Länge und Tempo-Faktor der gewählten Spur, Rhythmus-Vorlagen, Spur leeren
+* **AUDIO:** Ausgang (interner Lautsprecher, USB-Interface …), Puffer mit Latenz in ms, Lautstärke, Rechenkerne
 * **MIDI:** Eingang, Noten ausgeben, Clock (senden/empfangen), Eingangskanäle
-* **USB:** HOST (Geräte am R36S) oder PC (Netz-MIDI, SSH) und die IP-Adresse
-* **SYSTEM:** **Sprache / Language** (Deutsch oder English, wirkt sofort), Tasten neu lernen, Leistungstest, Info, Beenden
+* **USB & PC:** HOST oder PC-Modus, Audio an den PC, PC-Ton, Testton, Adresse
+* **SAMPLES:** Bibliothek/Projekt/fehlende Samples, Browser-Adresse, USB-Laufwerk, alte Sample-Nummern
+* **SYSTEM:** **Sprache / Language**, Bild-Versatz, Tasten neu lernen, Leistungstest, Info, Beenden
 
-Steuerkreuz ↑/↓ wählt, ←/→ (oder X/Y) ändert, **A** führt aus, **B** springt zurück zur vorherigen Seite.
+Steuerkreuz ↑/↓ wählt den Eintrag, **L1/R1 den Bereich**, ←/→ (oder X/Y) ändert, **A** führt aus, **B** springt zurück zur vorherigen Seite.
 
 ## Mixer (MIX-Seite)
 
 Hier siehst du alle 8 Spuren als Kanalzüge mit Fader, Pegelanzeige, Panorama, Delay- und Reverb-Send.
 
-* Steuerkreuz ↑/↓ oder linker Stick ←/→ wählt den Kanal.
-* Linker Stick ↑/↓ oder L1/R1 wählt die Zeile (VOL, PAN, DLY, REV).
+* Steuerkreuz ←/→ (oder linker Stick) wählt den Kanal.
+* Steuerkreuz ↑/↓ oder L1/R1 wählt die Zeile (VOL, PAN, DLY, REV).
 * Rechter Stick ↑/↓ oder X/Y ändert den Wert.
 * **A = Mute, B = Solo.** Sind mehrere Spuren auf Solo, klingen alle Solo-Spuren.
 
@@ -389,33 +394,34 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 
 ## Bedienung
 
+**Grundidee:** Alles geht mit Steuerkreuz und Tasten. Die Sticks sind Abkürzungen (links Regler wählen, rechts Wert stufenlos). Auf jeder Seite gilt: **L2/R2 = Seite**, **SELECT antippen = Seitenkarte**, **START = Play/Stop**.
+
 | Taste | Funktion |
 |---|---|
-| Steuerkreuz ←/→ | Step-Cursor |
-| Steuerkreuz ↑/↓ | Spur wählen |
+| Steuerkreuz ↑/↓ | Spur wählen (Mixer: Zeile, Effekt-/Kompressor-/Master-Seite: Regler) |
+| Steuerkreuz ←/→ | Step-Cursor (Mixer: Kanal, Effekt-/Kompressor-/Master-Seite: Regler) |
 | A | Trig setzen oder löschen |
-| **A lang halten** (ca. ½ s) | **Lock-Modus** rastet ein: Du kannst A loslassen und mit rechtem Stick oder X/Y Locks setzen, ←/→ springt zum nächsten Step, B löscht die Locks des Steps, A antippen = fertig |
-| A halten + X/Y | Parameter-Lock auf diesen Step (gelb), wie bisher |
+| **A lang halten** (ca. ½ s) | **Lock-Modus** rastet ein: A loslassen, mit X/Y (oder rechtem Stick) Locks setzen, **L1/R1 Regler und L2/R2 Seite wechseln weiterhin** (z. B. Filter und Sample auf demselben Step locken), ←/→ springt zum nächsten Step, B löscht die Locks des Steps, A antippen = fertig |
+| A halten + X/Y | Parameter-Lock auf diesen Step (gelb) |
 | A halten + B | alle Locks des Steps löschen |
 | B | Spur vorhören |
-| **Linker Stick** | **Kachel wählen**: jedes Antippen springt genau ein Feld nach links/rechts/oben/unten, Halten wiederholt |
-| **Rechter Stick ↑/↓** | **Wert stufenlos ändern** |
-| **SELECT + rechter Stick ←/→** | **Seite wechseln** (der rechte Stick allein ändert nur Werte) |
-| X / Y | Wert + / − in Einzelschritten (halten = Wiederholung) |
-| **SELECT kurz antippen** | **Seitenmenü**: alle Seiten nach Gruppen (SPUR / MIX & FX / PROJEKT), Steuerkreuz wählt, A öffnet |
+| **L1 / R1** | **Regler wählen** (1–8, leere Felder werden übersprungen) |
+| **X / Y** | **Wert + / −** (halten = Wiederholung, bei großen Bereichen schneller) |
+| **L2 / R2** | **Seite zurück / vor** – Spurseiten im Kreis TRIG → SEQ → ARP → QUELLE → QUELLE 2 → FILTER 1 → FILTER 2 → AMP → INSERT → LFO 1–3; LIVE/Mix/FX und Projekt-Seiten jeweils unter sich |
+| **SELECT kurz antippen** | **Seitenkarte**: alle Seiten auf einen Blick – Sequenz, Klang-Signalweg mit Pfeilen, Modulation, LIVE/Mix/FX, Projekt – mit Kurzwerten und einer Erklärung. Steuerkreuz wählt, A öffnet, X/Y kopiert/fügt die 8 Werte einer Spurseite ein |
 | SELECT halten | Hilfe-Einblendung |
-| SELECT + rechter Stick ↑/↓ | DJ-Filter: oben Hochpass, unten Tiefpass. Die Richtung rastet beim Auslenken ein, schräg drücken wechselt nicht aus Versehen |
-| L1/R1 | auf Spurseiten: **Block im Signalweg** (QUELLE → FILTER → BASE-W → AMP → INSERT), sonst Regler |
-| L2/R2 | auf Spurseiten: **Modulation/Sequenz** (TRIG, SEQ, ARP, LFO1–3), sonst Seite |
-| START | Play / Stop |
-| SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende) |
+| START | Play / Stop. **Beim Spielen halten = FILL**, solange gedrückt |
+| Linker Stick | Regler wählen (je Antippen ein Feld) |
+| Rechter Stick ↑/↓ | Wert stufenlos ändern |
+| SELECT + rechter Stick | ←/→ Seite, ↑/↓ DJ-Filter (oben Hochpass, unten Tiefpass) |
+| SELECT + ←/→ | Pattern wechseln (beim Abspielen am Pattern-Ende; beendet den Song-Modus) |
 | SELECT + ↑ | Aufnahme an/aus (für MIDI-Eingabe) |
 | SELECT + ↓ | Tap-Tempo (mehrmals im Takt tippen) |
-| SELECT + A | Spur stummschalten |
-| SELECT + B | **Rückgängig** (Spur leeren: SET → „Spur leeren“) |
-| SELECT + X/Y | Engine der Spur wechseln (alternativ: Regler ENGINE auf der TRG-Seite) |
-| SELECT + L1 / R1 | Step-Cursor einen Schlag (4 Steps) zurück/vor (FILL: LIVE-Seite oder SET) |
-| SELECT + L2/R2 | Spurlänge (Polymetrie, 1 bis 128) |
+| SELECT + A | Spur stummschalten (im Lock-Modus: Trig ↔ trigless) |
+| SELECT + B | **Rückgängig** (Spur leeren: SET → SPUR → „Spur leeren“) |
+| SELECT + X/Y | Engine der Spur wechseln (alternativ: X auf dem Regler ENGINE öffnet die Liste) |
+| SELECT + L1 / R1 | Step-Cursor einen Schlag (4 Steps) zurück/vor; **im Lock-Modus bzw. mit gehaltenem A: Trig kopieren / einfügen** |
+| SELECT + L2 / R2 | Step-Cursor eine Step-Seite (16 Steps) zurück/vor |
 | SELECT + START | Speichern (2 s halten: Speichern und Beenden) |
 
 Im Header siehst du den **Akkustand**: grün beim Laden, gelb unter 30 %, rot und blinkend unter 10 %.
