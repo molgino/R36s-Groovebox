@@ -83,8 +83,8 @@ static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang; char project[64]; };
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, ""};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang, usbNet, uac; char project[64]; };   // usbNet 0 NCM / 1 RNDIS, uac 2 / 1
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, 0, 2, ""};
 static bool intMuted = false;   // interne Ausgabe stumm, weil USB-Audio laeuft
 static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
@@ -167,6 +167,8 @@ static void loadSettings() {
         else if (!strcmp(line, "internal_on_usb")) cfg.intUsb = atoi(v) != 0;
         else if (!strcmp(line, "hw_volume")) cfg.hwVol = clampi(atoi(v), 0, 100);
         else if (!strcmp(line, "audio_cores")) cfg.cores = clampi(atoi(v), 1, 2);
+        else if (!strcmp(line, "usb_net")) cfg.usbNet = clampi(atoi(v), 0, 1);
+        else if (!strcmp(line, "usb_audio_class")) cfg.uac = atoi(v) == 1 ? 1 : 2;
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
@@ -174,8 +176,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nproject %s\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.project);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nusb_net %d\nusb_audio_class %d\nproject %s\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.usbNet, cfg.uac, cfg.project);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -331,31 +333,6 @@ static void text(int x, int y, const char* s, Col c, int sc = 1) {
 }
 static void textC(int cx, int y, const char* s, Col c, int sc = 1) { text(cx - textW(s, sc) / 2, y, s, c, sc); }
 
-static void arc(int cx, int cy, int r, float a0, float a1, Col c, int th) {
-    setCol(c);
-    if (a1 < a0) { float t = a0; a0 = a1; a1 = t; }
-    int segs = (int)((a1 - a0) / 6.f) + 2;
-    SDL_Point pts[80];
-    if (segs > 79) segs = 79;
-    for (int k = 0; k < th; k++) {
-        for (int i = 0; i <= segs; i++) {
-            float a = (a0 + (a1 - a0) * i / segs) * 0.0174533f;
-            pts[i].x = cx + (int)lroundf((r - k) * cosf(a));
-            pts[i].y = cy + (int)lroundf((r - k) * sinf(a));
-        }
-        for (int i = 0; i < segs; i++) drawLine(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
-    }
-}
-static void knob(int cx, int cy, int r, float frac, bool bip, Col c) {
-    arc(cx, cy, r, 135, 405, C_KNOB, 4);
-    float av = 135 + 270 * frac;
-    if (bip) arc(cx, cy, r, 270, av, c, 4);
-    else arc(cx, cy, r, 135, av, c, 4);
-    float a = av * 0.0174533f;
-    setCol(c);
-    drawLine(cx + (int)((r - 9) * cosf(a)), cy + (int)((r - 9) * sinf(a)),
-                       cx + (int)((r - 4) * cosf(a)), cy + (int)((r - 4) * sinf(a)));
-}
 static void playIcon(int x, int y, bool playing) {
     if (playing) { for (int k = 0; k < 8; k++) fill(x + k, y + k, 1, 16 - 2 * k, C_GREEN); }
     else fill(x, y + 2, 12, 12, C_DIM);
@@ -414,7 +391,7 @@ static float animDt = 0.016f, animTime = 0;
 static float slideOff = 0;                  // Seitenwechsel: Inhalt schiebt ein
 static float knobAnim[8];                   // Regler gleiten zum Zielwert
 static float hlY = -1, curXg = -1;          // Spur-Markierung und Cursor gleiten
-static float uiLfoPh = 0, oscDrift = 0;
+static float oscDrift = 0;
 static int batPct = -1; static bool batChg = false; static Uint32 batAt = 0;
 static char batPath[300] = "";
 
@@ -2458,13 +2435,6 @@ static void sigSummary(int p, char* b, int n) {
     }
     }
 }
-// Seite in einer Reihe (Signalweg oder Modulation) weiterschalten; ausserhalb der Reihe -> erstes Element
-static void sigStep(const int* list, int n, int dir) {
-    int cur = -1;
-    for (int i = 0; i < n; i++) if (list[i] == page) cur = i;
-    if (cur < 0) { for (int i = 0; i < n; i++) if (pageAvail(list[i])) { page = list[i]; return; } return; }
-    for (int k = 0; k < n; k++) { cur = (cur + dir + n) % n; if (pageAvail(list[cur])) { page = list[cur]; return; } }
-}
 // kompakte Kachel: Name, Wert, Balken
 static void miniTile(int k, int x, int y, int w, int h, Col tc) {
     char b[32], label[24];
@@ -3078,7 +3048,7 @@ enum SetItem {
     SI_H_TRK, SI_LEN, SI_SPEED, SI_TMPL, SI_CLRTRK,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_USBNET, SI_UACVER, SI_MIDIINFO,
     SI_H_SMP, SI_SAMPLES, SI_WEB, SI_DRIVE, SI_OLDSMP,
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
@@ -3146,6 +3116,9 @@ static const char* setHelp(int i) {
     case SI_PCIN: return TR("Ton vom PC über den R36S hören", "Hear PC audio through the R36S");
     case SI_PCREC: return TR("Ton vom PC als Sample aufnehmen (samples/pc)", "Record PC audio as a sample (samples/pc)");
     case SI_IP: return TR("Adresse des R36S im PC-Modus", "Address of the R36S in PC mode");
+    case SI_USBNET: return TR("NCM: ohne Treiber an Windows 11, Mac, iPad, Linux. RNDIS: nur für ältere Windows 10", "NCM: driverless on Windows 11, Mac, iPad, Linux. RNDIS: only for older Windows 10");
+    case SI_UACVER: return TR("UAC2: 44,1/48 kHz, Standard. UAC1: für ältere Geräte ohne UAC2 (Windows 7/8, Konsolen)", "UAC2: 44.1/48 kHz, default. UAC1: for older devices without UAC2 (Windows 7/8, consoles)");
+    case SI_MIDIINFO: return TR("Verbundene MIDI-Geräte und empfangene/gesendete Nachrichten", "Connected MIDI devices and received/sent messages");
     case SI_SAMPLES: return TR("WAVs in der Bibliothek / im Projekt geladen / fehlend", "WAVs in the library / loaded in the project / missing");
     case SI_WEB: return TR("Im Browser öffnen: Samples hochladen, Projekte sichern, Bildschirm", "Open in a browser: upload samples, back up projects, screen");
     case SI_DRIVE: return TR("Speicher als USB-Laufwerk am PC (Samples kopieren)", "Storage as a USB drive on the PC (copy samples)");
@@ -3227,6 +3200,17 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else if (pcRecState() == 2) snprintf(v, vn, TR("AUFNAHME %.1f s (A = STOP)", "RECORDING %.1f s (A = STOP)"), pcRecSeconds());
         else if (usbMode != 2) snprintf(v, vn, TR("erst PC MIDI+Audio", "needs PC MIDI+audio"));
         break;
+    case SI_USBNET: snprintf(l, ln, TR("USB-Netzwerk", "USB network")); snprintf(v, vn, "%s", cfg.usbNet ? TR("RNDIS (altes Windows)", "RNDIS (old Windows)") : TR("NCM (Standard)", "NCM (standard)")); break;
+    case SI_UACVER: snprintf(l, ln, TR("USB-Audio-Klasse", "USB audio class"));
+        snprintf(v, vn, "%s", cfg.uac == 1 ? TR("UAC1 (ältere Geräte)", "UAC1 (older devices)") : "UAC2 (44,1/48 kHz)");
+        if (usbMode == 2 && usbAudioRate() > 0) { size_t k = strlen(v); snprintf(v + k, vn - k, " - PC: %d Hz", usbAudioRate()); }
+        break;
+    case SI_MIDIINFO: { snprintf(l, ln, TR("MIDI-Geräte", "MIDI devices"));
+        char nm[96]; midiPortInfo(nm, sizeof nm);
+        if (!strncmp(nm, "kein", 4)) snprintf(nm, sizeof nm, "%s", TR("keine", "none"));   // midi.cpp meldet ohne Sprache
+        unsigned ni = 0, no = 0; midiCounts(&ni, &no);
+        snprintf(v, vn, TR("%.40s  ein %u / aus %u", "%.40s  in %u / out %u"), nm, ni, no);
+    } break;
     case SI_IP: snprintf(l, ln, TR("Adresse", "Address")); snprintf(v, vn, "%s", usbMode && netIp[0] ? netIp : "-"); break;
     case SI_WEB: snprintf(l, ln, TR("Samples per Browser", "Samples via browser"));
         if (!webPort()) snprintf(v, vn, "-");
@@ -3303,6 +3287,8 @@ static void setChange(int i, int d) {
     case SI_USBAUDIO: cfg.usbAudio = !cfg.usbAudio; saveSettings(); break;
     case SI_USBVOL: cfg.usbVol = clampi(cfg.usbVol + (d > 0 ? 5 : -5), 0, 100); saveSettings(); break;
     case SI_INTUSB: cfg.intUsb = !cfg.intUsb; saveSettings(); break;
+    case SI_USBNET: cfg.usbNet = !cfg.usbNet; saveSettings(); if (usbMode) usbApplyAt = SDL_GetTicks() + 1200; break;   // Gadget neu aufbauen
+    case SI_UACVER: cfg.uac = cfg.uac == 1 ? 2 : 1; saveSettings(); if (usbMode == 2) usbApplyAt = SDL_GetTicks() + 1200; break;
     case SI_MUTATE: mutAmt = clampi(mutAmt + (d > 0 ? 1 : -1), 0, 2); break;
     case SI_PCIN: cfg.pcIn = !cfg.pcIn; saveSettings(); break;
     case SI_DISP: cfg.dispOff = clampi(cfg.dispOff + (d > 0 ? 3 : -3), -1920, 1920);   // 1 Pixel je Schritt, Farbanteil bleibt drmOutSetByteOffset(cfg.dispOff); saveSettings(); break;
@@ -3362,10 +3348,16 @@ static void mutatePattern() {
 
 static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &st) == 0; }
 static void reloadSamples();
+// Umgebung fuer pc-modus.sh: Netzwerk- und Audio-Klasse aus SET
+static const char* usbEnv() {
+    static char e[64];
+    snprintf(e, sizeof e, "GB_USB_NET=%s GB_UAC=%d ", cfg.usbNet ? "rndis" : "ncm", cfg.uac == 1 ? 1 : 2);
+    return e;
+}
 static bool usbScript(const char* args, char* okMsg, int n) {
     if (selfTesting) return false;   // pc-modus.sh ausfuehren, OK:/FEHLER:-Zeile liefern
     char cmd[800], lp[700], line[200];
-    snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s", basePath, args);
+    snprintf(cmd, sizeof cmd, "%sbash '%spc-modus.sh' %s", usbEnv(), basePath, args);
     int rc = system(cmd);
     snprintf(lp, sizeof lp, "%spc-modus.log", basePath);
     bool ok = false;
@@ -4417,7 +4409,7 @@ static void applyUsbMode() {
     usbAudioStop();   // Gadget wird gleich neu aufgebaut
     char cmd[800];
     static const char* args[3] = {"aus", "an", "an audio"};
-    snprintf(cmd, sizeof cmd, "bash '%spc-modus.sh' %s nosleep", basePath, args[usbMode]);
+    snprintf(cmd, sizeof cmd, "%sbash '%spc-modus.sh' %s nosleep", usbEnv(), basePath, args[usbMode]);
     toast(usbMode ? TR("PC-MODUS WIRD AKTIVIERT ...", "ACTIVATING PC MODE ...") : TR("PC-MODUS AUS ...", "PC MODE OFF ..."));
     drawAll(false); present();
     int rc = system(cmd);
@@ -4855,6 +4847,18 @@ int main(int argc, char** argv) {
         if (recDoneNo) { if (recDoneNo > 0) toast(TR("GESPEICHERT: SAMPLES/REC/REC-%03d.WAV", "SAVED: SAMPLES/REC/REC-%03d.WAV"), recDoneNo); else toast(TR("AUFNAHME: SPEICHERN FEHLGESCHLAGEN", "RECORDING: SAVING FAILED")); recDoneNo = 0; }
         if (audioApplyAt && now >= audioApplyAt) { audioApplyAt = 0; openAudio(); }
         if (usbApplyAt && now >= usbApplyAt) { usbApplyAt = 0; applyUsbMode(); }
+        {   // MIDI kommt an, wird aber ignoriert -> einmal je 20 s sagen, wo man es einschaltet
+            static uint32_t lastNotes = 0, lastClock = 0, hintAt = 0;
+            uint32_t ne = midiNoteEvents(), ce = midiClockEvents();
+            bool notesIgnored = ne != lastNotes && !cfg.midiIn, clockIgnored = ce != lastClock && cfg.clk == 0;   // beim Senden kommt Clock oft zurueck
+            lastNotes = ne; lastClock = ce;
+            if ((notesIgnored || clockIgnored) && !selfTesting && now - hintAt > 20000) {
+                hintAt = now;
+                if (notesIgnored) toast(TR("MIDI KOMMT AN - MIDI-EINGANG IST AUS (SET > MIDI)", "MIDI ARRIVING - MIDI INPUT IS OFF (SET > MIDI)"));
+                else toast(TR("MIDI-CLOCK KOMMT AN - SET > MIDI > CLOCK = EMPFANGEN", "MIDI CLOCK ARRIVING - SET > MIDI > CLOCK = RECEIVE"));
+                msgUntil = now + 3500;
+            }
+        }
         {   // Browser-Upload: Meldung und Samples neu laden, sobald 1,5 s nichts mehr kommt
             char wm[96];
             int sq = webLastEvent(wm, sizeof wm);

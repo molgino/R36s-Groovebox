@@ -59,7 +59,7 @@ cd $K
 cp $RN/devices/RK3326/linux/linux.aarch64.conf .config
 ./scripts/kconfig/merge_config.sh -m .config "$HERE/groovebox.config" >/dev/null
 make olddefconfig >/dev/null
-for o in USB_CONFIGFS_F_UAC2 USB_CONFIGFS_F_MIDI USB_CONFIGFS_MASS_STORAGE USB_CONFIGFS_RNDIS; do
+for o in USB_CONFIGFS_F_UAC2 USB_CONFIGFS_F_UAC1 USB_CONFIGFS_F_MIDI USB_CONFIGFS_MASS_STORAGE USB_CONFIGFS_RNDIS USB_CONFIGFS_NCM; do
     grep -q "^CONFIG_$o=y" .config || { echo "!! CONFIG_$o fehlt"; exit 1; }
 done
 

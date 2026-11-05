@@ -5,6 +5,10 @@
 #   pc-modus.sh an audio       -> am PC: Audio-Interface + MIDI + Netzwerk
 #   pc-modus.sh laufwerk       -> am PC: Datenpartition GROOVEBOX als USB-Laufwerk + Netzwerk
 #   pc-modus.sh laufwerk-aus   -> Laufwerk zurueck an die Groovebox, wieder "an audio"
+# Alles class compliant (keine Treiber am PC). Umschaltbar per Umgebung (setzt die App aus SET, oder config/groovebox.env):
+#   GB_USB_NET=ncm|rndis   Netzwerk: NCM (Standard: Windows 11/10 ab 2004, macOS, iPadOS, Linux, Android) oder RNDIS (aeltere Windows 10)
+#   GB_UAC=2|1             Audio: UAC2 (Standard, 44,1 + 48 kHz) oder UAC1 (aeltere Geraete/Konsolen; braucht CONFIG_USB_CONFIGFS_F_UAC1)
+#   GB_UAC_RATES="44100,48000"   angebotene Abtastraten (der PC waehlt)
 DIR=/opt/groovebox
 LOG=$DIR/pc-modus.log
 G=/sys/kernel/config/usb_gadget/groovebox
@@ -28,7 +32,7 @@ teardown() {
 setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
     mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
     mkdir -p $G && cd $G || { echo "FEHLER: configfs nicht verfuegbar"; return 1; }
-    echo 0x1d6b > idVendor; echo 0x0104 > idProduct; echo 0x0100 > bcdDevice; echo 0x0200 > bcdUSB
+    echo 0x1d6b > idVendor; echo 0x0104 > idProduct; echo 0x0101 > bcdDevice; echo 0x0200 > bcdUSB
     echo 0xEF > bDeviceClass; echo 0x02 > bDeviceSubClass; echo 0x01 > bDeviceProtocol   # Composite mit IAD
     mkdir -p strings/0x409
     echo "Groovebox" > strings/0x409/manufacturer
@@ -38,13 +42,20 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
     echo "Groovebox" > configs/c.1/strings/0x409/configuration
     echo 500 > configs/c.1/MaxPower
 
-    # Netzwerk (RNDIS, Windows erkennt es ueber os_desc ohne Treiber) - muss die erste Funktion sein
-    mkdir -p functions/rndis.usb0
-    echo 1 > os_desc/use; echo 0xcd > os_desc/b_vendor_code; echo MSFT100 > os_desc/qw_sign
-    echo RNDIS > functions/rndis.usb0/os_desc/interface.rndis/compatible_id
-    echo 5162001 > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
-    ln -s functions/rndis.usb0 configs/c.1/
-    ln -s configs/c.1 os_desc/
+    # Netzwerk - muss die erste Funktion sein (Schnittstelle usb0)
+    if [ "${GB_USB_NET:-ncm}" = rndis ]; then   # RNDIS: Windows erkennt es ueber os_desc ohne Treiber
+        mkdir -p functions/rndis.usb0
+        echo 1 > os_desc/use; echo 0xcd > os_desc/b_vendor_code; echo MSFT100 > os_desc/qw_sign
+        echo RNDIS > functions/rndis.usb0/os_desc/interface.rndis/compatible_id
+        echo 5162001 > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
+        ln -s functions/rndis.usb0 configs/c.1/
+        ln -s configs/c.1 os_desc/
+        echo "Netz: RNDIS"
+    else                                         # CDC-NCM: Standardklasse, ueberall ohne Treiber
+        mkdir -p functions/ncm.usb0
+        ln -s functions/ncm.usb0 configs/c.1/
+        echo "Netz: NCM"
+    fi
 
     if [ -n "$2" ]; then
         mkdir -p functions/mass_storage.usb0
@@ -56,19 +67,39 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
     else
         mkdir -p functions/midi.usb0
         echo "Synth City" > functions/midi.usb0/id
+        echo "Synth City" > functions/midi.usb0/interface_string 2>/dev/null   # Name am PC statt "MIDI function"
         echo 1 > functions/midi.usb0/in_ports; echo 1 > functions/midi.usb0/out_ports
         ln -s functions/midi.usb0 configs/c.1/
         if [ "$1" = 1 ]; then
-            mkdir -p functions/uac2.usb0
-            U=functions/uac2.usb0
-            echo 3 > $U/p_chmask; echo 44100 > $U/p_srate; echo 2 > $U/p_ssize   # Groovebox -> PC
-            echo 3 > $U/c_chmask; echo 44100 > $U/c_srate; echo 2 > $U/c_ssize   # PC -> Groovebox
-            echo "Synth City" > $U/function_name 2>/dev/null
-            # dwc2 (RK3326) schafft isochrone Pakete jede 125 us oft nicht -> Standard: alle 1 ms (bInterval 4) und mehr Anfragen.
-            # Zum Testen in config/groovebox.env: GB_UAC_BINT=1..4, GB_UAC_REQ=2..8
-            echo ${GB_UAC_BINT:-4} > $U/p_hs_bint 2>/dev/null; echo ${GB_UAC_BINT:-4} > $U/c_hs_bint 2>/dev/null
-            echo ${GB_UAC_REQ:-4} > $U/req_number 2>/dev/null
-            echo "UAC2: p_hs_bint=$(cat $U/p_hs_bint 2>/dev/null) c_hs_bint=$(cat $U/c_hs_bint 2>/dev/null) req_number=$(cat $U/req_number 2>/dev/null)"
+            RATES=${GB_UAC_RATES:-44100,48000}
+            U=""
+            if [ "${GB_UAC:-2}" = 1 ]; then          # UAC1: auch fuer Geraete ohne UAC2 (Windows 7/8, Konsolen, alte Recorder)
+                if mkdir functions/uac1.usb0 2>/dev/null; then
+                    U=functions/uac1.usb0
+                    echo 3 > $U/p_chmask; echo 3 > $U/c_chmask; echo 2 > $U/p_ssize; echo 2 > $U/c_ssize
+                    echo $RATES > $U/p_srate 2>/dev/null || echo 44100 > $U/p_srate
+                    echo $RATES > $U/c_srate 2>/dev/null || echo 44100 > $U/c_srate
+                    echo "Synth City" > $U/function_name 2>/dev/null
+                    echo ${GB_UAC_REQ:-4} > $U/req_number 2>/dev/null
+                    echo "UAC1: p_srate=$(cat $U/p_srate) c_srate=$(cat $U/c_srate)"
+                else
+                    echo "WARNUNG: UAC1 fehlt im Kernel - nehme UAC2"
+                fi
+            fi
+            if [ -z "$U" ]; then
+                mkdir -p functions/uac2.usb0
+                U=functions/uac2.usb0
+                echo 3 > $U/p_chmask; echo 2 > $U/p_ssize   # Groovebox -> PC
+                echo 3 > $U/c_chmask; echo 2 > $U/c_ssize   # PC -> Groovebox
+                echo $RATES > $U/p_srate 2>/dev/null || echo 44100 > $U/p_srate   # mehrere Raten: Kernel >= 5.18
+                echo $RATES > $U/c_srate 2>/dev/null || echo 44100 > $U/c_srate
+                echo "Synth City" > $U/function_name 2>/dev/null
+                # dwc2 (RK3326) schafft isochrone Pakete jede 125 us oft nicht -> Standard: alle 1 ms (bInterval 4) und mehr Anfragen.
+                # Zum Testen in config/groovebox.env: GB_UAC_BINT=1..4, GB_UAC_REQ=2..8
+                echo ${GB_UAC_BINT:-4} > $U/p_hs_bint 2>/dev/null; echo ${GB_UAC_BINT:-4} > $U/c_hs_bint 2>/dev/null
+                echo ${GB_UAC_REQ:-4} > $U/req_number 2>/dev/null
+                echo "UAC2: p_srate=$(cat $U/p_srate) c_srate=$(cat $U/c_srate) p_hs_bint=$(cat $U/p_hs_bint 2>/dev/null) c_hs_bint=$(cat $U/c_hs_bint 2>/dev/null) req_number=$(cat $U/req_number 2>/dev/null)"
+            fi
             ln -s $U configs/c.1/
         fi
     fi

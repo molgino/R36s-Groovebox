@@ -1328,7 +1328,7 @@ bool Engine::trigFor(int t, int s, bool on, uint32_t reg, uint8_t* outLk) {
     int range = seqP(t, P_RANGE);
     if (range > 0) {   // generierte Melodie aus dem Register, in die Skala eingerastet
         int len = P.len[t] < 1 ? 1 : P.len[t], L = len < 32 ? len : 32;
-        uint32_t win = (reg | (reg << L)) >> 1 & 0xFF;
+        uint32_t win = (uint32_t)(((uint64_t)reg | ((uint64_t)reg << L)) >> 1 & 0xFF);   // 64 Bit: L = 32 war UB
         int baseN = st.lock[P_NOTE] != NO_LOCK ? st.lock[P_NOTE] : P.p[t][P_NOTE];
         int nn = baseN + (int)(win * range / 255);
         outLk[P_NOTE] = (uint8_t)quantizeNote(nn > 127 ? 127 : nn, proj.mst[MS_SCALE]);

@@ -1,2 +1,7 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Shell-Skripte und Geraete-Dateien laufen unter Linux/WSL: immer LF (auch im Windows-Checkout)
+*.sh text eol=lf
+os/rootfs/overlay/** text eol=lf
+arkos/groovebox/*.service text eol=lf
+*.dtb binary

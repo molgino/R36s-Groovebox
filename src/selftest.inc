@@ -619,6 +619,20 @@ static void uiScenarios() {
         doLoadProject("Ab1");
     }
 
+    uiCase = "SET USB-Klassen";   // Netzwerk NCM/RNDIS und Audio UAC2/UAC1 landen als Umgebung bei pc-modus.sh
+    {
+        int n0 = cfg.usbNet, u0 = cfg.uac;
+        cfg.usbNet = 0; cfg.uac = 2;
+        UCHECK(strstr(usbEnv(), "GB_USB_NET=ncm") && strstr(usbEnv(), "GB_UAC=2"), "Standard: '%s'", usbEnv());
+        setChange(SI_USBNET, 1); setChange(SI_UACVER, 1);
+        UCHECK(strstr(usbEnv(), "GB_USB_NET=rndis") && strstr(usbEnv(), "GB_UAC=1"), "umgeschaltet: '%s'", usbEnv());
+        setChange(SI_USBNET, 1); setChange(SI_UACVER, 1);
+        UCHECK(cfg.usbNet == 0 && cfg.uac == 2, "zurueck: Netz %d, UAC %d", cfg.usbNet, cfg.uac);
+        cfg.usbNet = n0; cfg.uac = u0;
+        char l[96], v[96]; l[0] = v[0] = 0; setLabel(SI_MIDIINFO, l, sizeof l, v, sizeof v);
+        UCHECK(l[0] && v[0], "MIDI-Geraete-Zeile leer");
+    }
+
     uiCase = "Pattern wechseln";
     simReset();
     combo(BT_SELECT, BT_RIGHT); UCHECK(eng.curPat == 1, "SELECT+Rechts: Pattern %d statt 2", eng.curPat + 1);

@@ -4,6 +4,15 @@
 #include <string.h>
 
 volatile uint32_t midiActivity = 0;
+static volatile uint32_t cntIn = 0, cntOut = 0, cntNotes = 0, cntClock = 0;   // Zaehler fuer SET und Hinweise
+void midiCounts(unsigned* in, unsigned* out) { *in = cntIn; *out = cntOut; }
+uint32_t midiNoteEvents() { return cntNotes; }
+uint32_t midiClockEvents() { return cntClock; }
+// Anzeigename: das eigene USB-MIDI zum PC (Gadget f_midi) heisst sonst nur "f_midi"
+static const char* niceName(const char* n) {
+    if (n && (strstr(n, "f_midi") || strstr(n, "MIDI Gadget") || strstr(n, "SynthCity"))) return "PC (USB-MIDI)";
+    return n ? n : "?";
+}
 
 // ---------------------------------------------------------------- lock-freie Ringpuffer (1 Erzeuger, 1 Verbraucher)
 struct Ring { MidiMsg buf[1024]; uint32_t head = 0, tail = 0; };
@@ -59,6 +68,9 @@ static void setInfo(const char* names, int count) {
 static void pushIn(uint8_t st, uint8_t d1, uint8_t d2) {
     MidiMsg m = {st, d1, d2, 0, 0};
     ringPush(rIn, m);
+    cntIn++;
+    if (st == 0xF8 || st == 0xFA || st == 0xFB || st == 0xFC) cntClock++;
+    else if (st >= 0x80 && st < 0xC0) cntNotes++;   // Noten, Aftertouch, Regler
     if (st < 0xF8) midiActivity = SDL_GetTicks();
 }
 
@@ -111,7 +123,7 @@ static void rawScan() {
             if (r.in || r.out) {
                 char* nm = nullptr;
                 snd_card_get_name(c, &nm);
-                snprintf(r.name, sizeof r.name, "%s", nm ? nm : hw);
+                snprintf(r.name, sizeof r.name, "%s", nm ? niceName(nm) : hw);
                 free(nm);
                 r.card = c; r.status = 0; r.cnt = 0; r.sysex = false;
                 printf("MIDI (raw): %s verbunden\n", r.name);
@@ -194,10 +206,12 @@ static void seqScan() {
         }
         if (any) {
             if (count) strncat(names, ", ", sizeof names - strlen(names) - 1);
-            strncat(names, snd_seq_client_info_get_name(ci), sizeof names - strlen(names) - 1);
+            strncat(names, niceName(snd_seq_client_info_get_name(ci)), sizeof names - strlen(names) - 1);
             count++;
         }
     }
+    static char lastNames[256] = "-";
+    if (strcmp(names, lastNames)) { printf("MIDI: verbunden mit %s\n", count ? names : "(nichts)"); snprintf(lastNames, sizeof lastNames, "%s", names); }
     setInfo(names, count);
 }
 
@@ -404,6 +418,7 @@ static int midiThread(void*) {
         MidiMsg m;
         while (ringPeek(rOut, m) && m.due <= now + 0.0003) {
             if (seq) seqSend(m); else rawSend(m);
+            cntOut++;
             serialSend(m);
             rtpSend(m);
             ringDrop(rOut);

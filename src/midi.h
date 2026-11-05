@@ -13,4 +13,7 @@ int midiPortInfo(char* buf, int n);     // Namen der verbundenen Geraete, liefer
 const char* midiBackend();
 int hwVolumeSet(int pct);              // Codec-Lautstaerke (Master) in %, -1 = nicht vorhanden
 int audioJackPoll();                    // Kopfhoerer-Buchse pruefen + Pfad umschalten (-1 = nicht vorhanden)              // "SEQ", "RAW" oder "AUS"
-extern volatile uint32_t midiActivity;  // SDL-Ticks des letzten eingehenden Events
+extern volatile uint32_t midiActivity;
+void midiCounts(unsigned* in, unsigned* out);   // empfangene / gesendete Nachrichten seit dem Start
+uint32_t midiNoteEvents();                       // empfangene Noten/Regler (fuer den Hinweis "MIDI-Eingang aus")
+uint32_t midiClockEvents();                      // empfangene Clock/Start/Stop  // SDL-Ticks des letzten eingehenden Events

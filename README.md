@@ -519,10 +519,14 @@ Dadurch funktioniert der R36S am PC als **echtes USB-Audiointerface und USB-MIDI
 
 | Am PC (SET → USB) | Was der PC sieht |
 |---|---|
-| **PC (MIDI + Audio)** | Audiogerät „Synth City“ (Ein-/Ausgang, 44,1 kHz) + MIDI-Gerät „Synth City“ + Netzwerk (Browser-Upload, SSH) |
+| **PC (MIDI + Audio)** | Audiogerät „Synth City“ (Ein-/Ausgang, 44,1 oder 48 kHz – der PC wählt) + MIDI-Gerät „Synth City“ + Netzwerk (Browser-Upload, SSH) |
 | **PC (MIDI)** | MIDI-Gerät + Netzwerk |
 | SET → **USB-Laufwerk** | Die Partition GROOVEBOX als normales USB-Laufwerk: Samples reinkopieren, am PC auswerfen, am R36S A drücken |
 
+* **Alles class compliant, ohne Treiber:** Audio als USB Audio Class 2.0, MIDI als USB-MIDI 1.0, Netzwerk als CDC-NCM. Läuft an Windows 10 (ab 2004) / 11, macOS, iPad/iPhone (USB-Adapter), Linux und Android.
+* **Ältere Geräte:** SET → „USB-Netzwerk“ = **RNDIS** für ältere Windows-10-Versionen; SET → „USB-Audio-Klasse“ = **UAC1** für Geräte ohne UAC2 (Windows 7/8, Konsolen, ältere Recorder; braucht ein OS-Image ab 11/2026). Die Umstellung baut die USB-Verbindung kurz neu auf.
+* **MIDI prüfen:** SET → MIDI → „MIDI-Geräte“ zeigt die Verbindung (z. B. „PC (USB-MIDI)“) und zählt empfangene/gesendete Nachrichten. Kommen Noten an, während der MIDI-Eingang AUS ist, meldet die Groovebox das. Noten und Clock zum PC: „Noten ausgeben“ bzw. „Clock = SENDEN“.
+* **Windows zeigt „Synth City“ nicht als MIDI-Gerät** (Windows 11 mit dem neuen MIDI-Dienst), obwohl Audio geht: R36S ab- und wieder anstecken; hilft das nicht, den Dienst „Windows MIDI Service“ (midisrv) neu starten oder Windows neu starten.
 * Der Klang geht im Modus **PC (MIDI + Audio)** automatisch **zusätzlich** zum PC (SET → „Audio an PC (USB)“, Standard AN). Lautsprecher/Kopfhörer laufen weiter und geben den Takt vor – liest der PC nicht mit, läuft der Sequencer trotzdem weiter. In SET steht, ob der PC gerade mitliest.
 * **Lautstärken getrennt:** Die Lautstärketasten regeln nur Lautsprecher/Kopfhörer des R36S, die USB-Lautstärke steht in SET („USB-Lautstärke“). Mit „Intern bei USB-Audio: STUMM“ (Standard) sind Lautsprecher und Kopfhörer stumm, solange USB-Audio zum PC läuft.
 * Ein Taktausgleich regelt die USB-Spur unhörbar nach (Uhren von R36S und PC laufen minimal unterschiedlich) – keine Knackser bei langen Aufnahmen. Im Log steht die Abweichung als „Takt … ppm“.

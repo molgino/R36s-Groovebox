@@ -367,9 +367,10 @@ static void handle(int fd) {
         if (!path[0] && !strcmp(nm, "groovebox.log")) snprintf(path, sizeof path, "%sgroovebox.log", g_base);
         if (!strcmp(path, "-")) {   // feste Diagnose-Befehle (keine Parameter aus der Anfrage)
             FILE* pp = popen("{ echo '=== Soundkarten'; cat /proc/asound/cards; echo '=== Gadget'; G=/sys/kernel/config/usb_gadget/groovebox;"
-                             " echo UDC=$(cat $G/UDC 2>/dev/null); ls $G/configs/c.1 2>/dev/null; for f in $G/functions/uac2.usb0/*; do [ -f $f ] && echo \"$(basename $f)=$(cat $f 2>/dev/null)\"; done;"
+                             " echo UDC=$(cat $G/UDC 2>/dev/null); ls $G/configs/c.1 2>/dev/null; for f in $G/functions/*/*; do [ -f $f ] && echo \"$(basename $(dirname $f))/$(basename $f)=$(cat $f 2>/dev/null)\"; done;"
                              " echo '=== USB-Geschwindigkeit'; cat /sys/class/udc/*/current_speed /sys/class/udc/*/state 2>/dev/null;"
                              " for c in $(ls /proc/asound | grep -o 'card[0-9]*' | tr -d card); do grep -qi uac /proc/asound/card$c/id 2>/dev/null && { echo \"=== Regler Karte $c\"; amixer -c $c contents; echo \"=== PCM Karte $c\"; cat /proc/asound/card$c/pcm0p/sub0/hw_params /proc/asound/card$c/pcm0p/sub0/status 2>/dev/null; }; done;"
+                             " echo '=== MIDI (ALSA-Sequencer)'; cat /proc/asound/seq/clients 2>/dev/null | grep -E '^Client|Port|Connect';"
                              " echo '=== Kernel (USB/Audio)'; dmesg | grep -iE 'dwc2|uac|gadget|u_audio|usb|configfs' | tail -80; } 2>&1", "r");
             if (!pp) { replyText(fd, 404, "(Diagnose nicht moeglich)"); return; }
             static char db[65536];
