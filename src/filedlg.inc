@@ -46,9 +46,10 @@ static bool savePresetFile(int t, const char* path) {
     if (!f) return false;
     uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 3, 0};   // Format 3 = 128 Parameter (v13)
     bool ok = fwrite(hdr, 8, 1, f) == 1 && fwrite(curP().p[t], NPARAMS, 1, f) == 1;
-    int sl = curP().p[t][P_S0];
+    int si = machineSampleParam(m), sl = si >= 0 ? curP().p[t][si] : 0;
+    if (si == P_X3 && curP().p[t][P_S0] % 5 != 4) si = -1;   // WTBL ohne eigene Wavetable
     if (ok) {   // Sample-Name dahinter (wie im Projekt), damit der Sound in jedem Projekt passt; Anzahl 0 = kein Sample
-        bool has = machineUsesSample(m) && sampleGet(sl);
+        bool has = si >= 0 && sampleGet(sl);
         const char* sn = has ? sampleName(sl) : "";
         uint16_t n = has ? 1 : 0; uint8_t eh[2] = {(uint8_t)sl, (uint8_t)strlen(sn)};
         ok = fwrite("SPL1", 4, 1, f) == 1 && fwrite(&n, 2, 1, f) == 1;
@@ -199,6 +200,7 @@ static float fbScroll = 0;
 static char fbDir[128];
 static FbEnt fbEnt[MAX_LIB + 64];
 static int fbParam = -1;   // FB_LDEST: Parameterindex des LFO-Ziels
+static int fbSmpIdx = P_S0;   // FB_SAMPLE: Parameter, der das Sample waehlt (SMPL bzw. UWAV)
 static const char* FB_FACTORY = "WERK";   // Ordnername der Werksklaenge im Sound-Explorer (Anzeige uebersetzt)
 
 static int fbCmp(const void* a, const void* b) {
@@ -293,13 +295,16 @@ static void openBrowser(int mode) {
     fbOpen = true; fbMode = mode; fbSel = 0; fbScroll = 0; fbDir[0] = 0;
     fbOrig = -1; fbOrigLib = -1;
     if (mode == FB_SAMPLE) {   // im Ordner des aktuellen Samples starten und es markieren
-        int cur = aHeld && holdS().lock[P_S0] != NO_LOCK ? holdS().lock[P_S0] : curP().p[track][P_S0];
-        fbOrig = curP().p[track][P_S0];
+        int cur = aHeld && holdS().lock[fbSmpIdx] != NO_LOCK ? holdS().lock[fbSmpIdx] : curP().p[track][fbSmpIdx];
+        fbOrig = curP().p[track][fbSmpIdx];
         const char* n = sampleGet(cur) ? sampleName(cur) : nullptr;
         if (n) {
             fbOrigLib = libFind(n);
             const char* sl = strrchr(n, '/');
             if (sl && fbOrigLib >= 0) snprintf(fbDir, sizeof fbDir, "%.*s/", (int)(sl - n), n);
+        }
+        if (!n && fbSmpIdx == P_X3) {   // noch keine eigene Wavetable: im Ordner wavetables/ starten, falls vorhanden
+            for (int i = 0; i < libCount(); i++) if (!strncmp(libName(i), "wavetables/", 11)) { snprintf(fbDir, sizeof fbDir, "wavetables/"); break; }
         }
         fbBuild();
         for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir && fbEnt[i].idx == fbOrigLib) fbSel = i;
@@ -322,7 +327,7 @@ static void openBrowser(int mode) {
     fbScroll = fbSel > 6 ? fbSel - 6.f : 0.f;
 }
 static void fbClose(bool cancel) {
-    if (cancel && fbMode == FB_SAMPLE && fbOrig >= 0) { lockA(); curP().p[track][P_S0] = (uint8_t)fbOrig; unlockA(); }   // Vorhoeren zuruecknehmen
+    if (cancel && fbMode == FB_SAMPLE && fbOrig >= 0) { lockA(); curP().p[track][fbSmpIdx] = (uint8_t)fbOrig; unlockA(); }   // Vorhoeren zuruecknehmen
     if (fbMode == FB_SAMPLE && sampleName(PREVIEW_SLOT)[0]) poolSetSlot(PREVIEW_SLOT, "");   // Speicher des Vorhoer-Platzes freigeben
     fbOpen = false;
 }
@@ -359,12 +364,13 @@ static void fbPick() {
         fbClose(false);
         break;
     case FB_SAMPLE: {
-        lockA(); curP().p[track][P_S0] = (uint8_t)fbOrig; unlockA();   // Vorhoer-Platz nicht stehen lassen
+        lockA(); curP().p[track][fbSmpIdx] = (uint8_t)fbOrig; unlockA();   // Vorhoer-Platz nicht stehen lassen
         int sl = poolAssign(libName(e.idx));
         if (sl < 0) return;   // Pool voll oder Datei nicht lesbar (Meldung kommt von poolAssign)
         lockA();
-        if (aHeld || lockLatch) { holdS().lock[P_S0] = (uint8_t)sl; aEdited = true; }
-        else curP().p[track][P_S0] = (uint8_t)sl;
+        if (aHeld || lockLatch) { holdS().lock[fbSmpIdx] = (uint8_t)sl; aEdited = true; }
+        else curP().p[track][fbSmpIdx] = (uint8_t)sl;
+        if (fbSmpIdx == P_X3 && curP().machine[track] == M_WTBL) curP().p[track][P_S0] = 4;   // eigene Wavetable gewaehlt -> TABL = USER
         unlockA();
         fbClose(false);
         toast("%s%s", aHeld || lockLatch ? "LOCK: " : "", libName(e.idx));
@@ -397,7 +403,7 @@ static void fbPreview() {
             if (strcmp(sampleName(PREVIEW_SLOT), n) && !poolSetSlot(PREVIEW_SLOT, n)) { toast(TR("NICHT LESBAR: %s", "CANNOT READ: %s"), sampleLastError()); return; }
             sl = PREVIEW_SLOT;
         }
-        lockA(); curP().p[track][P_S0] = (uint8_t)sl; eng.preview(track, nullptr); unlockA();
+        lockA(); curP().p[track][fbSmpIdx] = (uint8_t)sl; eng.preview(track, nullptr); unlockA();
     }
 }
 static void fbInput(Input& I, Uint32 now) {

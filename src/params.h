@@ -219,7 +219,7 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
     {{"WAV1", K_WAVE, 0, 3}, {"WAV2", K_WAVE, 0, 3}, {"DETN", K_BIP, 72, 127}, {"MIX", K_NUM, 64, 127},
      {"SUB", K_NUM, 0, 127}, {"NOIS", K_NUM, 0, 127}, {"PW", K_NUM, 64, 127}, {"GLID", K_NUM, 0, 127}},
     // FM (4 Operatoren): Algorithmus, Feedback (OP4), Frequenzverhaeltnisse
-    {{"ALGO", K_ALGO, 0, 7}, {"FBK", K_NUM, 0, 127}, {"VELO", K_NUM, 64, 127}, {"P.ENV", K_BIP, 64, 127},
+    {{"ALGO", K_ALGO, 0, 7}, {"FBK", K_NUM, 0, 127}, {"VELO", K_NUM, 64, 127}, {"PITCH", K_BIP, 64, 127},
      {"P.DEC", K_NUM, 40, 127}, {"NOIS", K_NUM, 0, 127}, PDEF_NONE, PDEF_NONE},
     // SAMPLE (END < STRT = rueckwaerts)
     {{"SMPL", K_SMPL, 0, 249}, {"TUNE", K_SEMI, 24, 48}, {"FINE", K_BIP, 64, 127}, {"STRT", K_NUM, 0, 127},
@@ -270,16 +270,18 @@ static const ParamDef SRC2_DEFS[M_COUNT][8] = {
 };
 // FM-Operatoren 1-4: Ratio (Tabelle FM_RATIOS), FINE = +-0,5 Ratio, DETN = +-50 Cent, Pegel, eigene Huellkurve
 static const ParamDef FM_OP_DEFS[4][8] = {
-    {{"RATIO", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 127, 127},
-     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 70, 127}, {"SUS", K_NUM, 110, 127}, {"REL", K_NUM, 55, 127}},
-    {{"RATIO", K_RATIO, 7, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 55, 127},
-     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 60, 127}, {"SUS", K_NUM, 40, 127}, {"REL", K_NUM, 50, 127}},
-    {{"RATIO", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 0, 127},
-     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 55, 127}, {"SUS", K_NUM, 30, 127}, {"REL", K_NUM, 50, 127}},
-    {{"RATIO", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 0, 127},
-     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 50, 127}, {"SUS", K_NUM, 20, 127}, {"REL", K_NUM, 50, 127}}};
+    {{"RAT", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"O.LVL", K_NUM, 127, 127},
+     {"O.ATK", K_NUM, 0, 127}, {"O.DEC", K_NUM, 70, 127}, {"O.SUS", K_NUM, 110, 127}, {"O.REL", K_NUM, 55, 127}},
+    {{"RAT", K_RATIO, 7, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"O.LVL", K_NUM, 55, 127},
+     {"O.ATK", K_NUM, 0, 127}, {"O.DEC", K_NUM, 60, 127}, {"O.SUS", K_NUM, 40, 127}, {"O.REL", K_NUM, 50, 127}},
+    {{"RAT", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"O.LVL", K_NUM, 0, 127},
+     {"O.ATK", K_NUM, 0, 127}, {"O.DEC", K_NUM, 55, 127}, {"O.SUS", K_NUM, 30, 127}, {"O.REL", K_NUM, 50, 127}},
+    {{"RAT", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"O.LVL", K_NUM, 0, 127},
+     {"O.ATK", K_NUM, 0, 127}, {"O.DEC", K_NUM, 50, 127}, {"O.SUS", K_NUM, 20, 127}, {"O.REL", K_NUM, 50, 127}}};
 inline bool machineHasSrc2(int m) { return m == M_FM || m == M_SYNTH || m == M_WTBL; }
 inline bool machineHasSrc35(int m) { return m == M_FM; }   // Klangseiten 3-5 (FM: Operator 2-4)
+// Parameter, der ein Sample aus dem Pool waehlt (SMPL/CHOP/GRAN: SMPL, WTBL: UWAV = eigene Wavetable), sonst -1
+inline int machineSampleParam(int m) { return (m == M_SAMPLE || m == M_CHOP || m == M_GRAN) ? P_S0 : (m == M_WTBL ? P_X3 : -1); }
 
 // Effekt-Busse A/B/C: TYPE, 5 Regler je nach Typ, FWD (Anteil an den naechsten Bus), LVL (Rueckweg)
 enum BusType { BF_OFF, BF_DELAY, BF_TAPE, BF_REVERB, BF_SPRING, BF_CHORUS, BF_COUNT };

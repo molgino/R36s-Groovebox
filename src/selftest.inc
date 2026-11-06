@@ -277,8 +277,8 @@ static void uiScenarios() {
     tap(BT_L1); UCHECK(slot == 0, "L1: Regler 1 erwartet (Regler %d)", slot + 1);
     tap(BT_L2); UCHECK(page == PG_LFO3, "L2 von TRIG: Ring -> LFO3 erwartet (Seite %d)", page);
     tap(BT_SELECT); UCHECK(menuOpen, "SELECT oeffnet die Seitenkarte nicht");
-    tap(BT_UP); tap(BT_RIGHT); tap(BT_RIGHT);   // LFO3 -> Klang-Zeile -> ...
-    { int r, c; mapPos(menuSel, r, c); UCHECK(r == 1, "Karte: Steuerkreuz runter erreicht die Klang-Zeile nicht (Zeile %d)", r); }
+    tap(BT_DOWN); tap(BT_RIGHT);   // LFO3 (Zeile Sequenz + Modulation) -> Zeile Quelle
+    { int r, c; mapPos(menuSel, r, c); UCHECK(r == 1, "Karte: Steuerkreuz runter erreicht die Quell-Zeile nicht (Zeile %d)", r); }
     tap(BT_A); UCHECK(!menuOpen && trackPage(page), "Karte: A oeffnet keine Spurseite");
     page = PG_TRG; slot = 0; simWait(32);
     flickL(1, 0); UCHECK(slot == 1, "Linker Stick: Kachel %d statt 1", slot);
@@ -347,6 +347,67 @@ static void uiScenarios() {
     tap(BT_R2); UCHECK(page != PG_SONG, "R2 verlaesst die Song-Seite nicht");
     page = PG_SONG; simWait(50);
     tap(BT_L2); UCHECK(page != PG_SONG, "L2 verlaesst die Song-Seite nicht");
+
+    uiCase = "FM-Operatoren";
+    {
+        simReset(); goTrack(5);
+        lockA(); applyFactory(curP(), 5, factoryByName("DX E-PIANO")); unlockA();
+        goPage(PG_SRC3);
+        UCHECK(page == PG_SRC3 && !strcmp(pageLong(page), "OPERATOR 2"), "FM: Operator-2-Seite nicht erreichbar (Seite %d)", page);
+        slot = OP_LVL; int l0 = curP().p[5][FM_OPB[1] + OP_LVL];
+        tap(BT_X); UCHECK(curP().p[5][FM_OPB[1] + OP_LVL] == l0 + 1, "FM: X aendert O.LVL nicht");
+        tap(BT_R1); UCHECK(slot == OP_ATK, "FM: R1 -> O.ATK erwartet (Regler %d)", slot + 1);
+        goPage(PG_SRC5); UCHECK(page == PG_SRC5, "FM: Operator 4 nicht erreichbar");
+        lockA(); Engine::setMachine(curP(), 5, M_KICK); unlockA(); simWait(2);
+        UCHECK(page != PG_SRC5 && !pageAvail(PG_SRC3), "Operator-Seiten bei KICK noch sichtbar");
+        lockA(); Engine::setMachine(curP(), 5, M_FM); unlockA();
+    }
+
+    uiCase = "SYNTH-Oszillatoren";
+    {
+        simReset(); goTrack(4);
+        lockA(); Engine::setMachine(curP(), 4, M_SYNTH); unlockA();
+        goPage(PG_SRC2);
+        UCHECK(page == PG_SRC2 && curP().p[4][P_X0] == 3 && curP().p[4][P_X2] == 127, "SYNTH-Seite 2 fehlt oder falsche Grundwerte");
+        slot = 1; tap(BT_X);
+        UCHECK(curP().p[4][P_X1] == 4, "OCT2 +1 nicht gesetzt (%d)", curP().p[4][P_X1]);
+    }
+
+    uiCase = "Effekt-Bus";
+    {
+        simReset(); goPage(PG_FXB);
+        UCHECK(page == PG_FXB, "Bus B nicht erreichbar (Seite %d)", page);
+        int t0 = eng.proj.bus[1][BX_TYPE];
+        slot = BX_TYPE; tap(BT_X);
+        UCHECK(eng.proj.bus[1][BX_TYPE] == (t0 + 1 < BF_COUNT ? t0 + 1 : t0), "Bus-Typ wechselt nicht");
+        UCHECK(eng.proj.bus[1][BX_P1] == busDef(1, eng.proj.bus[1][BX_TYPE], BX_P1).def, "Typwechsel setzt die Regler nicht auf Grundwerte");
+        lockA(); Engine::setBusType(eng.proj, 1, BF_REVERB); unlockA();
+    }
+
+    uiCase = "Wavetable-Editor";
+    {
+        simReset(); goTrack(6);
+        lockA(); Engine::setMachine(curP(), 6, M_WTBL); unlockA();
+        goPage(PG_SRC2); slot = 4;   // DRAW
+        tap(BT_X);
+        UCHECK(wteOpen && curP().p[6][P_S0] == 4 && curP().p[6][P_X3] == PREVIEW_SLOT && sampleGet(PREVIEW_SLOT), "X auf DRAW oeffnet keinen Editor mit Vorhoeren");
+        tap(BT_A); for (int i = 0; i < 3; i++) tap(BT_DOWN); tap(BT_A);   // Werkzeug RECHTECK
+        UCHECK(wtePts[0][0] > 0.8f && wtePts[0][40] < -0.8f, "Werkzeug Rechteck wirkt nicht");
+        tap(BT_R1); tap(BT_RIGHT); tap(BT_UP); tap(BT_UP);
+        UCHECK(wteKey == 1 && wteCur == 1, "Welle/Punkt-Wahl falsch (%d/%d)", wteKey, wteCur);
+        tap(BT_START);
+        int sl = curP().p[6][P_X3];
+        UCHECK(!wteOpen && curP().p[6][P_S0] == 4 && sl != PREVIEW_SLOT && sampleGet(sl) && !strncmp(sampleName(sl), "wavetables/draw-", 16),
+               "START speichert/weist nicht zu (Platz %d, '%s')", sl, sampleName(sl));
+        if (sampleGet(sl)) UCHECK(sampleGet(sl)->len == WTE_FR * WTE_F, "Wavetable-Laenge %d", sampleGet(sl)->len);
+        char wp[800]; snprintf(wp, sizeof wp, "%ssamples/%s.wav", basePath, sampleName(sl));
+        lockA(); eng.preview(6, nullptr); unlockA();
+        float tmp[512 * 2]; float pk = 0; for (int k = 0; k < 20; k++) { lockA(); eng.render(tmp, 512); unlockA(); for (int i = 0; i < 1024; i++) pk = fmaxf(pk, fabsf(tmp[i])); }
+        UCHECK(pk > 0.01f, "WTBL mit eigener Wavetable bleibt still (%.4f)", pk);
+        tap(BT_X); tap(BT_B);   // Editor erneut, Abbruch stellt die gespeicherte Tabelle wieder her
+        UCHECK(!wteOpen && curP().p[6][P_X3] == sl, "Abbruch stellt UWAV nicht wieder her");
+        remove(wp); reloadSamples();
+    }
 
     uiCase = "Song-Export";
     {
@@ -803,6 +864,9 @@ static void langCheck() {
     for (int m = KB_SAVEAS; m <= KB_PSAVE; m++) { openKeyboard(m, "x"); drawAll(false); kbOpen = false; }
     fbParam = P_L1 + LF_DEST;
     for (int m = FB_SAMPLE; m <= FB_MACH; m++) { openBrowser(m); drawAll(false); if (m == FB_LDEST && fbN > 1) { fbSel = 1; fbPick(); drawAll(false); } fbClose(true); }
+    { int ot = track; track = 6; lockA(); Engine::setMachine(curP(), 6, M_WTBL); unlockA(); openWtEditor(); drawAll(false); wteMenu = true; drawAll(false); wteMenu = false; wteClose(false); track = ot; }
+    for (int b = 0; b < NBUS; b++) for (int ty = 0; ty < BF_COUNT; ty++) { lockA(); Engine::setBusType(eng.proj, b, ty); unlockA(); page = b == 0 ? PG_FX : (b == 1 ? PG_FXB : PG_FXC); for (int k = 0; k < 8; k++) { slot = k; drawAll(false); } }
+    { int ot = track; track = 5; lockA(); Engine::setMachine(curP(), 5, M_FM); unlockA(); for (int pg = PG_SRC3; pg <= PG_SRC5; pg++) { page = pg; drawAll(false); } page = PG_SRC2; drawAll(false); track = ot; }
     eng.recording = true; drawAll(false); eng.recording = false;
     textHook = nullptr; g_lang = saveLang;
     int bad = 0;

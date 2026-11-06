@@ -162,8 +162,8 @@ void FxBus::process(const float* in, float* outL, float* outR, int n, const uint
                 fdn[k][fdnPos[k]] = o[k] * nrm + x * ((k & 1) ? -0.5f : 0.5f);
                 if (++fdnPos[k] >= fdnLen[k]) fdnPos[k] = 0;
             }
-            float l = (fdnLp[0] - fdnLp[2] + fdnLp[4] - fdnLp[6]) * 0.42f;
-            float r = (fdnLp[1] - fdnLp[3] + fdnLp[5] - fdnLp[7]) * 0.42f;
+            float l = (fdnLp[0] - fdnLp[2] + fdnLp[4] - fdnLp[6]) * 0.66f;   // Pegel wie die anderen Bus-Effekte (~ -6 dB)
+            float r = (fdnLp[1] - fdnLp[3] + fdnLp[5] - fdnLp[7]) * 0.66f;
             float m = (l + r) * 0.5f;
             outL[i] = (m + (l - m) * wid) * lvl; outR[i] = (m + (r - m) * wid) * lvl;
         }

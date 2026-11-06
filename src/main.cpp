@@ -725,6 +725,20 @@ static void pageRing(int p, const int*& r, int& n) {
     for (int i = 0; i < 4; i++) if (RING_PRJ[i] == p) { r = RING_PRJ; n = 4; return; }
     r = RING_TRK; n = RING_TRK_N;
 }
+// Seitentitel je Engine (FM: Operatoren, SYNTH/WTBL: Oszillatoren)
+static const char* pageLong(int p) {
+    int m = curP().machine[track];
+    if (m == M_FM) {
+        if (p == PG_SRC) return TR("FM: ALGORITHMUS", "FM: ALGORITHM");
+        if (p == PG_SRC2) return "OPERATOR 1";
+        if (p == PG_SRC3) return "OPERATOR 2";
+        if (p == PG_SRC4) return "OPERATOR 3";
+        if (p == PG_SRC5) return "OPERATOR 4";
+    }
+    if (p == PG_SRC2 && m == M_SYNTH) return TR("OSZILLATOREN", "OSCILLATORS");
+    if (p == PG_SRC2 && m == M_WTBL) return TR("OSZILLATOR + EIGENE WAVETABLE", "OSCILLATOR + USER WAVETABLE");
+    return PAGE_LONG[p];
+}
 static void gotoPage(int dir) {
     const int* r; int n; pageRing(page, r, n);
     int cur = 0; for (int i = 0; i < n; i++) if (r[i] == page) cur = i;
@@ -829,7 +843,7 @@ static void drawHeader() {
         text(310, 2, b, C_DIM);
     }
     if (trackPage(page)) {   // Signalweg-Oberflaeche: Pfad statt Reiter
-        snprintf(b, sizeof b, TR("SPUR %d > %s", "TRACK %d > %s"), track + 1, PAGE_LONG[page]);
+        snprintf(b, sizeof b, TR("SPUR %d > %s", "TRACK %d > %s"), track + 1, pageLong(page));
         text(334, 4, b, C_TEXT);
     } else
     {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
@@ -1929,6 +1943,7 @@ static int graphKind(int row) {
     if (page == PG_SEQ && row == 0) return 7;
     if (page == PG_ARP && row == 0) return 13;
     if (page == PG_FLT2 && row == 0) return 12;
+    if (busOfPage(page) >= 0 && row == 0) return 15;   // Effekt-Bus: Signalfluss + Erklaerung
     return 0;
 }
 static int pv(int idx) {   // Wert (inkl. Lock beim Halten) eines Spurparameters
@@ -1989,9 +2004,9 @@ static void drawMixer(int ox) {
 static const char* sigName(int p);
 static void sigSummary(int p, char* b, int n);
 static const int MAP_ROWS[5][6] = {
-    {PG_TRG, PG_SEQ, PG_ARP, -1, -1, -1},
-    {PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS},
-    {PG_LFO1, PG_LFO2, PG_LFO3, -1, -1, -1},
+    {PG_TRG, PG_SEQ, PG_ARP, PG_LFO1, PG_LFO2, PG_LFO3},
+    {PG_SRC, PG_SRC2, PG_SRC3, PG_SRC4, PG_SRC5, -1},
+    {PG_FLT, PG_FLT2, PG_AMP, PG_INS, PG_SEND, -1},
     {PG_LIVE, PG_MIX, PG_FX, PG_FXB, PG_FXC, PG_CMP},
     {PG_SONG, PG_PRJ, PG_MST, PG_SYS, -1, -1}};
 static const char* const PAGE_DESC_DE[NUI_PAGES] = {
@@ -2051,11 +2066,18 @@ static const char* const PAGE_DESC_EN[NUI_PAGES] = {
 #define PAGE_DESC (g_lang ? PAGE_DESC_EN : PAGE_DESC_DE)
 static void mapPos(int p, int& r, int& c) { r = c = 0; for (int i = 0; i < 5; i++) for (int k = 0; k < 6; k++) if (MAP_ROWS[i][k] == p) { r = i; c = k; } }
 static int mapCols(int r) { int n = 0; while (n < 6 && MAP_ROWS[r][n] >= 0) n++; return n; }
-static void mapBox(int r, int c, int& x, int& y, int& w, int& h) {   // Spur-Zeilen: Raster mit 6 Spalten, untere Zeilen: 4 breite Felder
+static void mapBox(int r, int c, int& x, int& y, int& w, int& h) {   // Raster mit 6 Spalten
     static const int RY[5] = {82, 148, 214, 290, 356};
     h = 42; y = RY[r];
-    if (r <= 2) { w = 88; x = 26 + c * (w + 12); }
-    else { w = 136; x = 26 + c * (w + 12); }
+    w = 88; x = 26 + c * (w + 12);
+}
+static const char* mapName(int p) {   // kurze Namen der globalen Seiten (88 px)
+    switch (p) {
+    case PG_LIVE: return "LIVE"; case PG_MIX: return "MIXER"; case PG_FX: return "FX A"; case PG_FXB: return "FX B"; case PG_FXC: return "FX C";
+    case PG_CMP: return TR("KOMPR.", "COMP"); case PG_SONG: return "SONG"; case PG_PRJ: return TR("PROJEKT", "PROJECT"); case PG_MST: return "MASTER";
+    case PG_SYS: return TR("SETUP", "SETUP");
+    }
+    return PAGE_NAMES[p];
 }
 static void mapSummary(int p, char* b, int n) {
     if (trackPage(p)) { sigSummary(p, b, n); return; }
@@ -2067,11 +2089,12 @@ static void mapSummary(int p, char* b, int n) {
     case PG_SONG: snprintf(b, n, TR("%d ZEILEN%s", "%d ROWS%s"), eng.proj.songLen, eng.songOn ? TR("  AN", "  ON") : ""); break;
     case PG_PRJ: snprintf(b, n, "%.15s", cfg.project); break;
     case PG_MST: snprintf(b, n, "%d BPM", eng.proj.bpm); break;
-    case PG_SYS: snprintf(b, n, TR("AUDIO  USB  SYSTEM", "AUDIO  USB  SYSTEM")); break;
+    case PG_SYS: snprintf(b, n, TR("AUDIO, USB", "AUDIO, USB")); break;
     default: b[0] = 0;
     }
 }
 static void drawExportModal();
+static void drawWtEditorIfOpen();
 static void drawMenu() {
     rrect(10, 30, 620, 420, 14, C_ACC);
     rrect(12, 32, 616, 416, 13, C_BG);
@@ -2080,8 +2103,8 @@ static void drawMenu() {
     Col tc = TCOL[track];
     snprintf(b, sizeof b, TR("SPUR %d - %s - P%02d", "TRACK %d - %s - P%02d"), track + 1, MACHINE_NAMES[curP().machine[track] % M_COUNT], curPi() + 1);
     text(26, 46, b, tc);
-    static const char* const RL_DE[5] = {"SEQUENZ", "KLANG (SIGNALWEG)", "MODULATION", "LIVE, MIX & FX", "PROJEKT"};
-    static const char* const RL_EN[5] = {"SEQUENCE", "SOUND (SIGNAL PATH)", "MODULATION", "LIVE, MIX & FX", "PROJECT"};
+    static const char* const RL_DE[5] = {"SEQUENZ + MODULATION", "QUELLE", "KLANGWEG", "LIVE, MIX & EFFEKT-BUSSE", "PROJEKT"};
+    static const char* const RL_EN[5] = {"SEQUENCE + MODULATION", "SOURCE", "SOUND PATH", "LIVE, MIX & EFFECT BUSES", "PROJECT"};
     for (int r = 0; r < 5; r++) {
         int x, y, w, h; mapBox(r, 0, x, y, w, h);
         text(26, y - 15, g_lang ? RL_EN[r] : RL_DE[r], r <= 2 ? dimC(tc, 0.85f) : C_DIM);
@@ -2090,15 +2113,16 @@ static void drawMenu() {
             int p = MAP_ROWS[r][c];
             mapBox(r, c, x, y, w, h);
             bool av = pageAvail(p), sel = p == menuSel, cur = p == page;
-            if (r == 1 && c > 0) {   // Pfeil im Signalweg
+            if (!av) continue;   // Seite gibt es bei dieser Engine nicht
+            if ((r == 1 || r == 2) && c > 0) {   // Pfeil im Signalweg
                 Col ac = av ? tc : C_OFF2;
                 fill(x - 11, y + h / 2, 9, 2, ac); fill(x - 5, y + h / 2 - 2, 2, 6, ac); fill(x - 4, y + h / 2 - 1, 2, 4, ac);
             }
             Col bg = sel ? (r <= 2 ? tc : C_ACC) : (cur ? C_SEL : C_PANEL);
             rrect(x, y, w, h, 7, av ? bg : C_BG);
             if (cur && !sel) { Col fc = r <= 2 ? tc : C_ACC; rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); }
-            if (!av) { rrect(x, y, w, h, 7, C_DARK); text(x + 8, y + 5, r <= 2 ? sigName(p) : PAGE_LONG[p], C_OFF2); continue; }
-            const char* nm = r <= 2 ? sigName(p) : PAGE_LONG[p];
+            if (!av) { rrect(x, y, w, h, 7, C_DARK); text(x + 8, y + 5, r <= 2 ? sigName(p) : mapName(p), C_OFF2); continue; }
+            const char* nm = r <= 2 ? sigName(p) : mapName(p);
             text(x + 8, y + 5, nm, sel ? C_BG : (cur ? (r <= 2 ? tc : C_ACC) : C_TEXT));
             mapSummary(p, b, sizeof b);
             char sb[40]; snprintf(sb, sizeof sb, "%.*s", (w - 14) / FONT_W, b);
@@ -2154,6 +2178,35 @@ static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
         int op = fmOpPage(page);
         fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, op >= 0 ? op : (selRel == 0 ? 4 : -1), &v, tc);
     } break;
+    case 15: {   // Effekt-Bus: Spuren -> Bus -> (naechster Bus) -> Summe, Pegel, Erklaerung des Reglers
+        int b = busOfPage(page);
+        const uint8_t* bp = eng.proj.bus[b];
+        graphBox(gx, gy, gw, gh);
+        Col bc = C_ACC;
+        int ns = 0; for (int t = 0; t < NTRACKS; t++) if (curP().p[t][b == 0 ? P_DLY : (b == 1 ? P_REV : P_SNDC)] > 0) ns++;
+        char ib[96];
+        snprintf(ib, sizeof ib, TR("%d SPUREN", "%d TRACKS"), ns);
+        int y = gy + 10;
+        rrect(gx + 10, y, 92, 22, 5, C_PANEL); textC(gx + 56, y + 3, ib, ns ? C_TEXT : C_DIM);
+        fill(gx + 104, y + 10, 24, 2, bc);
+        snprintf(ib, sizeof ib, "BUS %c: %s", 'A' + b, BUS_TYPE_NAMES[bp[BX_TYPE] % BF_COUNT]);
+        int bw = textW(ib) + 20;
+        rrect(gx + 130, y - 2, bw, 26, 6, bp[BX_TYPE] ? bc : C_OFF2); text(gx + 140, y + 3, ib, bp[BX_TYPE] ? C_BG : C_TEXT);
+        int xo = gx + 130 + bw;
+        fill(xo, y + 10, 24, 2, bc);
+        rrect(xo + 26, y, 70, 22, 5, C_PANEL); textC(xo + 61, y + 3, TR("SUMME", "MIX"), C_TEXT);
+        if (b < NBUS - 1 && bp[BX_FWD] > 0) {   // Weiterleitung
+            fill(xo + 8, y + 12, 2, 18, bc);
+            snprintf(ib, sizeof ib, "> BUS %c (%d)", 'B' + b, bp[BX_FWD]); text(xo + 14, y + 22, ib, bc);
+        }
+        float pk = eng.bus[b].peak; int mw = clampi((int)(sqrtf(pk) * 120), 0, 120);
+        fill(gx + gw - 136, y + 4, 120, 6, C_OFF2); if (mw) fill(gx + gw - 136, y + 4, mw, 6, C_GREEN);
+        ParamDef hd; int hv, hb; bool hl; char hlab[24];
+        if (knobInfo(slot, hd, hv, hl, hb, hlab, sizeof hlab) && hd.kind != K_NONE) {
+            const char* ht = busHelp(bp[BX_TYPE] % BF_COUNT, hd.name);
+            if (*ht) { snprintf(ib, sizeof ib, "%s: %s", hd.name, ht); text(gx + 10, gy + gh - 20, ib, C_TEXT); }
+        }
+    } break;
     case 14: {   // FM-Operator: Huellkurve + Kurzinfo
         int op = fmOpPage(page), b = FM_OPB[op < 0 ? 0 : op];
         envShapeK = 1.f;
@@ -2166,7 +2219,7 @@ static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
         int tgt = 0; for (int k = 0; k < 4; k++) if (FM_MODS[algo][k] >> op & 1) tgt |= 1 << k;
         if (car) snprintf(ib, sizeof ib, TR("OP%d  x%.3g  %+d CENT  TRÄGER (HÖRBAR)", "OP%d  x%.3g  %+d CENT  CARRIER (AUDIBLE)"), op + 1, r, cents);
         else snprintf(ib, sizeof ib, TR("OP%d  x%.3g  %+d CENT  MODULIERT OP%d", "OP%d  x%.3g  %+d CENT  MODULATES OP%d"), op + 1, r, cents, tgt ? __builtin_ctz(tgt) + 1 : 0);
-        text(gx + 8, gy + 4, ib, car ? tc : C_TEXT);
+        text(gx + gw - 8 - textW(ib), gy + gh - 18, ib, car ? tc : C_TEXT);
         if (v.active && v.machine == M_FM && op >= 0) { int lh = (int)((gh - 8) * v.fmEnv[op]); fill(gx + gw - 8, gy + gh - 4 - lh, 4, lh, tc); }
     } break;
     case 7: seqGraph(gx, gy, gw, gh, selRel, tc); break;
@@ -2440,7 +2493,11 @@ static const int SIG_CHAIN[] = {PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS
 static const int SIG_MOD[] = {PG_TRG, PG_SEQ, PG_ARP, PG_LFO1, PG_LFO2, PG_LFO3};
 static const int SIG_NCH = 6, SIG_NMOD = 6;
 static const char* sigName(int p) {
+    int m = curP().machine[track];
+    if (m == M_FM) switch (p) { case PG_SRC: return "FM"; case PG_SRC2: return "OP 1"; case PG_SRC3: return "OP 2"; case PG_SRC4: return "OP 3"; case PG_SRC5: return "OP 4"; }
+    if (p == PG_SRC2 && (m == M_SYNTH || m == M_WTBL)) return "OSC";
     switch (p) {
+    case PG_SEND: return "SENDS";
     case PG_SRC: return TR("QUELLE", "SOURCE"); case PG_SRC2: return TR("QUELLE 2", "SOURCE 2"); case PG_FLT: return "FILTER 1"; case PG_FLT2: return "FILTER 2";
     case PG_AMP: return "AMP"; case PG_INS: return "INSERT"; case PG_TRG: return "TRIG"; case PG_SEQ: return "SEQ";
     case PG_ARP: return "ARP"; case PG_LFO1: return "LFO1"; case PG_LFO2: return "LFO2"; case PG_LFO3: return "LFO3";
@@ -2453,7 +2510,14 @@ static void sigSummary(int p, char* b, int n) {
     char v[24];
     switch (p) {
     case PG_SRC: snprintf(b, n, "%s", MACHINE_NAMES[P.machine[track] % M_COUNT]); break;
-    case PG_SRC2: snprintf(b, n, TR("MEHR", "MORE")); break;
+    case PG_SRC2: case PG_SRC3: case PG_SRC4: case PG_SRC5: {
+        int m = P.machine[track] % M_COUNT;
+        if (m == M_FM) { int op = p == PG_SRC2 ? 0 : p - PG_SRC3 + 1; snprintf(b, n, "x%.3g", FM_RATIOS[q[FM_OPB[op] + OP_RAT] % FM_NRAT]); }
+        else if (m == M_SYNTH) snprintf(b, n, "%+d/%+d", q[P_X0] - 3, q[P_X1] - 3);
+        else if (m == M_WTBL) snprintf(b, n, "%s", q[P_S0] % 5 == 4 ? "USER" : "OCT");
+        else snprintf(b, n, TR("MEHR", "MORE"));
+    } break;
+    case PG_SEND: snprintf(b, n, "%d/%d/%d", q[P_DLY], q[P_REV], q[P_SNDC]); break;
     case PG_FLT: knobText(COMMON_DEFS[P_FTYP], q[P_FTYP], v, sizeof v); snprintf(b, n, "%s %d", v, q[P_FREQ]); break;
     case PG_FLT2: snprintf(b, n, "%s", q[P_BASE] > 0 || q[P_WDTH] < 127 ? TR("AN", "ON") : TR("AUS", "OFF")); break;
     case PG_AMP: snprintf(b, n, "VOL %d", q[P_VOL]); break;
@@ -2461,11 +2525,12 @@ static void sigSummary(int p, char* b, int n) {
     case PG_TRG: fmtParam(COMMON_DEFS[P_NOTE], q[P_NOTE], v, sizeof v); snprintf(b, n, "%s", v); break;
     case PG_SEQ: snprintf(b, n, "%d STEPS", P.len[track]); break;
     case PG_ARP: snprintf(b, n, "%s", ARP_MODES[q[P_AMOD] % 6]); break;
-    default: {
+    case PG_LFO1: case PG_LFO2: case PG_LFO3: {
         int k = p - PG_LFO1, dst = q[LFO_BASE[k] + 2];
         if (dst > 0 && q[LFO_BASE[k] + 3] != 64) snprintf(b, n, ">%.5s", paramDef(P.machine[track], dst - 1).name);
         else snprintf(b, n, "-");
-    }
+    } break;
+    default: b[0] = 0;
     }
 }
 // kompakte Kachel: Name, Wert, Balken
@@ -2523,66 +2588,56 @@ static void drawSigB() {
         fill(x + 6, y + 36, w - 12, 2, C_OFF);
         if (mw) fill(x + 6, y + 36, mw, 2, meterV[t] > 0.9f ? C_TRIG : C_GREEN);
     }
-    // --- Signalweg
+    // --- Signalweg: Spalten SEQUENZ | QUELLE -> FILTER -> AMP -> INSERT | MOD (LFO 1-3 untereinander)
     int X0 = 118, W = 518;
     snprintf(b, sizeof b, TR("SIGNALWEG  SPUR %d", "SIGNAL PATH  TRACK %d"), track + 1);
     text(X0, 44, b, C_DIM);
     { const char* lh = TR("L2/R2 = SEITE  SELECT = KARTE", "L2/R2 = PAGE  SELECT = MAP"); text(X0 + W - textW(lh), 44, lh, dimC(C_ACC, 0.8f)); }
-    // Spalten: zusammengehoerige Seiten untereinander (QUELLE/QUELLE 2, FILTER 1/FILTER 2)
-    static const int COLS[4][2] = {{PG_SRC, PG_SRC2}, {PG_FLT, PG_FLT2}, {PG_AMP, -1}, {PG_INS, -1}};
-    int gap = 14, bw = (W - gap * 3) / 4;
-    for (int ci = 0; ci < 4; ci++) {
-        int x = X0 + ci * (bw + gap), y = 62;
-        int n = 0, items[2];
-        for (int k = 0; k < 2; k++) if (COLS[ci][k] >= 0 && pageAvail(COLS[ci][k])) items[n++] = COLS[ci][k];
-        if (ci) fill(x - gap, y + 20, gap, 2, tc);
-        int ih = n == 2 ? 20 : 42;
-        for (int k = 0; k < n; k++) {
-            int p = items[k], yy = y + k * 22;
-            bool sel = p == page;
-            rrect(x, yy, bw, ih, 5, sel ? C_SEL : C_PANEL);
-            if (sel) { rrect(x, yy, bw, 2, 1, tc); rrect(x, yy + ih - 2, bw, 2, 1, tc); rrect(x, yy, 2, ih, 1, tc); rrect(x + bw - 2, yy, 2, ih, 1, tc); }
-            sigSummary(p, b, sizeof b);
-            char sb[40];
-            if (n == 2) {   // eine Zeile: Name + Kurzinfo
-                snprintf(sb, sizeof sb, "%s", sigName(p));
-                text(x + 6, yy + 2, sb, sel ? tc : C_TEXT);
-                char vb[24]; snprintf(vb, sizeof vb, "%.*s", (bw - 16 - textW(sb)) / FONT_W > 0 ? (bw - 16 - textW(sb)) / FONT_W : 0, b);
-                text(x + bw - 6 - textW(vb), yy + 2, vb, C_DIM);
-            } else {
-                text(x + 6, yy + 3, sigName(p), sel ? tc : C_TEXT);
-                snprintf(sb, sizeof sb, "%.*s", (bw - 10) / FONT_W, b);
-                text(x + 6, yy + 21, sb, C_DIM);
+    {
+        int m = P.machine[track] % M_COUNT;
+        // QUELLE-Spalte: Quelle + 2. Seite; FM: Operator der gerade gewaehlten bzw. zuletzt besuchten Seite
+        static int lastOp = PG_SRC2;
+        if (page == PG_SRC2 || page == PG_SRC3 || page == PG_SRC4 || page == PG_SRC5) lastOp = page;
+        int opPage = m == M_FM ? lastOp : PG_SRC2;
+        const int COLS[6][3] = {{PG_TRG, PG_SEQ, PG_ARP}, {PG_SRC, opPage, -1}, {PG_FLT, PG_FLT2, -1}, {PG_AMP, PG_SEND, -1}, {PG_INS, -1, -1}, {PG_LFO1, PG_LFO2, PG_LFO3}};
+        int gap = 8, cw = (W - gap * 5) / 6, rowH = 21, y0 = 60;
+        for (int c = 0; c < 6; c++) {
+            int x = X0 + c * (cw + gap);
+            if (c >= 2 && c <= 4) { fill(x - gap, y0 + 9, gap, 2, tc); fill(x - 3, y0 + 7, 1, 6, tc); }   // Pfeile im Klangweg
+            bool side = c == 0 || c == 5;
+            for (int r = 0; r < 3; r++) {
+                int p = COLS[c][r];
+                if (p < 0 || !pageAvail(p)) continue;
+                int y = y0 + r * (rowH + 1);
+                bool sel = p == page || (c == 1 && r == 1 && m == M_FM && (page == PG_SRC2 || page == PG_SRC3 || page == PG_SRC4 || page == PG_SRC5));
+                rrect(x, y, cw, rowH - 1, 4, sel ? tc : (side ? C_BG : C_PANEL));
+                char nm[24], sm[24], cb[40];
+                snprintf(nm, sizeof nm, "%s", sigName(sel && c == 1 && r == 1 ? page : p));
+                sigSummary(sel && c == 1 && r == 1 ? page : p, sm, sizeof sm);
+                int maxc = (cw - 8) / FONT_W;
+                snprintf(cb, sizeof cb, "%s", nm);
+                int room = maxc - (int)strlen(cb) - 1;
+                if (room >= 2 && sm[0] && strcmp(sm, nm)) { size_t l = strlen(cb); snprintf(cb + l, sizeof cb - l, " %.*s", room, sm); }
+                cb[maxc > 0 ? maxc : 0] = 0;
+                text(x + 4, y + 1, cb, sel ? C_BG : (side ? C_DIM : C_TEXT));
             }
         }
-    }
-    // --- Modulation / Sequenz
-    text(X0, 108, "SEQ", C_DIM);
-    int x = X0 + 34;
-    for (int i = 0; i < SIG_NMOD; i++) {
-        int p = SIG_MOD[i];
-        if (!pageAvail(p)) continue;
-        bool sel = p == page;
-        sigSummary(p, b, sizeof b);
-        char cb[32]; snprintf(cb, sizeof cb, "%s %s", sigName(p), b);
-        int cw = textW(cb) + 10;
-        if (x + cw > X0 + W - 46) break;
-        rrect(x, 106, cw, 20, 4, sel ? tc : C_PANEL);
-        text(x + 5, 108, cb, sel ? C_BG : C_TEXT);
-        x += cw + 5;
+        if (m == M_FM) text(X0 + 1 * (cw + gap) + 4, y0 + 2 * (rowH + 1) + 1, "OP 1-4", page == PG_SRC2 || page == PG_SRC3 || page == PG_SRC4 || page == PG_SRC5 ? tc : C_OFF2);
     }
     // --- Bedienfeld der gewaehlten Seite
     int py = 132, ph = 254;
     rrect(X0, py, W, ph, 6, C_PANEL);
     fill(X0, py, W, 2, tc);
-    text(X0 + 8, py + 4, PAGE_LONG[page], tc);
+    text(X0 + 8, py + 4, pageLong(page), tc);
     {   // Erklaerung des gewaehlten Reglers
         ParamDef hd; int hv, hb; bool hl; char hlab[24];
         if (knobInfo(slot, hd, hv, hl, hb, hlab, sizeof hlab) && hd.kind != K_NONE) {
             const char* ht = paramHelp(hd.name);
+            if (curP().machine[track] == M_FM && !strcmp(hd.name, "FINE")) ht = TR("Ratio fein: +-0,5 (unharmonisch, glockig)", "Fine ratio: +-0.5 (inharmonic, bell-like)");
+            if (curP().machine[track] == M_FM && !strcmp(hd.name, "DETN")) ht = TR("Verstimmung +-50 Cent (Schwebung)", "Detune +-50 cents (beating)");
             if (*ht) {
                 char hs[96]; snprintf(hs, sizeof hs, "%s: %s", hd.name, ht);
-                int maxw = W - 24 - textW(PAGE_LONG[page]);
+                int maxw = W - 24 - textW(pageLong(page));
                 while (textW(hs) > maxw && strlen(hs) > 4) hs[strlen(hs) - 1] = 0;
                 while (strlen(hs) && ((unsigned char)hs[strlen(hs) - 1] & 0xC0) == 0xC0) hs[strlen(hs) - 1] = 0;   // kein halbes UTF-8-Zeichen
                 text(X0 + W - 8 - textW(hs), py + 4, hs, C_TEXT);
@@ -2707,6 +2762,7 @@ static void drawAll(bool help) {
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
     if (menuOpen) drawMenu();
+    drawWtEditorIfOpen();
     drawExportModal();
     if (fbOpen) drawBrowser();
     if (kbOpen) drawKeyboard();
@@ -2998,8 +3054,9 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
     }
     fclose(f);
     if (!ok) return -1;
-    int slot = -1;
-    if (machineUsesSample(hdr[4]) && np > P_S0) {
+    int slot = -1, si = machineSampleParam(hdr[4]);
+    if (si == P_X3 && hdr[6] < 3) si = -1;   // WTBL-Presets vor v13 hatten keine eigene Wavetable
+    if (si >= 0 && np > si) {
         if (!hasName) {   // alter Sound: Nummer = Position in der frueheren Sample-Liste (neuere 250er-Liste, wenn sie reicht)
             static char legacy[250][96];
             int n = libLegacyList(legacy, 250, SAMPLE_DEPTH, 500);
@@ -3007,7 +3064,7 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
             if (prm[P_S0] < n) snprintf(sname, sizeof sname, "%s", legacy[prm[P_S0]]);
         }
         if (sname[0]) slot = poolAssign(sname);
-        if (slot < 0) slot = curP().p[t][P_S0];   // Sample fehlt: bisheriges behalten
+        if (slot < 0) slot = si == P_S0 ? curP().p[t][P_S0] : -1;   // Sample fehlt: bisheriges behalten
     }
     lockA();
     Pattern& P = curP();
@@ -3019,12 +3076,15 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
     } else memcpy(P.p[t], prm, np);
     if (hdr[6] == 0 && (hdr[4] == M_SYNTH || hdr[4] == M_WTBL) && P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;   // alte Presets
     if (hdr[6] < 2) { P.p[t][P_FCRV] = 64; P.p[t][P_ACRV] = 64; }
-    if (slot >= 0) P.p[t][P_S0] = (uint8_t)slot;
+    if (slot >= 0 && si >= 0) P.p[t][si] = (uint8_t)slot;
+    else if (si == P_X3 && P.p[t][P_S0] % 5 == 4) P.p[t][P_S0] = 0;   // eigene Wavetable fehlt: BASIC
     unlockA();
     return 1;
 }
 
 #include "filedlg.inc"
+#include "wtedit.inc"
+static void drawWtEditorIfOpen() { if (wteOpen) drawWtEditor(); }
 
 static void runAction(int act, int arg) {
     switch (act) {
@@ -4025,6 +4085,7 @@ static void handleInput(Uint32 now, float dt) {
     }
     if (kbOpen) { kbInput(I, now); return; }
     if (fbOpen) { fbInput(I, now); return; }
+    if (wteOpen) { wteInput(I, now, dt); return; }
     if (expState == 1) { if (I.pressed(BT_B)) expCancel = true; return; }   // Export laeuft: nur Abbrechen
     if (expState >= 2) {
         if (expState == 2) toast(TR("EXPORT FERTIG: SAMPLES/REC/%s", "EXPORT DONE: SAMPLES/REC/%s"), expName);
@@ -4222,7 +4283,8 @@ static void handleInput(Uint32 now, float dt) {
             if (I.pressed(BT_X) && trackPage(page)) {   // Sample-Regler: X oeffnet den Explorer (mit Unterordnern)
                 ParamDef sd; int sv, sb; bool sl; char slab[24];
                 if (knobInfo(slot, sd, sv, sl, sb, slab, sizeof slab)) {
-                    if (sd.kind == K_SMPL) { openBrowser(FB_SAMPLE); return; }
+                    if (sd.kind == K_SMPL) { fbSmpIdx = sp() * 8 + slot; openBrowser(FB_SAMPLE); return; }
+                    if (sd.kind == K_WDRAW && !aHeld) { openWtEditor(); return; }
                     if (sd.kind == K_LDEST) { fbParam = sp() * 8 + slot; openBrowser(FB_LDEST); return; }
                     if (sd.kind == K_MACH && !aHeld) { openBrowser(FB_MACH); return; }
                 }
@@ -4531,9 +4593,11 @@ static void poolUsed(const Project& J, bool* used) {   // welche Plaetze benutzt
     for (int i = 0; i < MAX_SAMPLES; i++) used[i] = false;
     for (int p = 0; p < NPATTERNS; p++) for (int t = 0; t < NTRACKS; t++) {
         const Pattern& P = J.pat[p];
-        if (!machineUsesSample(P.machine[t] % M_COUNT)) continue;
-        if (P.p[t][P_S0] < MAX_SAMPLES) used[P.p[t][P_S0]] = true;
-        for (int st = 0; st < NSTEPS; st++) { uint8_t v = P.s[t][st].lock[P_S0]; if (v < MAX_SAMPLES) used[v] = true; }
+        int si = machineSampleParam(P.machine[t] % M_COUNT);
+        if (si < 0) continue;
+        if (si == P_X3 && P.p[t][P_S0] % 5 != 4) { bool lk = false; for (int st = 0; st < NSTEPS && !lk; st++) lk = P.s[t][st].lock[P_S0] == 4; if (!lk) continue; }   // WTBL nur mit TABL = USER
+        if (P.p[t][si] < MAX_SAMPLES) used[P.p[t][si]] = true;
+        for (int st = 0; st < NSTEPS; st++) { uint8_t v = P.s[t][st].lock[si]; if (v < MAX_SAMPLES) used[v] = true; }
     }
 }
 static void writePoolTrailer(FILE* f, const Project& J) {   // "SPL1", Anzahl, je Eintrag: Platz, Laenge, Name
@@ -4690,11 +4754,17 @@ int main(int argc, char** argv) {
         static float tmp[44100];
         for (int k = 0; k < 6; k++) eng.render(tmp, 22050 / 2);
         // 0..12 = Seiten (PG_*), 20 Hilfe, 21 P-Lock, 22 Werte-Overlay, 23 Engine-Leiste, 24 Skala, 25 Menue, 26 Abfrage, 27 FM SRC2
-        page = shotPage < NUI_PAGES ? shotPage : PG_TRG; track = 4; cursor = 3; slot = 1;
+        page = shotPage < 20 ? shotPage : (shotPage >= 100 && shotPage - 100 < NUI_PAGES ? shotPage - 100 : PG_TRG); track = 4; cursor = 3; slot = 1;   // neue Seiten: 100 + Seitennummer
+        if (shotPage >= 60 && shotPage <= 64) {   // 60 FM-Algorithmus, 61 FM-Operator 2, 62 SYNTH Oszillatoren, 63 Effekt-Bus B (Spring)
+            if (shotPage <= 61) { applyFactory(curP(), 5, factoryByName("DX E-PIANO")); track = 5; page = shotPage == 60 ? PG_SRC : PG_SRC3; slot = shotPage == 60 ? 0 : 5; }
+            if (shotPage == 62) { page = PG_SRC2; track = 4; slot = 1; curP().p[4][P_X1] = 4; curP().p[4][P_X5] = 1; }
+            if (shotPage == 64) { track = 6; Engine::setMachine(curP(), 6, M_WTBL); page = PG_SRC2; slot = 4; openWtEditor(); wteShape(3); wteKey = 1; wteShape(0); wteCur = 20; wtePts[1][20] = 0.4f; wteKey = 1; }
+            if (shotPage == 63) { page = PG_FXB; Engine::setBusType(eng.proj, 1, BF_SPRING); slot = 3; }
+        }
         refreshDevices();
         if (page == PG_SRC) { track = 7; slot = 0; }
         if (page == PG_SRC || page == PG_SRC2 || shotPage == 27) { }
-        if (shotPage == 27 || page == PG_SRC2) { page = PG_SRC2; track = 6; slot = 0; }
+        if (shotPage == 27) { page = PG_SRC2; track = 6; slot = 0; }   // FM Operator 1
         if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
         if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.setMute(3, true); for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
         if (page == PG_PRJ) { slot = 2; }

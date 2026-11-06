@@ -321,6 +321,50 @@ struct OldProj {
     }
 };
 
+// Effekt-Busse: jeder Typ antwortet, bleibt endlich und begrenzt; Delay bringt das Echo zur eingestellten Zeit
+static void testFxBus() {
+    curTest = "Effekt-Busse";
+    static FxBus fb;
+    fb.init(44100);
+    static float in[44100 * 6], oL[44100 * 6], oR[44100 * 6];
+    for (int ty = 1; ty < BF_COUNT; ty++) {
+        uint8_t p[8];
+        for (int k = 0; k < 8; k++) p[k] = busDef(0, ty, k).def;
+        p[BX_TYPE] = (uint8_t)ty;
+        int N = 44100 * 4;
+        for (int i = 0; i < N; i++) in[i] = 0.f;
+        for (int k = 0; k < 4; k++) for (int i = 0; i < 400; i++) in[k * 22050 + i] = (i & 1 ? 0.5f : -0.5f) * (1.f - i / 400.f);
+        double stepS = 44100 * 60.0 / (120 * 4.0);
+        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, 32, p, stepS);
+        float pk = 0, energy = 0; bool fin = true;
+        for (int i = 0; i < N; i++) { if (!isfinite(oL[i]) || !isfinite(oR[i])) fin = false; pk = fmaxf(pk, fmaxf(fabsf(oL[i]), fabsf(oR[i]))); energy += oL[i] * oL[i]; }
+        CHECK(fin, "%s: NaN/Inf im Ausgang", BUS_TYPE_NAMES[ty]);
+        CHECK(pk > 0.01f && pk < 2.f, "%s: Spitze %.3f", BUS_TYPE_NAMES[ty], pk);
+        CHECK(energy > 1e-3f, "%s: kein Ausgang", BUS_TYPE_NAMES[ty]);
+        printf("  %-8s Spitze %.2f\n", BUS_TYPE_NAMES[ty], pk);
+    }
+    {   // Delay 1/4 (= 4 Steps): erstes Echo nach 0,5 s bei 120 BPM
+        uint8_t p[8]; for (int k = 0; k < 8; k++) p[k] = busDef(0, BF_DELAY, k).def;
+        p[BX_TYPE] = BF_DELAY; p[BX_P1] = 10; p[BX_P2] = 0; p[BX_P4] = 0;
+        fb.reset();
+        int N = 44100;
+        for (int i = 0; i < N; i++) in[i] = i < 64 ? 0.8f : 0.f;
+        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, 32, p, 44100 * 60.0 / (120 * 4.0));
+        int at = -1; for (int i = 0; i < N && at < 0; i++) if (fabsf(oL[i]) > 0.05f) at = i;
+        CHECK(at > 22050 - 300 && at < 22050 + 300, "Delay-Echo bei %d statt 22050", at);
+    }
+    {   // Reverb: lange Hallfahne klingt aus, kein Aufschaukeln bei maximaler Groesse
+        uint8_t p[8]; for (int k = 0; k < 8; k++) p[k] = busDef(0, BF_REVERB, k).def;
+        p[BX_TYPE] = BF_REVERB; p[BX_P1] = 127;
+        fb.reset();
+        int N = 44100 * 6;
+        for (int i = 0; i < N; i++) in[i] = i < 2000 ? (i & 1 ? 0.5f : -0.5f) : 0.f;
+        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, 32, p, 5512.5);
+        float e1 = 0, e2 = 0; for (int i = 44100; i < 88200; i++) e1 += oL[i] * oL[i]; for (int i = N - 44100; i < N; i++) e2 += oL[i] * oL[i];
+        CHECK(e2 < e1, "Reverb waechst statt abzuklingen (%.4f -> %.4f)", e1, e2);
+    }
+}
+
 static void testSaveLoad() {
     curTest = "Speichern/Laden";
     fresh(133);
@@ -502,6 +546,7 @@ int main(int argc, char** argv) {
     testFactory();
     testStability();
     testDecay();
+    testFxBus();
     testSaveLoad();
     testDeterminism();
     testMultiCore();

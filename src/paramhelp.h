@@ -48,7 +48,43 @@ static const ParamHelp PARAM_HELP[] = {
     {"THR", "Schwelle, ab der komprimiert wird", "Threshold where compression starts"}, {"RATIO", "Stärke der Kompression", "Compression strength"}, {"SC", "Sidechain: welche Spur pumpt", "Sidechain: which track pumps"},
     {"BPM", "Tempo in Schlägen pro Minute", "Tempo in beats per minute"}, {"SWNG", "Swing: jeder 2. Step später", "Swing: every 2nd step later"}, {"SCALE", "Tonleiter für alle Spuren", "Scale for all tracks"},
     {"ROOT", "Grundton der Tonleiter", "Root note of the scale"},
+    // FM ab v13
+    {"RAT", "Frequenzverhältnis (1 = Grundton, 2 = Oktave)", "Frequency ratio (1 = root, 2 = octave)"},
+    {"O.LVL", "Pegel: als Träger Lautstärke, als Modulator Helligkeit", "Level: loudness as carrier, brightness as modulator"},
+    {"O.ATK", "Einschwingzeit dieses Operators", "Attack time of this operator"}, {"O.DEC", "Abklingzeit dieses Operators", "Decay time of this operator"},
+    {"O.SUS", "Haltepegel dieses Operators", "Sustain level of this operator"}, {"O.REL", "Ausklingzeit dieses Operators", "Release time of this operator"},
+    {"PITCH", "Tonhöhen-Hüllkurve: Anfangsversatz in Halbtönen", "Pitch envelope: start offset in semitones"}, {"P.DEC", "Dauer der Tonhöhen-Hüllkurve", "Duration of the pitch envelope"},
+    // SYNTH / WTBL zweite Seite
+    {"OCT1", "Oktave Oszillator 1", "Octave oscillator 1"}, {"OCT2", "Oktave Oszillator 2", "Octave oscillator 2"}, {"LVL1", "Pegel Oszillator 1", "Level oscillator 1"},
+    {"LVL2", "Pegel Oszillator 2", "Level oscillator 2"}, {"SUB.O", "Sub-Oszillator eine oder zwei Oktaven tiefer", "Sub oscillator one or two octaves down"},
+    {"SYNC", "Hard-Sync: OSC2 startet mit OSC1 neu (OCT2/DETN ändern!)", "Hard sync: OSC2 restarts with OSC1 (change OCT2/DETN!)"},
+    {"XMOD", "OSC2 moduliert die Frequenz von OSC1 (metallisch)", "OSC2 modulates the frequency of OSC1 (metallic)"},
+    {"RING", "Ringmodulation OSC1 x OSC2 (Glocke)", "Ring modulation OSC1 x OSC2 (bell)"}, {"OCT", "Oktave", "Octave"},
+    {"UWAV", "eigene Wavetable (TABL = USER), X = Explorer", "User wavetable (TABL = USER), X = browser"}, {"DRAW", "Wavetable selbst zeichnen (X öffnet den Editor)", "Draw your own wavetable (X opens the editor)"},
+    {"SND.A", "Anteil an Effekt-Bus A", "Send to effect bus A"}, {"SND.B", "Anteil an Effekt-Bus B", "Send to effect bus B"}, {"SND.C", "Anteil an Effekt-Bus C", "Send to effect bus C"},
 };
+// Effekt-Busse: Erklaerung je Typ und Regler
+struct BusHelp { int type; const char* name; const char* text; const char* en; };
+static const BusHelp BUS_HELP[] = {
+    {-1, "TYPE", "Effekt dieses Busses (wechseln setzt die Regler zurück)", "Effect of this bus (changing resets the controls)"},
+    {-1, "FWD", "schickt den Ausgang zusätzlich in den nächsten Bus (z. B. Delay in den Hall)", "Also sends the output into the next bus (e.g. delay into reverb)"},
+    {-1, "LVL", "Pegel des Effekts in der Summe", "Level of the effect in the mix"},
+    {1, "TIME", "Echo-Zeit im Takt", "Delay time in beats"}, {1, "FBK", "Echo-Wiederholungen", "Delay repeats"}, {1, "TONE", "Echo-Klangfarbe (dunkler)", "Delay tone (darker)"},
+    {1, "PING", "Echo springt links/rechts", "Delay bounces left/right"}, {1, "LOCUT", "Bass aus den Echos nehmen", "Remove bass from the echoes"},
+    {2, "TIME", "Bandecho-Zeit im Takt (Wechsel gleitet)", "Tape delay time in beats (changes glide)"}, {2, "FBK", "Wiederholungen", "Repeats"},
+    {2, "WOW", "Gleichlaufschwankungen des Bandes", "Wow and flutter of the tape"}, {2, "SAT", "Band-Sättigung", "Tape saturation"}, {2, "AGE", "Alter: dunkler, dünner, rauschiger", "Age: darker, thinner, noisier"},
+    {3, "SIZE", "Raumgröße und Hallzeit", "Room size and decay time"}, {3, "DAMP", "Höhendämpfung (dunkler)", "High damping (darker)"}, {3, "PRE", "Verzögerung vor dem Hall", "Delay before the reverb"},
+    {3, "WIDE", "Stereobreite", "Stereo width"}, {3, "MOD", "Bewegung im Hallschweif (chorusartig)", "Movement in the tail (chorus-like)"},
+    {4, "DECAY", "Ausklingen der Feder", "Decay of the spring"}, {4, "TONE", "Klangfarbe der Feder", "Tone of the spring"}, {4, "DRIP", "typisches Feder-Zirpen (Boing)", "Typical spring chirp (boing)"},
+    {4, "WIDE", "Stereo: zwei Federn", "Stereo: two springs"}, {4, "LOCUT", "Bass vor der Feder entfernen", "Remove bass before the spring"},
+    {5, "RATE", "Geschwindigkeit der Modulation", "Modulation speed"}, {5, "DEPTH", "Tiefe der Modulation", "Modulation depth"}, {5, "VOICE", "Anzahl Stimmen (1-3, Ensemble)", "Number of voices (1-3, ensemble)"},
+    {5, "WIDE", "Stereobreite", "Stereo width"}, {5, "FBK", "Rückkopplung (flangerartig)", "Feedback (flanger-like)"},
+};
+static inline const char* busHelp(int type, const char* name) {
+    for (unsigned i = 0; i < sizeof BUS_HELP / sizeof *BUS_HELP; i++)
+        if ((BUS_HELP[i].type == type || BUS_HELP[i].type < 0) && !strcmp(BUS_HELP[i].name, name)) return g_lang ? BUS_HELP[i].en : BUS_HELP[i].text;
+    return "";
+}
 static inline const char* paramHelp(const char* name) {
     for (unsigned i = 0; i < sizeof PARAM_HELP / sizeof *PARAM_HELP; i++) if (!strcmp(PARAM_HELP[i].name, name)) return g_lang ? PARAM_HELP[i].en : PARAM_HELP[i].text;
     return "";

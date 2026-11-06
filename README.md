@@ -47,13 +47,13 @@ Im ARP-Modus **AKKD** spielt ein Trig alle Töne des gewählten Akkords (**CHRD*
 | SNARE | TUNE, DCAY, SNAP (Rauschanteil), N.DEC, TONE |
 | HAT   | TUNE, DCAY, TONE (Hochpass), METL (Metall/Rauschen) |
 | CLAP  | TUNE, DCAY, SPRD (Abstand), RPTS (Anzahl Schläge) |
-| SYNTH | WAV1, WAV2 (SAW/SQR/TRI/SIN), DETN, MIX, SUB, NOIS, PW, GLID |
-| FM    | **4 Operatoren, 8 Algorithmen.** SRC: ALGO, FBK (Feedback OP4), RAT1–RAT4, FINE, NOIS. SRC2: LVL2–LVL4 (Mod-Index bzw. Pegel), DEC1–DEC4 (INF = halten), VELO (Anschlagdynamik) |
+| SYNTH | WAV1, WAV2 (SAW/SQR/TRI/SIN), DETN, MIX, SUB, NOIS, PW, GLID. Seite **OSC**: OCT1, OCT2 (±3 Oktaven), LVL1, LVL2 (Pegel je Oszillator), SUB.O (Sub −1/−2 Oktaven), SYNC (Hard-Sync OSC2 → OSC1), XMOD (OSC2 moduliert OSC1), RING (Ringmodulation) |
+| FM    | **4 Operatoren, 8 Algorithmen.** Seite FM: ALGO, FBK (Feedback OP4), VELO (Anschlag → Modulation), PITCH/P.DEC (Tonhöhen-Hüllkurve ±24 Halbtöne), NOIS. Je Operator eine eigene Seite **OPERATOR 1–4**: RAT (0,25–16), FINE (±0,5 für unharmonische Glocken), DETN (±50 Cent), O.LVL (Träger: Lautstärke, Modulator: Helligkeit), O.ATK/O.DEC/O.SUS/O.REL (eigene Hüllkurve) |
 | SMPL  | SMPL (Sample-Auswahl), TUNE (±24 Halbtöne), FINE, STRT, END (END < STRT = rückwärts), LOOP, GAIN |
 | TOM   | TUNE, DCAY, SWEP (Pitch-Abfall), NOIS (Anschlag), BODY |
 | RIM   | TUNE, DCAY, TONE, CLCK |
 | SHKR  | TONE, DCAY, ATK (Ausholen), GRIT (Körnigkeit) |
-| WTBL  | **Wavetable**: TABL (BASIC Sinus→Dreieck→Säge→Rechteck, PWM, VOKAL A→U, OBERTÖNE), POS (Position in der Tabelle, auch als LFO-Ziel), WARP (Phasenverbiegung), DETN (Unisono), SUB, NOIS, P.ENV (Filterhüllkurve → Position), GLID |
+| WTBL  | **Wavetable**: TABL (BASIC Sinus→Dreieck→Säge→Rechteck, PWM, VOKAL A→U, OBERTÖNE, **USER** = eigene), POS (Position in der Tabelle, auch als LFO-Ziel), WARP (Phasenverbiegung), DETN (Unisono), SUB, NOIS, P.ENV (Filterhüllkurve → Position), GLID. Seite **OSC**: OCT, LVL, SUB.O, **UWAV** (eigene Wavetable aus einer WAV-Datei, X = Explorer), **DRAW** (X = Wavetable selbst zeichnen) |
 | CHOP  | **Sample-Chopper**: SMPL, SLCS (2–64 Scheiben), SLIC (AUTO = Scheibe nach Step-Nummer, oder feste Scheibe, pro Step lockbar), TUNE, FINE, LEN (Anteil der Scheibe), REV, GAIN |
 | GRAN  | **Granulator**: SMPL, POS, SPRY (Streuung), SIZE (10–500 ms), DENS (2–128 Körner/s), PTCH, P.SPR (Tonhöhen-Streuung), GAIN |
 
@@ -63,6 +63,20 @@ SYNTH und WTBL starten mit dem **24-dB-Tiefpass** (LP24) mit sanfter Sättigung;
 Die Engine wählst du pro Spur und Pattern: auf der TRG-Seite mit dem Regler ENGINE oder mit SELECT + X/Y. **X** auf dem Regler ENGINE öffnet eine **Liste aller Engines** (mit Symbol und Kurzbeschreibung): ↑/↓ wählt, A übernimmt, SELECT bricht ab. Y und der rechte Stick blättern weiter direkt.
 Beim Drehen erscheint der **Engine-Wähler** mit Symbolen für alle 13 Engines.
 
+**Eigene Wavetables:** Eine WAV-Datei mit Frames zu **2048 Werten** (das übliche Format vieler Wavetable-Synths) oder 256 Werten wird als Tabelle gelesen; POS fährt durch die Frames. Andere Längen gelten als ein einzelner Zyklus. Am besten in `samples/wavetables/` ablegen – der Explorer startet dort. TABL springt beim Wählen automatisch auf USER.
+
+**Wavetable zeichnen** (WTBL → Seite OSC → Regler DRAW → **X**): vier Wellen W1–W4 mit je 64 Punkten; POS blendet von W1 (0) über W2 und W3 nach W4 (127). Die Änderungen sind sofort hörbar.
+
+| Taste | Wirkung |
+|---|---|
+| ←/→ | Punkt wählen (linker Stick: schnell fahren) |
+| ↑/↓ | Wert des Punktes; **rechter Stick setzt den Wert direkt** – mit beiden Sticks wird gezeichnet |
+| L1/R1 | Welle W1–W4 |
+| A | Werkzeuge: Sinus, Dreieck, Säge, Rechteck, Puls, Rauschen, Glätten, Normalisieren, Umkehren, Leeren, von voriger Welle, auf alle Wellen |
+| X | vorhören |
+| START | speichern als `samples/wavetables/draw-NN.wav` (16 Frames × 2048) und der Spur zuweisen |
+| B | abbrechen (vorige Tabelle bleibt) |
+
 Jede Spur spielt eine Stimme; SYNTH, FM, WTBL und die Sample-Engines spielen im ARP-Modus **AKKD** bis zu 4 Akkordtöne gleichzeitig.
 Die Engine gilt pro Spur und Pattern. Wechselst du sie, werden nur die SRC-Regler auf die Grundwerte der neuen Engine gesetzt.
 
@@ -70,9 +84,9 @@ Jede Spur hat diese Seiten:
 
 * **TRG**: NOTE, VEL, LEN, PROB (Wahrscheinlichkeit), RTRG (Retrigs pro Step), **MTIM** (Mikrotiming), ENGINE, **COND** (Trig-Bedingung, siehe unten)
 * **SEQ**: Laufrichtung, Länge, Tempo-Faktor, Euklid und Generator (siehe unten)
-* **SRC** (und **SRC2** bei FM): Regler der Engine (siehe Tabelle). Grafisch dargestellt werden:
+* **SRC** (dazu **OSC** bei SYNTH/WTBL, **OPERATOR 1–4** bei FM): Regler der Engine (siehe Tabelle). Grafisch dargestellt werden:
   * bei SYNTH die tatsächlich klingende, gemischte Wellenform
-  * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten
+  * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten; auf den Operator-Seiten dessen Hüllkurve mit Ratio, Verstimmung und Rolle (Träger hörbar / moduliert OP n)
   * bei SMPL die Sample-Wellenform mit Start, Ende und Abspielposition
 * **FLT**: Filter 1 mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve. TYPE wählt den Filter (auch pro Step lockbar):
 
@@ -87,7 +101,8 @@ Jede Spur hat diese Seiten:
 
 * **FL2**: Base-Width-Filter hinter dem ersten Filter: **BASE** ist die untere Kante (Hochpass), **WDTH** die Breite des durchgelassenen Bandes (Tiefpass darüber). BASE 0 / WDTH 127 = aus. Dazu **KEYT** (Keytracking: Cutoff von Filter 1 folgt der Tonhöhe) und **VELF** (Anschlagstärke → Cutoff). Die Grafik zeigt Filter 1 (grau) und die Gesamtkurve mit dem Band.
 * **Symbole statt Balken**: Jede Kachel zeigt ein Symbol, das sich mit dem Wert verändert – Tastatur bei NOTE, Torte bei PROB, Hüllkurvenbogen bei Attack/Decay, Lautsprecher bei Lautstärke, Echos bei Delay, Ringe bei Reverb, Würfel bei CHNG usw.
-* **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama, **Delay- und Reverb-Send** (DLY, REV)
+* **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama
+* **SND** (Sends): **SND.A, SND.B, SND.C** – Anteil der Spur an den Effekt-Bussen A, B, C (bisher DLY/REV auf der AMP-Seite)
 * **LF1 / LF2 / LF3**: drei LFOs pro Spur (siehe unten)
 * **INS**: Insert-Effekt der Spur. Zuerst unter TYPE den Effekt wählen, dann MIX aufdrehen:
 
@@ -105,12 +120,16 @@ Jede Spur hat diese Seiten:
 
 Dazu kommen die globalen Seiten (in der Leiste oben grauer dargestellt):
 
-* **FX**: die Send-Effekte
-  * Delay:
-    * D.TIME: 1/64 bis 1/1 im Songtempo, auch triolisch (T) und punktiert (.). Zeitwechsel gleiten wie beim Bandecho.
-    * **D.FBK bis 120 %**: Ab etwa 100 % kippt das Delay in eine selbsterhaltende **Feedback-Schleife**. Sättigung und Bassfilter in der Schleife halten sie dabei im Rahmen.
-    * D.TONE, D.PING (0 = mono, 127 = volles Ping-Pong)
-  * Reverb: R.SIZE, R.DAMP, R.PRE (Predelay bis 250 ms), R.WIDE (Stereobreite)
+* **FX A / FX B / FX C**: drei **Effekt-Busse** mit frei wählbarem Effekt (Regler TYPE; ein Wechsel setzt die Regler auf die Grundwerte des Effekts). Jeder Bus hat **FWD** (schickt seinen Ausgang zusätzlich in den nächsten Bus, z. B. Delay in den Hall) und **LVL** (Pegel in der Summe). Oben zeigt die Seite den Weg Spuren → Bus → Summe, den Pegel und eine Erklärung des gewählten Reglers. Grundeinstellung: A = Delay, B = Reverb, C = Chorus.
+
+  | TYPE | Regler |
+  |---|---|
+  | DELAY | TIME (1/64 bis 1/1 im Songtempo, triolisch/punktiert; Wechsel gleiten), **FBK bis 120 %** (kippt in eine selbsterhaltende Schleife, Sättigung hält sie im Rahmen), TONE, PING (0 = mono, 127 = Ping-Pong), LOCUT |
+  | TAPE | Bandecho: TIME, FBK, **WOW** (Gleichlaufschwankungen), **SAT** (Bandsättigung), **AGE** (dunkler, dünner, leichtes Rauschen); zwei Tonköpfe für Stereo |
+  | REVERB | Hall mit 8 Leitungen (FDN) und Diffusion: SIZE (0,25 bis 11 s), DAMP, PRE (Predelay bis 250 ms), WIDE, MOD (Bewegung im Schweif) |
+  | SPRING | Federhall: DECAY, TONE, **DRIP** (typisches Zirpen), WIDE (zwei Federn), LOCUT |
+  | CHORUS | RATE, DEPTH, VOICE (1–3 Stimmen, Ensemble), WIDE, FBK |
+
 * **CMP**: Master-Kompressor mit **Sidechain** (siehe unten)
 * **MIX**: Mixer mit Mute/Solo (siehe unten)
 * **PRJ**: Projekte und Presets (siehe unten)
@@ -204,6 +223,8 @@ Der Song ist eine **Matrix wie in einer Clip-Ansicht**: jede **Zeile** ist eine 
 **Song exportieren (WAV):** Unter der Matrix liegt die Leiste **EXPORT WAV** (in der letzten Zeile ↓ drücken). Mit ←/→ das Feld wählen, mit X/Y **VON** (Anfangszeile) und **BIS** (Schlusszeile) einstellen – Standard ist der ganze Song („ENDE“). Die gewählten Zeilen sind links mit einem cyanfarbenen Strich markiert, die Länge steht daneben. **A** startet den Export: Die Groovebox rechnet die Zeilen samt Wiederholungen offline (schneller als Echtzeit, die Wiedergabe stoppt dafür), lässt Hall und Delay ausklingen und speichert `samples/rec/<Projekt>-song-NN.wav` (Stereo, 44,1 kHz, 24 Bit). B bricht ab. Herunterladen im Browser unter Samples → rec.
 * Projekte ab Version 12 speichern Matrix und Mutes; ältere Songs (Pattern-Kette) werden beim Laden in Zeilen mit demselben Pattern auf allen Spuren umgestellt.
 
+**Projektformat v13** (16 Seiten je Spur): Ältere Projekte und Sounds werden beim Laden umgestellt – Delay und Reverb landen auf Bus A und B mit den bisherigen Werten, die Sends DLY/REV werden zu SND.A/SND.B, FM-Sounds bekommen ihre Operatoren mit gleichem Klang (Ratio, Pegel, Abklingzeit; FINE wird zu DETN), Locks und LFO-Ziele ziehen mit. Gespeichert wird danach im neuen Format; ältere Versionen der Groovebox können es nicht mehr lesen.
+
 ## Pattern-Mutation (SET → PATTERN)
 
 „Pattern mutieren“ variiert das aktuelle Pattern: Trigs kommen dazu oder fallen weg, Velocity, Töne (in der Skala), gelegentliche Ratchets und Mikrotiming. Stärke mit ←/→ (LEICHT, MITTEL, STARK), A wendet sie an. „Mutation rückgängig“ holt das Pattern vor der letzten Mutation zurück.
@@ -282,7 +303,7 @@ Steuerkreuz ↑/↓ wählt den Eintrag, **L1/R1 den Bereich**, ←/→ (oder X/Y
 Hier siehst du alle 8 Spuren als Kanalzüge mit Fader, Pegelanzeige, Panorama, Delay- und Reverb-Send.
 
 * Steuerkreuz ←/→ (oder linker Stick) wählt den Kanal.
-* Steuerkreuz ↑/↓ oder L1/R1 wählt die Zeile (VOL, PAN, DLY, REV).
+* Steuerkreuz ↑/↓ oder L1/R1 wählt die Zeile (VOL, PAN, S.A, S.B, S.C = Sends an die Effekt-Busse).
 * Rechter Stick ↑/↓ oder X/Y ändert den Wert.
 * **A = Mute, B = Solo.** Sind mehrere Spuren auf Solo, klingen alle Solo-Spuren.
 
