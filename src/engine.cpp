@@ -289,6 +289,18 @@ void Voice::lfoUpdate(int n, float sr) {
 }
 
 void Voice::update(int n, float sr, float bpm) {
+    // Schutz: Phasen bleiben in [0,1) (nach Engine-Wechsel oder Schrittweite > 1 konnten sie sonst endlos wachsen -> NaN),
+    // ein NaN im Filter (z.B. nach extremen Werten) wird geleert statt die Spur dauerhaft zu verstummen
+    if (!(ph1 >= 0.f && ph1 < 1.f)) ph1 = 0.f;
+    if (!(ph2 >= 0.f && ph2 < 1.f)) ph2 = 0.f;
+    if (!(phs >= 0.f && phs < 1.f)) phs = 0.f;
+    for (int k = 0; k < 4; k++) if (!(fmPh[k] >= 0.f && fmPh[k] < 1.f)) fmPh[k] = 0.f;
+    if (!(filt.ic1 == filt.ic1) || !(filt.ic2 == filt.ic2) || !(filt2.ic1 == filt2.ic1) || !(filt3.ic1 == filt3.ic1) || !(lad[3] == lad[3]) || !(cmbLp == cmbLp)) {
+        filt.reset(); filt2.reset(); filt3.reset(); aux.reset(); bwHp.reset(); bwLp.reset();
+        for (int k = 0; k < 4; k++) lad[k] = 0.f;
+        for (int k = 0; k < 2048; k++) cmb[k] = 0.f;
+        cmbLp = 0.f; lastS = 0.f; dcOff = 0.f;
+    }
     (void)bpm;
     lfoUpdate(n, sr);
     aenv.set(envT(P(P_AATK)), envT(P(P_ADEC)), P(P_ASUS) / 127.f, envT(P(P_AREL)), sr);
