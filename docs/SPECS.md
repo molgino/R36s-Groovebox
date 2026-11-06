@@ -46,6 +46,18 @@ Gemessen auf dem R36S (RK3326, Cortex-A35 1,3 GHz) mit SET → Leistungstest, An
 | Seitenmenü / Hilfe | 17,5 / 20,6 ms | **12,5 / 14,0 ms** |
 | Speicher | 26 MB | 24 MB |
 
+Stand 11/2026 (Version e628798: FM mit 4 Operator-Hüllkurven, SYNTH-OSC-Seite, 3 Effekt-Busse, Animationen), R36S, Wiedergabe lief nebenher:
+
+| | Last | Spitze |
+|---|---|---|
+| Audio Leerlauf | 2,3 % | 7,7 % |
+| Demo-Song, 2 Kerne | 13,0 % | 36,5 % |
+| 8× Kick / 8× Synth / 8× FM | 20,3 / 24,7 / 34,1 % | 26 / 28 / 39 % |
+| Worst Case, 1 Kern | 77,7 % | 87,8 % |
+| Worst Case, 2 Kerne | **45,5 %** | 58,3 % |
+| Bild je Frame inkl. Ausgabe (4,3 ms) | 8,7–11,2 ms | Seitenmenü/Hilfe 14,2 ms |
+| Speicher (inkl. gesperrter Thread-Stacks) | 122 MB | |
+
 Neue Gerätewerte: SET → Leistungstest (Bericht im Browser unter Logs → bench.txt).
 
 ## Gerät (R36S, typische Herstellerangaben – Klone können abweichen)
