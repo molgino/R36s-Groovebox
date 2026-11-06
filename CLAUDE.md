@@ -72,3 +72,7 @@ Sprache mit dem Nutzer: **Deutsch**. Anleitung für Nutzer: `README.md`.
 
 ## Offene Ideen
 - (derzeit keine offenen Punkte aus dem Nutzer-Backlog; erledigt: Song-Modus/Clip-Matrix + Export, Sampling vom USB-Eingang, Arpeggiator, Pattern-Mutation, echtes USB-MIDI/Audio im Groovebox-OS)
+
+## Arbeitsweise Git
+- Bugfixes direkt auf main committen und pushen (Wunsch des Nutzers), kein eigener Branch.
+- Neue Funktionen weiterhin auf einem `ui-*`-Branch (CI baut Test-Release `nightly-<branch>`), nach Freigabe nach main.
