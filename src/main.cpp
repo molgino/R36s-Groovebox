@@ -676,7 +676,7 @@ static void animate() {
         static Uint32 uaAt = 0;
         if (now - uaAt > 1500) {
             uaAt = now;
-            bool want = cfg.usbAudio && usbMode == 2 && !driveOn;
+            bool want = cfg.usbAudio && usbMode == 2 && !driveOn && !usbApplyAt;   // waehrend das Gadget neu aufgebaut wird nicht oeffnen
             if (want && !usbAudioActive()) { usbAudioSetChannels(usbChannels()); usbAudioStart(); }
             if (!want && usbAudioActive()) usbAudioStop();
             usbAudioSetGain(cfg.usbVol / 100.f);

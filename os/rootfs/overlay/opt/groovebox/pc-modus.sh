@@ -101,10 +101,14 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
                 mkdir -p functions/uac2.usb0
                 U=functions/uac2.usb0
                 CH=${GB_UAC_CH:-2}; case "$CH" in 2|8|18|24) ;; *) CH=2 ;; esac
-                echo $(( (1 << CH) - 1 )) > $U/p_chmask; echo $SS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize   # Groovebox -> PC
+                PSS=$SS
+                # 24 Kanaele mit 24 Bit = 936-Byte-Pakete alle 250 us: am R36S (dwc2) stockte es nach einer Minute (Broken pipe,
+                # Audio-Aussetzer); 18 Kanaele (702 Byte) liefen sauber -> bei 24 Kanaelen 16 Bit (624 Byte), ausser GB_UAC_SSIZE ist gesetzt
+                [ "$CH" -ge 24 ] && [ -z "$GB_UAC_SSIZE" ] && PSS=2
+                echo $(( (1 << CH) - 1 )) > $U/p_chmask; echo $PSS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize   # Groovebox -> PC
                 # Paketabstand: so gross wie moeglich (dwc2 mag 1 ms), aber ein Paket (max. 1024 Byte) muss alle Kanaele fassen:
                 # Bytes = Kanaele x Bytes/Sample x (48 kHz-Samples je Abstand + 1); Abstand = 125 us x 2^(bInterval-1)
-                PB=4; SSZ=$(cat $U/p_ssize 2>/dev/null || echo $SS)
+                PB=4; SSZ=$(cat $U/p_ssize 2>/dev/null || echo $PSS)
                 while [ $PB -gt 1 ] && [ $(( CH * SSZ * (6 * (1 << (PB - 1)) + 1) )) -gt 1024 ]; do PB=$((PB - 1)); done
                 CIN=3; [ "${GB_UAC_IN:-1}" = 0 ] && CIN=0   # 0: kein Ausgang am Host -> Handy/PC behaelt Lautsprecher
                 echo $CIN > $U/c_chmask; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize   # PC -> Groovebox

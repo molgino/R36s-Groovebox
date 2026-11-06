@@ -466,6 +466,24 @@ static void testMultiCore() {
     CHECK(md < 1e-4f, "1 Kern und 2 Kerne klingen verschieden (%.2e)", md);
 }
 
+// 8 Kanaele: Master + FX A/B/C - die Bus-Kanaele muessen den Effektanteil tragen
+static void testMultiOut8() {
+    curTest = "Mehrkanal 8";
+    static float out[44100 * 2], mb[44100 * 8];
+    Engine& X = MC[0];
+    X.init(44100); X.stop(); X.audioThreads = 1;
+    X.defaultProject(false); X.proj.bpm = 140;
+    Pattern& P = X.proj.pat[0];
+    for (int t = 0; t < 4; t++) { Engine::initTrack(P, t, t ? M_SNARE : M_KICK); for (int s2 = 0; s2 < 16; s2 += 4) P.s[t][s2].on = 1; P.p[t][P_DLY] = 60; P.p[t][P_REV] = 60; P.p[t][P_SNDC] = 60; }
+    X.multiCh = 8; X.start();
+    for (int i = 0; i < 44100; i += 256) { X.multiBuf = mb + (size_t)i * 8; X.render(out + i * 2, 44100 - i < 256 ? 44100 - i : 256); }
+    X.multiBuf = nullptr; X.multiCh = 2;
+    float e[8] = {0};
+    for (int i = 0; i < 44100; i++) for (int c = 0; c < 8; c++) e[c] += fabsf(mb[i * 8 + c]);
+    printf("  Mehrkanal 8: Energie je Kanal %.0f %.0f | A %.0f %.0f | B %.0f %.0f | C %.0f %.0f\n", e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
+    for (int c = 2; c < 8; c++) CHECK(e[c] > 1.f, "8 Kanaele: Kanal %d still", c + 1);
+}
+
 // Mehrkanal-Ausgang (USB): Master gleich wie ohne Mehrkanal, jede Spur einzeln hoerbar - auf 1 und 2 Kernen
 static void testMultiOut() {
     curTest = "Mehrkanal";
@@ -584,6 +602,7 @@ int main(int argc, char** argv) {
     testDeterminism();
     testMultiCore();
     testMultiOut();
+    testMultiOut8();
     testPcm24(sdir);
     printf("%s: %d Pruefungen ok, %d Fehler\n", nFail ? "FEHLGESCHLAGEN" : "OK", nPass, nFail);
     return nFail ? 1 : 0;
