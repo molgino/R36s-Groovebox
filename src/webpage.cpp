@@ -263,7 +263,8 @@ const char WEB_SCREEN[] = R"HTML(<!doctype html>
 <html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#080612">
+<meta name="theme-color" content="#080612"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="SYNTH CITY">
+<link rel="manifest" href="/manifest.json"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="icon" href="/icon-192.png">
 <title>SYNTH CITY – Fernbedienung</title>
 <style>
 :root{--bg:#080612;--panel:#141026;--panel2:#20183a;--line:#3a2f60;--text:#d6eeff;--dim:#8a80b0;--acc:#ff2e88;--cy:#00e0ff;--gr:#2bff9a;--b:clamp(44px,7vmin,64px)}
@@ -274,6 +275,7 @@ header{display:flex;align-items:center;gap:10px;padding:6px 10px;flex-wrap:wrap}
 h1{font-size:16px;margin:0;letter-spacing:.18em;color:#fff;text-shadow:-2px 0 var(--acc),2px 0 var(--cy)}
 #stat{color:var(--dim);font-size:12px}#dot{width:9px;height:9px;border-radius:50%;background:#555;display:inline-block}
 header .sp{flex:1}a{color:var(--cy)}
+.hb.on{background:var(--acc);border-color:var(--acc);color:#fff}
 .hb{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
 #stage{flex:1;min-height:0;display:grid;grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto;gap:8px;padding:0 10px 10px}
 #scr{min-height:0;min-width:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
@@ -321,7 +323,7 @@ body.nopad #stage{grid-template-columns:1fr !important}
 body.nopad #scr{grid-column:1 !important}
 </style></head><body><div id="app">
 <header><span id="dot"></span><h1>SYNTH CITY</h1><span id="stat">…</span><span class="sp"></span>
-<button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
+<button class="hb" id="bAud" title="Ton im Browser">🔈 Ton</button><input id="vol" type="range" min="0" max="100" value="80" style="width:70px;display:none"><button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
 <div id="stage">
  <div id="scr"><div id="cvw"><canvas id="cv" width="640" height="480" tabindex="0"></canvas></div>
   <div class="mid" id="midL"><div class="row"><div class="btn" data-b="SELECT">SELECT</div><div class="btn" data-b="START">START</div></div></div></div>
@@ -377,9 +379,40 @@ async function pollLoop(){
    if(r.status===200){decode(await r.arrayBuffer());}else if(r.status===204){await new Promise(z=>setTimeout(z,20));}else throw 0;
    setStat(true);}catch(e){setStat(false,'keine Verbindung …');seq=0;await new Promise(z=>setTimeout(z,800));}}
 }
+// ---- Ton: eigener WebSocket /wsa (16 Bit Stereo), Pakete werden luecklos hintereinander eingeplant.
+// Puffer ~120 ms; laeuft er voll (Uhren von R36S und Handy weichen ab), wird minimal schneller abgespielt, bei Luecke neu gepuffert.
+let actx=null,aws=null,again=null,nextT=0,aOn=false,aBuf=0,aDrop=0;const TGT=0.12;
+function audioOn(){
+ if(!actx){const AC=window.AudioContext||window.webkitAudioContext;if(!AC){alert('Dieser Browser kann keinen Ton abspielen');return;}
+  actx=new AC({latencyHint:'interactive'});again=actx.createGain();again.connect(actx.destination);}
+ actx.resume();again.gain.value=($('vol').value/100)**2;aOn=true;$('bAud').classList.add('on');$('bAud').textContent='🔊 Ton';$('vol').style.display='';
+ try{localStorage.audio=1;}catch(e){}
+ connectAudio();
+}
+function audioOff(){aOn=false;if(aws){aws.onclose=null;aws.close();aws=null;}$('bAud').classList.remove('on');$('bAud').textContent='🔈 Ton';$('vol').style.display='none';try{localStorage.audio='';}catch(e){}}
+function connectAudio(){
+ if(!aOn||aws)return;
+ aws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/wsa');aws.binaryType='arraybuffer';
+ aws.onmessage=e=>{if(typeof e.data==='string'||!actx)return;
+  const dv=new DataView(e.data),rate=dv.getUint32(0,true),n=(e.data.byteLength-8)>>2;if(n<=0)return;
+  const pcm=new Int16Array(e.data,8,n*2),b=actx.createBuffer(2,n,rate),L=b.getChannelData(0),R=b.getChannelData(1);
+  for(let i=0;i<n;i++){L[i]=pcm[i*2]/32768;R[i]=pcm[i*2+1]/32768;}
+  const now=actx.currentTime;
+  if(nextT<now+0.01){nextT=now+TGT;}
+  let lead=nextT-now;if(lead>TGT*3){aDrop++;return;}
+  const pr=lead>TGT*1.4?1.004:(lead<TGT*0.6?0.997:1);
+  const src=actx.createBufferSource();src.buffer=b;src.playbackRate.value=pr;src.connect(again);src.start(nextT);
+  nextT+=n/rate/pr;aBuf=lead;};
+ aws.onclose=()=>{aws=null;if(aOn)setTimeout(connectAudio,800);};
+}
+$('bAud').onclick=()=>{if(aOn)audioOff();else audioOn();};
+$('vol').oninput=()=>{if(again)again.gain.value=($('vol').value/100)**2;try{localStorage.vol=$('vol').value;}catch(e){}};
+try{if(localStorage.vol)$('vol').value=localStorage.vol;}catch(e){}
+try{if(localStorage.audio){const once=ev=>{document.removeEventListener('pointerdown',once,true);if(!aOn&&ev.target.id!=='bAud')audioOn();};document.addEventListener('pointerdown',once,true);$('bAud').textContent='🔈 Ton (antippen)';}}catch(e){}
+if('serviceWorker' in navigator&&window.isSecureContext)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 setInterval(()=>{const now=performance.now(),s=(now-last)/1000;
  if(ws&&ws.readyState===1)ws.send('p '+now.toFixed(0));
- $('stat').textContent=(mode==='ws'?'Live':mode==='poll'?'Abfrage':'…')+' · '+Math.round(frames/s)+' fps · '+Math.round(bytes/1024/s)+' kB/s'+(mode==='ws'?' · '+Math.round(lat)+' ms':'');
+ $('stat').textContent=(mode==='ws'?'Live':mode==='poll'?'Abfrage':'…')+' · '+Math.round(frames/s)+' fps · '+Math.round(bytes/1024/s)+' kB/s'+(mode==='ws'?' · '+Math.round(lat)+' ms':'')+(aOn&&aws?' · Ton '+Math.round(aBuf*1000)+' ms':'');
  frames=0;bytes=0;last=now;},1000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&ws&&ws.readyState===1)ws.send('f');else releaseAll();});
 connect();

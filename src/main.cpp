@@ -3485,6 +3485,7 @@ enum SetItem {
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
+static bool setIn = false;   // SET: false = Bereiche links waehlen, true = in den Eintraegen des Bereichs (A rein, B raus)
 static int poolMissing = 0;   // beim letzten Projekt-Laden nicht gefundene Samples
 // Rhythmus-Vorlagen (Bit i = Step i+1 von 16), werden ueber die ganze Spurlaenge wiederholt
 static const char* const RHY_NAMES_DE[] = {"Four on the Floor", "Backbeat (2+4)", "Offbeat", "Achtel", "Sechzehntel", "Breakbeat-Kick",
@@ -3895,16 +3896,27 @@ static void setAction(int i) {
 static void settingsInput(Input& I, Uint32 now, float dt) {
     int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
     if (setIsHeader(setSel)) setSel++;
-    if (dy) {   // innerhalb des Bereichs (im Kreis)
-        int h = setCatOf(setSel), e = setCatEnd(h), n = e - h - 1;
-        setSel = h + 1 + ((setSel - h - 1 + dy) % n + n) % n;
-    }
-    int dc = (I.pressed(BT_R1) ? 1 : 0) - (I.pressed(BT_L1) ? 1 : 0);
-    if (dc) {   // L1/R1: Bereich wechseln
+    auto nextCat = [&](int dc) {   // Bereich wechseln (im Kreis), erster Eintrag
         int h = setCatOf(setSel);
         if (dc > 0) { h = setCatEnd(h); if (h >= SI_COUNT) h = 0; }
         else { h = h > 0 ? setCatOf(h - 1) : setCatOf(SI_COUNT - 1); }
         setSel = h + 1; setScroll = 0;
+    };
+    int dc = (I.pressed(BT_R1) ? 1 : 0) - (I.pressed(BT_L1) ? 1 : 0);
+    if (dc) nextCat(dc);   // L1/R1: Bereich wechseln (auf beiden Ebenen)
+    if (!setIn) {   // Ebene 1: Bereiche links. hoch/runter = Bereich, A/rechts = hinein, B = SET verlassen
+        if (dy) nextCat(dy);
+        if (I.pressed(BT_A) || I.pressed(BT_RIGHT)) setIn = true;
+        else if (I.pressed(BT_B)) page = prevPage == PG_SYS ? PG_TRG : prevPage;
+        if (I.pressed(BT_L2)) gotoPage(-1);
+        if (I.pressed(BT_R2)) gotoPage(1);
+        if (startTap(I, now)) startStop();
+        return;
+    }
+    if (I.pressed(BT_B)) { setIn = false; return; }   // Ebene 2 -> zurueck zu den Bereichen
+    if (dy) {   // innerhalb des Bereichs (im Kreis)
+        int h = setCatOf(setSel), e = setCatEnd(h), n = e - h - 1;
+        setSel = h + 1 + ((setSel - h - 1 + dy) % n + n) % n;
     }
     int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + (I.repeat(BT_X, now) ? 1 : 0) - (I.repeat(BT_Y, now) ? 1 : 0);
     if (fabsf(I.rx) > fabsf(I.ry)) dx += flick(I.rx, flRX, flRXt, now); else flRX = 0;
@@ -3916,7 +3928,6 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
         if (d) { stickAcc -= d; setChange(setSel, d); }
     } else if (fabsf(ry) <= 0.25f) stickAcc = 0;
     if (I.pressed(BT_A)) setAction(setSel);
-    if (I.pressed(BT_B)) page = prevPage == PG_SYS ? PG_TRG : prevPage;
     if (I.pressed(BT_L2)) gotoPage(-1);
     if (I.pressed(BT_R2)) gotoPage(1);
     if (startTap(I, now)) startStop();
@@ -4276,11 +4287,16 @@ static void drawSettings() {
         setLabel(i, l, sizeof l, v, sizeof v);
         bool sel = i == cat;
         hitAdd(10, cy, 140, 30, HK_SET, i + 1, 1);   // Bereich: erster Eintrag
-        rrect(10, cy, 140, 30, 7, sel ? C_ACC : C_BG);
-        text(20, cy + 7, l, sel ? C_BG : C_TEXT);
+        if (sel && !setIn) {   // Bereiche-Ebene: gewaehlter Bereich leuchtet und pulsiert
+            float pl = 0.5f + 0.5f * sinf(animTime * 4.f);
+            rrect(8, cy - 2, 144, 34, 8, mix(C_ACC, C_PLAY, 0.3f * pl));
+        }
+        rrect(10, cy, 140, 30, 7, sel ? (setIn ? dimC(C_ACC, 0.45f) : C_ACC) : C_BG);
+        text(20, cy + 7, l, sel ? (setIn ? C_TEXT : C_BG) : C_TEXT);
+        if (sel) text(136, cy + 7, setIn ? ">" : "", C_TEXT);
         cy += 36;
     }
-    text(12, cy + 6, TR("L1/R1 = BEREICH", "L1/R1 = SECTION"), C_DIM);
+    text(12, cy + 6, setIn ? TR("B = BEREICHE", "B = SECTIONS") : TR("A = ÖFFNEN", "A = OPEN"), C_DIM);
     if (436 - (cy + 30) > 40) { rrect(10, cy + 30, 140, 436 - (cy + 30), 8, C_BG); drawSpectrum(14, cy + 36, 132, 436 - (cy + 30) - 12, C_ACC, 12); }
     // rechts: Eintraege des Bereichs
     const int X0 = 158, W = 470, rowH = 27, top = 56, visible = 13;
@@ -4297,7 +4313,7 @@ static void drawSettings() {
         if (yf < top - 4 || yf > top + (visible - 1) * rowH + 4) continue;
         int y = (int)yf;
         setLabel(i, l, sizeof l, v, sizeof v);
-        bool sel = i == setSel;
+        bool sel = i == setSel && setIn;
         hitAdd(X0, y, W, rowH - 2, HK_SET, i, 0);
         if (sel) { rrect(X0, y, W, rowH - 3, 6, C_SEL); rrect(X0, y + 4, 3, rowH - 11, 1, C_ACC); }
         text(X0 + 12, y + 5, l, sel ? C_TEXT : C_DIM);
@@ -4330,7 +4346,8 @@ static void drawSettings() {
             else text(X0, 418, hb, C_TEXT);
         }
     }
-    hint(6, 452, TR("[^v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [L1/R1]BEREICH [L2/R2]SEITE [B]ZURÜCK", "[^v]SELECT [</>]CHANGE [A]RUN [L1/R1]SECTION [L2/R2]PAGE [B]BACK"), C_ACC, C_DIM);
+    if (setIn) hint(6, 452, TR("[^v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [B]ZU DEN BEREICHEN [L1/R1]BEREICH [L2/R2]SEITE", "[^v]SELECT [</>]CHANGE [A]RUN [B]TO SECTIONS [L1/R1]SECTION [L2/R2]PAGE"), C_ACC, C_DIM);
+    else hint(6, 452, TR("[^v]BEREICH [A]ÖFFNEN [B]ZURÜCK [L2/R2]SEITE [SEL]KARTE", "[^v]SECTION [A]OPEN [B]BACK [L2/R2]PAGE [SEL]MAP"), C_ACC, C_DIM);
 }
 
 // (frueher) Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
@@ -4793,6 +4810,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     pcInMix((float*)stream, frames, pcInGain);    // PC-Ton dazumischen (nach dem Senden: kein Echo zum PC)
     recPush((const float*)stream, frames);
     scopePush((const float*)stream, frames);      // fuer Oszilloskop/Spektrum der Oberflaeche
+    remoteAudioPush((const float*)stream, frames, eng.sr);   // Ton in den Browser (nur bei Zuhoerern)
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
     if (el * 1000.0 > audWorkMax) audWorkMax = el * 1000.0;
@@ -5143,7 +5161,7 @@ int main(int argc, char** argv) {
             Pp.s[4][37].on = 1; Pp.s[4][37].lock[P_COND] = CND_AB + 35 + 5; slot = 7; editSlot = 7; editAt = 1;
             holdPat = curPi(); holdTrack = 4; holdStep = 37; aHeld = true; eng.fill = true;
         }
-        if (page == PG_SYS) { setSel = SI_OUT; setScroll = SI_OUT - 7.5f; animate(); }
+        if (page == PG_SYS) { setSel = SI_OUT; setIn = true; setScroll = SI_OUT - 7.5f; animate(); }
         if (page == PG_CMP) {   // Sidechain-Beispiel
             eng.proj.cmp[CM_SRC] = 1; eng.proj.cmp[CM_THR] = 40; eng.proj.cmp[CM_RAT] = 6; slot = 5;
             for (int k = 0; k < 4; k++) eng.render(tmp, 22050 / 2);

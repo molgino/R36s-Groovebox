@@ -32,6 +32,16 @@ bool webUpdateReady() { return g_updateReady != 0; }
 
 extern const char WEB_PAGE[];
 extern const char WEB_SCREEN[];
+extern const unsigned char WEB_ICON180[], WEB_ICON192[], WEB_ICON512[];
+extern const size_t WEB_ICON180_LEN, WEB_ICON192_LEN, WEB_ICON512_LEN;
+// Web-App: auf dem Homescreen installierbar, startet die Fernbedienung im Vollbild (Querformat)
+static const char WEB_MANIFEST[] = "{\"name\":\"SYNTH CITY\",\"short_name\":\"SYNTH CITY\",\"start_url\":\"/screen\",\"scope\":\"/\","
+    "\"display\":\"fullscreen\",\"orientation\":\"landscape\",\"background_color\":\"#080612\",\"theme_color\":\"#080612\","
+    "\"icons\":[{\"src\":\"/icon-192.png\",\"sizes\":\"192x192\",\"type\":\"image/png\"},"
+    "{\"src\":\"/icon-512.png\",\"sizes\":\"512x512\",\"type\":\"image/png\",\"purpose\":\"any maskable\"}]}";
+// Service-Worker (nur in sicherem Kontext aktiv): reicht alles durch, Voraussetzung fuer "App installieren" in Chrome
+static const char WEB_SW[] = "self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>self.clients.claim());"
+    "self.addEventListener('fetch',e=>{});";
 
 int webPort() { return g_port; }
 bool webTakeChange(Uint32 now, Uint32 quietMs) {
@@ -336,12 +346,17 @@ static bool handle(int fd) {   // true = Verbindung wurde uebernommen (WebSocket
         return false;
     }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/list")) { handleList(fd); return false; }
-    if (!strcmp(method, "GET") && !strcmp(target, "/ws")) {   // Fernbedienung: Bildstrom + Tasten ueber WebSocket
+    if (!strcmp(method, "GET") && (!strcmp(target, "/ws") || !strcmp(target, "/wsa"))) {   // Fernbedienung: Bild + Tasten bzw. Ton (wsa)
         *bodyStart = 0;
-        if (remoteWsAccept(fd, hb)) return true;
+        if (remoteWsAccept(fd, hb, target[3] == 'a')) return true;
         replyText(fd, 400, "WebSocket?");
         return false;
     }
+    if (!strcmp(method, "GET") && !strcmp(target, "/manifest.json")) { reply(fd, 200, "application/manifest+json", WEB_MANIFEST, strlen(WEB_MANIFEST)); return false; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/sw.js")) { reply(fd, 200, "text/javascript", WEB_SW, strlen(WEB_SW)); return false; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/icon-192.png")) { reply(fd, 200, "image/png", (const char*)WEB_ICON192, WEB_ICON192_LEN); return false; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/icon-512.png")) { reply(fd, 200, "image/png", (const char*)WEB_ICON512, WEB_ICON512_LEN); return false; }
+    if (!strcmp(method, "GET") && (!strcmp(target, "/apple-touch-icon.png") || !strcmp(target, "/favicon.ico"))) { reply(fd, 200, "image/png", (const char*)WEB_ICON180, WEB_ICON180_LEN); return false; }
     if (!strcmp(method, "GET") && !strcmp(target, "/screen")) { reply(fd, 200, "text/html; charset=utf-8", WEB_SCREEN, strlen(WEB_SCREEN)); return false; }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/screen")) {   // Bild (Differenz seit "since")
         char sv[16] = "0";

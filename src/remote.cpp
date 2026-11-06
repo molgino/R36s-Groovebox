@@ -116,6 +116,29 @@ size_t remoteEncode(unsigned since, uint8_t** out, size_t* cap) {
     return n;
 }
 
+// ---------------------------------------------------------------- Ton in den Browser (/wsa)
+// audioCb schreibt die Summe als 16 Bit Stereo in einen Ring (nur solange jemand zuhoert), jeder Zuhoerer liest mit eigenem Zeiger.
+enum { AUD_N = 1 << 15 };                    // Frames im Ring (~0,7 s)
+static int16_t g_aud[AUD_N * 2];
+static volatile unsigned g_audW = 0;          // geschriebene Frames (laeuft ueber)
+static volatile int g_audRate = 44100;
+static volatile int g_audClients = 0;
+void remoteAudioPush(const float* st, int frames, int rate) {
+    if (!g_audClients) return;
+    g_audRate = rate;
+    unsigned w = g_audW;
+    for (int i = 0; i < frames; i++) {
+        unsigned k = (w + (unsigned)i) & (AUD_N - 1);
+        for (int c = 0; c < 2; c++) {
+            float v = st[i * 2 + c] * 32767.f;
+            g_aud[k * 2 + c] = (int16_t)(v > 32767.f ? 32767 : (v < -32768.f ? -32768 : (int)v));
+        }
+    }
+    __sync_synchronize();
+    g_audW = w + (unsigned)frames;
+}
+bool remoteAudioWanted() { return g_audClients > 0; }
+
 // ---------------------------------------------------------------- Touch-Warteschlange (Web-Thread -> Hauptthread)
 static RemoteTouch g_tq[256];
 static unsigned g_tqHead = 0, g_tqTail = 0;
@@ -207,13 +230,16 @@ static bool wsSend(int fd, int op, const void* data, size_t n) {
 }
 
 static volatile int g_wsClients = 0;
-struct WsArg { int fd; };
+struct WsArg { int fd; bool audio; };
 
 static int wsThread(void* arg);
 static void* wsThreadP(void* arg) { wsThread(arg); return nullptr; }
+static int wsAudioThread(int fd);
 static int wsThread(void* arg) {
     int fd = ((WsArg*)arg)->fd;
+    bool audio = ((WsArg*)arg)->audio;
     free(arg);
+    if (audio) return wsAudioThread(fd);
     RemoteClient* cl = (RemoteClient*)calloc(1, sizeof(RemoteClient));
     uint8_t* buf = nullptr; size_t cap = 0;
     uint8_t in[4096]; size_t inN = 0;
@@ -271,7 +297,60 @@ static int wsThread(void* arg) {
     return 0;
 }
 
-bool remoteWsAccept(int fd, const char* headers) {
+// Ton-Strom: Pakete "u32 Rate, u32 Frame-Nummer, int16 L/R ..." (~12 ms), nur gesendet wenn das vorige raus ist;
+// faellt der Zuhoerer > 0,25 s zurueck (schlechtes Netz), springt er nach vorn (lieber kurz Luecke als wachsende Verzoegerung)
+static int wsAudioThread(int fd) {
+    __sync_fetch_and_add(&g_audClients, 1);
+    unsigned rd = g_audW;
+    uint8_t in[512]; size_t inN = 0;
+    static const int MAXF = 2048;
+    uint8_t* pk = (uint8_t*)malloc(8 + MAXF * 4);
+    bool alive = pk != nullptr;
+    Uint32 lastSend = SDL_GetTicks();
+    while (alive) {
+        struct pollfd pf = {fd, POLLIN, 0};
+        int pr = poll(&pf, 1, 5);
+        if (pr < 0) break;
+        if (pr > 0) {   // nur Ping/Schliessen erwartet
+            if (pf.revents & (POLLERR | POLLHUP)) break;
+            ssize_t r = recv(fd, in + inN, sizeof in - inN, 0);
+            if (r <= 0) break;
+            inN += (size_t)r;
+            while (inN >= 2) {
+                int op = in[0] & 15; bool masked = in[1] & 0x80; size_t len = in[1] & 127;
+                if (len >= 126) { alive = false; break; }
+                size_t tot = 2 + (masked ? 4 : 0) + len;
+                if (inN < tot) break;
+                uint8_t* m = in + 2; uint8_t* d = m + (masked ? 4 : 0);
+                if (masked) for (size_t i = 0; i < len; i++) d[i] ^= m[i & 3];
+                if (op == 8) { wsSend(fd, 8, nullptr, 0); alive = false; break; }
+                if (op == 1 && len > 0 && d[0] == 'p') { d[0] = 'P'; wsSend(fd, 1, d, len); }
+                memmove(in, in + tot, inN - tot); inN -= tot;
+            }
+        }
+        if (!alive) break;
+        unsigned w = g_audW;
+        unsigned avail = w - rd;
+        if (avail > (unsigned)(g_audRate / 4)) { rd = w - 1024; avail = 1024; }   // zu weit zurueck: aufholen
+        if (avail >= 512) {
+            int n = avail > (unsigned)MAXF ? MAXF : (int)avail;
+            uint32_t rate = (uint32_t)g_audRate, pos = rd;
+            memcpy(pk, &rate, 4); memcpy(pk + 4, &pos, 4);
+            int16_t* o = (int16_t*)(pk + 8);
+            for (int i = 0; i < n; i++) { unsigned k = (rd + (unsigned)i) & (AUD_N - 1); o[i * 2] = g_aud[k * 2]; o[i * 2 + 1] = g_aud[k * 2 + 1]; }
+            rd += (unsigned)n;
+            if (!wsSend(fd, 2, pk, 8 + (size_t)n * 4)) break;
+            lastSend = SDL_GetTicks();
+        } else if (SDL_GetTicks() - lastSend > 5000) { lastSend = SDL_GetTicks(); if (!wsSend(fd, 9, "k", 1)) break; }
+    }
+    free(pk);
+    close(fd);
+    __sync_fetch_and_sub(&g_audClients, 1);
+    __sync_fetch_and_sub(&g_wsClients, 1);
+    return 0;
+}
+
+bool remoteWsAccept(int fd, const char* headers, bool audio) {
     const char* k = nullptr;
     for (const char* l = headers; l && *l; l = strstr(l, "\r\n")) {
         if (*l == '\r') l += 2;
@@ -282,7 +361,7 @@ bool remoteWsAccept(int fd, const char* headers) {
     char key[128]; int n = 0;
     while (k[n] && k[n] != '\r' && n < 60) { key[n] = k[n]; n++; }
     key[n] = 0;
-    if (g_wsClients >= 3) {
+    if (g_wsClients >= 6) {
         const char* busy = "HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         wsSendAll(fd, busy, strlen(busy));
         return false;
@@ -299,7 +378,7 @@ bool remoteWsAccept(int fd, const char* headers) {
     WsArg* a = (WsArg*)malloc(sizeof(WsArg));
     if (!a) return false;
     if (!g_tqMx) g_tqMx = SDL_CreateMutex();
-    a->fd = fd;
+    a->fd = fd; a->audio = audio;
     __sync_fetch_and_add(&g_wsClients, 1);
     pthread_attr_t at; pthread_attr_init(&at);
     pthread_attr_setstacksize(&at, 256 * 1024);   // kleiner Stack (mlockall sperrt sonst 8 MB je Thread)
