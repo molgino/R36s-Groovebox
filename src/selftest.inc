@@ -481,8 +481,11 @@ static void uiScenarios() {
     }
 
     uiCase = "Einstellungen";
-    simReset(); page = PG_SYS; simWait(50);
-    tap(BT_DOWN); tap(BT_DOWN);
+    simReset(); page = PG_SYS; setIn = false; setSel = SI_PATTERN + 1; simWait(50);
+    { int c0 = setCatOf(setSel); tap(BT_DOWN); UCHECK(setCatOf(setSel) != c0 && !setIn, "SET: runter waehlt nicht den naechsten Bereich");
+      int c1 = setCatOf(setSel); tap(BT_A); UCHECK(setIn && setCatOf(setSel) == c1, "SET: A oeffnet den Bereich nicht");
+      tap(BT_DOWN); UCHECK(setCatOf(setSel) == c1, "SET: runter verlaesst im Bereich den Bereich");
+      tap(BT_B); UCHECK(!setIn && page == PG_SYS, "SET: B fuehrt nicht zurueck zu den Bereichen"); }
     tap(BT_B); UCHECK(page != PG_SYS, "B verlaesst SET nicht");
 
     uiCase = "Rückgängig";

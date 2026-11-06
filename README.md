@@ -300,7 +300,7 @@ Beim Drehen zeigt eine Mini-Tastatur die Skalentöne. Die aktive Skala steht im 
 * **SAMPLES:** Bibliothek/Projekt/fehlende Samples, Browser-Adresse, USB-Laufwerk, alte Sample-Nummern
 * **SYSTEM:** **Sprache / Language**, Bild-Versatz, Tasten neu lernen, Leistungstest, Info, Beenden
 
-Steuerkreuz ↑/↓ wählt den Eintrag, **L1/R1 den Bereich**, ←/→ (oder X/Y) ändert, **A** führt aus, **B** springt zurück zur vorherigen Seite.
+Zwei Ebenen wie ein Menü: Zuerst ist links ein **Bereich** gewählt (↑/↓ wechselt den Bereich). **A** (oder →) öffnet ihn, dann wählt ↑/↓ den Eintrag, ←/→ (oder X/Y) ändert den Wert und **A** führt Aktionen aus. **B** geht zurück zu den Bereichen, ein weiteres **B** verlässt SET zur vorherigen Seite. L1/R1 springen jederzeit direkt zum vorigen/nächsten Bereich.
 
 ## Mixer (MIX-Seite)
 
@@ -575,7 +575,14 @@ Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, w
 
 **Power-Taste:** kurz drücken schaltet das Display aus und wieder an (die Musik läuft weiter, spart Akku), **lang drücken (1,5 s)** speichert das Projekt und fährt den R36S sauber herunter.
 
-**Bildschirm & Fernbedienung im Browser:** Unter http://192.168.77.1/screen erscheint das Live-Bild der Groovebox (bis ca. 30 Bilder/s, nur geänderte Bildteile werden übertragen). Bedienen per Maus/Touch über die eingeblendeten Tasten oder per Tastatur: Pfeile = Steuerkreuz, Z = A, X = B, S = X, A = Y, Q/W = L1/R1, 1/2 = L2/R2, Shift = SELECT, Enter = START, T/F/G/H = linker Stick, I/J/K/L = rechter Stick. Mit „Vollbild“ groß darstellen, z. B. für Aufnahmen oder Streams.
+**Bildschirm & Fernbedienung im Browser:** Unter http://192.168.77.1/screen erscheint das Live-Bild der Groovebox (bis ca. 30 Bilder/s über eine dauerhafte WebSocket-Verbindung, nur geänderte Bildteile; Tasten kommen ohne Umweg an). Oben stehen Bilder/s, Datenrate und Verzögerung (ms).
+* **Touch direkt aufs Bild:** Spur, Seite im Signalweg, Reiter oben, Kachel, Step oder Feld der Seitenkarte antippen wählt es aus. **Auf einer Kachel ziehen** (hoch oder rechts = mehr) ändert den Wert, auch im Mixer die Fader. **Step antippen** = Trig an/aus; **Step halten und mit einem zweiten Finger eine Kachel ziehen** = P-Lock (wie A halten + Regler). Eine gewählte Kachel nochmal antippen öffnet die Auswahlliste (Sample, LFO-Ziel, Engine, Wavetable zeichnen). Mixer: M/S antippen, LIVE: Spur antippen = Mute, FILL/REC/START antippen. Einstellungen: Eintrag antippen, nach links/rechts ziehen = Wert. „Tasten“ blendet die Touch-Tasten aus (größeres Bild).
+* **Touch-Tasten (Handy/Tablet):** Im Querformat liegt das Bild in der Mitte, Steuerkreuz + L1/L2 links, A/B/X/Y + R1/R2 rechts, SELECT/START darunter – wie am R36S. Mehrere Finger gleichzeitig gehen (z. B. A halten + Steuerkreuz), Wischen über das Steuerkreuz wechselt die Richtung, Diagonalen drücken zwei Richtungen. ⛶ = Vollbild (dreht auf Querformat, Bildschirm bleibt an). „Sticks“ blendet die Analog-Sticks ein.
+* **Tastatur:** Pfeile = Steuerkreuz, Z/Leertaste = A, X/Rücktaste/Esc = B, S = X, A = Y, Q/W = L1/R1, 1/2 = L2/R2, Shift/Tab = SELECT, Enter = START (halten = FILL), T/F/G/H = linker Stick, I/J/K/L = rechter Stick. „?“ zeigt die Belegung.
+* **Gamepad:** Ein am PC oder Handy angeschlossenes Gamepad (Xbox, PlayStation, Bluetooth …) wird erkannt, Tasten in der Lage wie am R36S.
+* **Ton im Browser:** Oben auf „🔈 Ton“ tippen – der Klang der Groovebox kommt dann live im Browser (16 Bit Stereo, ca. 175 kB/s, Verzögerung ca. 0,1–0,2 s; der Regler daneben ist die Lautstärke). Lautsprecher/Kopfhörer am R36S laufen weiter (leiser drehen per Lautstärketasten). War der Ton beim letzten Mal an, startet er beim ersten Antippen der Seite wieder (Browser verlangen eine Berührung, bevor sie Ton abspielen). Am iPhone den Lautlos-Schalter beachten.
+* **Als App auf dem Homescreen:** iPhone/iPad: in Safari `http://192.168.77.1/screen` öffnen → Teilen → „Zum Home-Bildschirm“ – startet danach ohne Browserleiste im Vollbild mit dem SYNTH-CITY-Symbol. Android: Chrome-Menü → „Zum Startbildschirm hinzufügen“. Hinweis: Weil der R36S unverschlüsselt (http) erreichbar ist, bietet Chrome kein „App installieren“ an; die Verknüpfung öffnet die Seite dann im Browser.
+* Bis zu 3 Geräte können gleichzeitig zuschauen, bedienen und zuhören. Reißt die Verbindung ab, verbindet sich die Seite selbst neu und lässt alle Tasten los.
 
 **Logs im Browser:** Auf der Upload-Seite (http://192.168.77.1) unter „Logs“ lassen sich groovebox.log, boot.txt, update.log und pc-modus.log direkt ansehen und herunterladen.
 

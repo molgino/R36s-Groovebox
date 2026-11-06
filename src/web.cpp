@@ -1,5 +1,5 @@
 // Mini-Webserver: Samples und Projekte per Browser hochladen (PC-Modus: http://192.168.77.1)
-// Ein Thread, eine Verbindung nach der anderen. Nur Dateien unter samples/ und projects/.
+// Ein Thread, eine Verbindung nach der anderen (Fernbedienung /ws: je Zuschauer ein eigener Thread, remote.cpp). Nur Dateien unter samples/ und projects/.
 #include "web.h"
 #include "samples.h"
 #include "remote.h"
@@ -32,6 +32,16 @@ bool webUpdateReady() { return g_updateReady != 0; }
 
 extern const char WEB_PAGE[];
 extern const char WEB_SCREEN[];
+extern const unsigned char WEB_ICON180[], WEB_ICON192[], WEB_ICON512[];
+extern const size_t WEB_ICON180_LEN, WEB_ICON192_LEN, WEB_ICON512_LEN;
+// Web-App: auf dem Homescreen installierbar, startet die Fernbedienung im Vollbild (Querformat)
+static const char WEB_MANIFEST[] = "{\"name\":\"SYNTH CITY\",\"short_name\":\"SYNTH CITY\",\"start_url\":\"/screen\",\"scope\":\"/\","
+    "\"display\":\"fullscreen\",\"orientation\":\"landscape\",\"background_color\":\"#080612\",\"theme_color\":\"#080612\","
+    "\"icons\":[{\"src\":\"/icon-192.png\",\"sizes\":\"192x192\",\"type\":\"image/png\"},"
+    "{\"src\":\"/icon-512.png\",\"sizes\":\"512x512\",\"type\":\"image/png\",\"purpose\":\"any maskable\"}]}";
+// Service-Worker (nur in sicherem Kontext aktiv): reicht alles durch, Voraussetzung fuer "App installieren" in Chrome
+static const char WEB_SW[] = "self.addEventListener('install',e=>self.skipWaiting());self.addEventListener('activate',e=>self.clients.claim());"
+    "self.addEventListener('fetch',e=>{});";
 
 int webPort() { return g_port; }
 bool webTakeChange(Uint32 now, Uint32 quietMs) {
@@ -307,7 +317,7 @@ static void handleList(int fd) {
 
 // ---------------------------------------------------------------- Anfragen
 
-static void handle(int fd) {
+static bool handle(int fd) {   // true = Verbindung wurde uebernommen (WebSocket), nicht schliessen
     struct timeval tv = {15, 0};
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
@@ -316,13 +326,13 @@ static void handle(int fd) {
     char* bodyStart = nullptr;
     while (hl < (int)sizeof hb - 1) {
         ssize_t r = recv(fd, hb + hl, sizeof hb - 1 - hl, 0);
-        if (r <= 0) return;
+        if (r <= 0) return false;
         hl += (int)r; hb[hl] = 0;
         if ((bodyStart = strstr(hb, "\r\n\r\n"))) { bodyStart += 4; break; }
     }
-    if (!bodyStart) { replyText(fd, 400, "zu grosser Header"); return; }
+    if (!bodyStart) { replyText(fd, 400, "zu grosser Header"); return false; }
     char method[8] = {0}, target[1024] = {0};
-    if (sscanf(hb, "%7s %1023s", method, target) != 2) { replyText(fd, 400, "?"); return; }
+    if (sscanf(hb, "%7s %1023s", method, target) != 2) { replyText(fd, 400, "?"); return false; }
     long long clen = 0;
     for (char* l = strstr(hb, "\r\n"); l && l < bodyStart; l = strstr(l + 2, "\r\n"))
         if (!strncasecmp(l + 2, "Content-Length:", 15)) clen = atoll(l + 17);
@@ -333,25 +343,36 @@ static void handle(int fd) {
 
     if (!strcmp(method, "GET") && (!strcmp(target, "/") || !strcmp(target, "/index.html"))) {
         reply(fd, 200, "text/html; charset=utf-8", WEB_PAGE, strlen(WEB_PAGE));
-        return;
+        return false;
     }
-    if (!strcmp(method, "GET") && !strcmp(target, "/api/list")) { handleList(fd); return; }
-    if (!strcmp(method, "GET") && !strcmp(target, "/screen")) { reply(fd, 200, "text/html; charset=utf-8", WEB_SCREEN, strlen(WEB_SCREEN)); return; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/api/list")) { handleList(fd); return false; }
+    if (!strcmp(method, "GET") && (!strcmp(target, "/ws") || !strcmp(target, "/wsa"))) {   // Fernbedienung: Bild + Tasten bzw. Ton (wsa)
+        *bodyStart = 0;
+        if (remoteWsAccept(fd, hb, target[3] == 'a')) return true;
+        replyText(fd, 400, "WebSocket?");
+        return false;
+    }
+    if (!strcmp(method, "GET") && !strcmp(target, "/manifest.json")) { reply(fd, 200, "application/manifest+json", WEB_MANIFEST, strlen(WEB_MANIFEST)); return false; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/sw.js")) { reply(fd, 200, "text/javascript", WEB_SW, strlen(WEB_SW)); return false; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/icon-192.png")) { reply(fd, 200, "image/png", (const char*)WEB_ICON192, WEB_ICON192_LEN); return false; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/icon-512.png")) { reply(fd, 200, "image/png", (const char*)WEB_ICON512, WEB_ICON512_LEN); return false; }
+    if (!strcmp(method, "GET") && (!strcmp(target, "/apple-touch-icon.png") || !strcmp(target, "/favicon.ico"))) { reply(fd, 200, "image/png", (const char*)WEB_ICON180, WEB_ICON180_LEN); return false; }
+    if (!strcmp(method, "GET") && !strcmp(target, "/screen")) { reply(fd, 200, "text/html; charset=utf-8", WEB_SCREEN, strlen(WEB_SCREEN)); return false; }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/screen")) {   // Bild (Differenz seit "since")
         char sv[16] = "0";
         if (q) queryGet(q, "since", sv, sizeof sv);
         static uint8_t* sbuf = nullptr; static size_t scap = 0;
         size_t n = remoteEncode((unsigned)strtoul(sv, nullptr, 10), &sbuf, &scap);
-        if (!n) { reply(fd, 204, "application/octet-stream", "", 0); return; }
+        if (!n) { reply(fd, 204, "application/octet-stream", "", 0); return false; }
         reply(fd, 200, "application/octet-stream", (const char*)sbuf, n);
-        return;
+        return false;
     }
     if (!strcmp(method, "POST") && !strcmp(target, "/api/input")) {   // Fernbedienung
         char bn[12] = "", vv[8] = "0";
         if (q) { queryGet(q, "b", bn, sizeof bn); queryGet(q, "v", vv, sizeof vv); }
         remoteInput(bn, atoi(vv));
         reply(fd, 200, "text/plain", "ok", 2);
-        return;
+        return false;
     }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/log")) {   // Logs ansehen (feste Liste, keine beliebigen Pfade)
         char nm[40] = "", path[800] = "";
@@ -372,16 +393,16 @@ static void handle(int fd) {
                              " for c in $(ls /proc/asound | grep -o 'card[0-9]*' | tr -d card); do grep -qi uac /proc/asound/card$c/id 2>/dev/null && { echo \"=== Regler Karte $c\"; amixer -c $c contents; echo \"=== PCM Karte $c\"; cat /proc/asound/card$c/pcm0p/sub0/hw_params /proc/asound/card$c/pcm0p/sub0/status 2>/dev/null; }; done;"
                              " echo '=== MIDI (ALSA-Sequencer)'; cat /proc/asound/seq/clients 2>/dev/null | grep -E '^Client|Port|Connect';"
                              " echo '=== Kernel (USB/Audio)'; dmesg | grep -iE 'dwc2|uac|gadget|u_audio|usb|configfs' | tail -80; } 2>&1", "r");
-            if (!pp) { replyText(fd, 404, "(Diagnose nicht moeglich)"); return; }
+            if (!pp) { replyText(fd, 404, "(Diagnose nicht moeglich)"); return false; }
             static char db[65536];
             size_t dn = fread(db, 1, sizeof db, pp);
             pclose(pp);
             reply(fd, 200, "text/plain; charset=utf-8", db, dn);
-            return;
+            return false;
         }
         FILE* f = path[0] ? fopen(path, "rb") : nullptr;
         if (!f && !strcmp(nm, "groovebox.log")) { snprintf(path, sizeof path, "%sgroovebox.log", g_base); f = fopen(path, "rb"); }   // ArkOS
-        if (!f) { replyText(fd, 404, "(Log nicht vorhanden)"); return; }
+        if (!f) { replyText(fd, 404, "(Log nicht vorhanden)"); return false; }
         fseek(f, 0, SEEK_END); long n = ftell(f);
         long start = n > 300000 ? n - 300000 : 0;   // nur das Ende grosser Logs
         fseek(f, start, SEEK_SET);
@@ -390,18 +411,18 @@ static void handle(int fd) {
         fclose(f);
         reply(fd, 200, "text/plain; charset=utf-8", buf ? buf : "", r);
         free(buf);
-        return;
+        return false;
     }
     if (!strcmp(method, "PUT") && !strcmp(target, "/api/update")) {   // Groovebox-OS: Programm-Update (.tgz)
-        if (!isOS()) { replyText(fd, 400, "Updates per Browser nur im Groovebox-OS (ArkOS: deploy.ps1)"); return; }
-        if (clen <= 1000 || clen > 64LL * 1024 * 1024) { replyText(fd, 413, "Update-Datei ungueltig"); return; }
+        if (!isOS()) { replyText(fd, 400, "Updates per Browser nur im Groovebox-OS (ArkOS: deploy.ps1)"); return false; }
+        if (clen <= 1000 || clen > 64LL * 1024 * 1024) { replyText(fd, 413, "Update-Datei ungueltig"); return false; }
         char udir[700], tmp[800], fin[800];
         snprintf(udir, sizeof udir, "%supdate", g_base);
         mkdir(udir, 0755);
         snprintf(tmp, sizeof tmp, "%s/groovebox-update.part", udir);
         snprintf(fin, sizeof fin, "%s/groovebox-update.tgz", udir);
         FILE* f = fopen(tmp, "wb");
-        if (!f) { replyText(fd, 400, "Kann Update nicht speichern"); return; }
+        if (!f) { replyText(fd, 400, "Kann Update nicht speichern"); return false; }
         long long got = 0;
         int pre = hl - (int)(bodyStart - hb);
         if (pre > 0) { if (pre > clen) pre = (int)clen; fwrite(bodyStart, 1, (size_t)pre, f); got = pre; }
@@ -416,25 +437,25 @@ static void handle(int fd) {
         unsigned char mg[2] = {0, 0};
         FILE* chk = ok ? fopen(tmp, "rb") : nullptr;
         if (chk) { if (fread(mg, 1, 2, chk) != 2) mg[0] = 0; fclose(chk); }
-        if (!ok || mg[0] != 0x1f || mg[1] != 0x8b) { unlink(tmp); replyText(fd, 400, "Keine gueltige Update-Datei (.tgz)"); return; }
+        if (!ok || mg[0] != 0x1f || mg[1] != 0x8b) { unlink(tmp); replyText(fd, 400, "Keine gueltige Update-Datei (.tgz)"); return false; }
         sync();
         rename(tmp, fin);
         note("UPDATE: %.60s", g_lang ? "INSTALLING" : "WIRD INSTALLIERT");
         replyText(fd, 200, "ok - Groovebox startet neu und installiert das Update");
         g_updateReady = 1;
-        return;
+        return false;
     }
 
-    if (!rootDir(root, dir, sizeof dir)) { replyText(fd, 400, "root?"); return; }
+    if (!rootDir(root, dir, sizeof dir)) { replyText(fd, 400, "root?"); return false; }
     bool isS = !strcmp(root, "samples");
     const char* ext = isS ? ".wav" : ".gbx";
     snprintf(full, sizeof full, "%s/%s", dir, rel);
 
     bool relOk = rel[0] == 0 || safeRel(rel, isS ? SAMPLE_DEPTH : 0);   // leer = Wurzel
     if (!strcmp(method, "GET") && !strcmp(target, "/api/dir")) {
-        if (!relOk || !isS) { replyText(fd, 400, "Pfad?"); return; }
+        if (!relOk || !isS) { replyText(fd, 400, "Pfad?"); return false; }
         handleDir(fd, dir, rel, ext);
-        return;
+        return false;
     }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/search")) {
         char qq[100] = ""; if (q) queryGet(q, "q", qq, sizeof qq);
@@ -444,54 +465,54 @@ static void handle(int fd) {
         char num[80]; snprintf(num, sizeof num, "],\"more\":%s}", hits > 400 ? "true" : "false"); bstr(b, num);
         reply(fd, 200, "application/json", b.p, b.n);
         free(b.p);
-        return;
+        return false;
     }
     if (!strcmp(method, "GET") && !strcmp(target, "/api/info")) {
-        if (!rel[0] || !relOk || !hasExt(rel, ".wav")) { replyText(fd, 400, "Pfad?"); return; }
+        if (!rel[0] || !relOk || !hasExt(rel, ".wav")) { replyText(fd, 400, "Pfad?"); return false; }
         handleInfo(fd, full);
-        return;
+        return false;
     }
     if (!strcmp(method, "POST") && !strcmp(target, "/api/mkdir")) {
-        if (!isS || !rel[0] || !relOk || hasExt(rel, ".wav")) { replyText(fd, 400, "Ungueltiger Ordnername"); return; }
+        if (!isS || !rel[0] || !relOk || hasExt(rel, ".wav")) { replyText(fd, 400, "Ungueltiger Ordnername"); return false; }
         mkParents(dir, rel);
-        if (mkdir(full, 0755) && errno != EEXIST) { replyText(fd, 400, "Ordner nicht angelegt"); return; }
+        if (mkdir(full, 0755) && errno != EEXIST) { replyText(fd, 400, "Ordner nicht angelegt"); return false; }
         g_changedAt = SDL_GetTicks(); g_changed = 1;
         replyText(fd, 200, "ok");
-        return;
+        return false;
     }
     if (!strcmp(method, "POST") && !strcmp(target, "/api/rmdir")) {
         struct stat st;
-        if (!isS || !rel[0] || !relOk || stat(full, &st) || !S_ISDIR(st.st_mode)) { replyText(fd, 400, "Ordner?"); return; }
+        if (!isS || !rel[0] || !relOk || stat(full, &st) || !S_ISDIR(st.st_mode)) { replyText(fd, 400, "Ordner?"); return false; }
         bool ok = rmTree(full, 0);
         sync();
         g_changedAt = SDL_GetTicks(); g_changed = 1;
         note(g_lang ? "DELETED: %.60s" : "GELÖSCHT: %.60s", rel);
         replyText(fd, ok ? 200 : 400, ok ? "ok" : "nicht alles geloescht");
-        return;
+        return false;
     }
     if (!strcmp(method, "POST") && !strcmp(target, "/api/move")) {   // Datei oder Ordner verschieben/umbenennen
         char to[400] = "", tfull[1200]; struct stat st;
         if (q) queryGet(q, "to", to, sizeof to);
-        if (!rel[0] || !relOk || !to[0] || !safeRel(to, isS ? SAMPLE_DEPTH : 0) || stat(full, &st)) { replyText(fd, 400, "Pfad?"); return; }
+        if (!rel[0] || !relOk || !to[0] || !safeRel(to, isS ? SAMPLE_DEPTH : 0) || stat(full, &st)) { replyText(fd, 400, "Pfad?"); return false; }
         bool isDir = S_ISDIR(st.st_mode);
-        if (!isS && isDir) { replyText(fd, 400, "Pfad?"); return; }
-        if (!isDir && !hasExt(to, ext)) { replyText(fd, 400, isS ? "Ziel muss auf .wav enden" : "Ziel muss auf .gbx enden"); return; }
+        if (!isS && isDir) { replyText(fd, 400, "Pfad?"); return false; }
+        if (!isDir && !hasExt(to, ext)) { replyText(fd, 400, isS ? "Ziel muss auf .wav enden" : "Ziel muss auf .gbx enden"); return false; }
         size_t rl = strlen(rel);
-        if (isDir && !strncmp(to, rel, rl) && (to[rl] == '/' || !to[rl])) { replyText(fd, 400, "Ordner kann nicht in sich selbst"); return; }
+        if (isDir && !strncmp(to, rel, rl) && (to[rl] == '/' || !to[rl])) { replyText(fd, 400, "Ordner kann nicht in sich selbst"); return false; }
         snprintf(tfull, sizeof tfull, "%s/%s", dir, to);
-        if (!stat(tfull, &st)) { replyText(fd, 409, "Ziel existiert schon"); return; }
+        if (!stat(tfull, &st)) { replyText(fd, 409, "Ziel existiert schon"); return false; }
         mkParents(dir, to);
-        if (rename(full, tfull)) { replyText(fd, 400, "Verschieben fehlgeschlagen"); return; }
+        if (rename(full, tfull)) { replyText(fd, 400, "Verschieben fehlgeschlagen"); return false; }
         sync();
         if (isS) { g_changedAt = SDL_GetTicks(); g_changed = 1; }
         replyText(fd, 200, "ok");
-        return;
+        return false;
     }
 
     if (!strcmp(method, "GET") && !strcmp(target, "/api/file")) {
-        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
+        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return false; }
         FILE* f = fopen(full, "rb");
-        if (!f) { replyText(fd, 404, "nicht gefunden"); return; }
+        if (!f) { replyText(fd, 404, "nicht gefunden"); return false; }
         fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
         char h[300];
         int l = snprintf(h, sizeof h, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n",
@@ -501,16 +522,16 @@ static void handle(int fd) {
         size_t r;
         while ((r = fread(buf, 1, sizeof buf, f)) > 0) if (!sendAll(fd, buf, r)) break;
         fclose(f);
-        return;
+        return false;
     }
     if (!strcmp(method, "PUT") && !strcmp(target, "/api/upload")) {
-        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Ungueltiger Dateiname"); return; }
-        if (clen <= 0 || clen > 200LL * 1024 * 1024) { replyText(fd, 413, "Datei zu gross (max. 200 MB)"); return; }
+        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Ungueltiger Dateiname"); return false; }
+        if (clen <= 0 || clen > 200LL * 1024 * 1024) { replyText(fd, 413, "Datei zu gross (max. 200 MB)"); return false; }
         mkParents(dir, rel);
         char tmp[1300];
         snprintf(tmp, sizeof tmp, "%s.upload", full);
         FILE* f = fopen(tmp, "wb");
-        if (!f) { replyText(fd, 400, "Kann Datei nicht anlegen"); return; }
+        if (!f) { replyText(fd, 400, "Kann Datei nicht anlegen"); return false; }
         long long got = 0;
         int pre = hl - (int)(bodyStart - hb);
         if (pre > 0) { if (pre > clen) pre = (int)clen; fwrite(bodyStart, 1, (size_t)pre, f); got = pre; }
@@ -523,24 +544,25 @@ static void handle(int fd) {
             got += r;
         }
         if (fclose(f) != 0) ok = false;
-        if (!ok) { unlink(tmp); replyText(fd, 400, "Uebertragung abgebrochen oder Karte voll"); return; }
+        if (!ok) { unlink(tmp); replyText(fd, 400, "Uebertragung abgebrochen oder Karte voll"); return false; }
         sync();
-        if (rename(tmp, full)) { unlink(tmp); replyText(fd, 400, "Umbenennen fehlgeschlagen"); return; }
+        if (rename(tmp, full)) { unlink(tmp); replyText(fd, 400, "Umbenennen fehlgeschlagen"); return false; }
         if (isS) { g_changedAt = SDL_GetTicks(); g_changed = 1; }
         note(isS ? "SAMPLE: %.60s" : (g_lang ? "PROJECT: %.60s" : "PROJEKT: %.60s"), rel);
         replyText(fd, 200, "ok");
-        return;
+        return false;
     }
     if (!strcmp(method, "POST") && !strcmp(target, "/api/delete")) {
-        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return; }
-        if (unlink(full)) { replyText(fd, 404, "nicht gefunden"); return; }
+        if (!safeRel(rel, isS ? SAMPLE_DEPTH : 0) || !hasExt(rel, ext)) { replyText(fd, 400, "Pfad?"); return false; }
+        if (unlink(full)) { replyText(fd, 404, "nicht gefunden"); return false; }
         sync();   // Ordner bleibt stehen (der Explorer zeigt ihn leer; loeschen ueber /api/rmdir)
         if (isS) { g_changedAt = SDL_GetTicks(); g_changed = 1; }
         note(g_lang ? "DELETED: %.60s" : "GELÖSCHT: %.60s", rel);
         replyText(fd, 200, "ok");
-        return;
+        return false;
     }
     replyText(fd, 404, "unbekannt");
+    return false;
 }
 
 static int webThread(void* arg) {
@@ -548,7 +570,7 @@ static int webThread(void* arg) {
     for (;;) {
         int fd = accept(ls, nullptr, nullptr);
         if (fd < 0) { if (errno == EINTR) continue; SDL_Delay(200); continue; }
-        handle(fd);
+        if (handle(fd)) continue;   // WebSocket: eigener Thread hat fd uebernommen
         shutdown(fd, SHUT_WR);
         char d[256];
         struct timeval tv = {1, 0};

@@ -790,6 +790,18 @@ static void battery(int x, int y) {
 }
 
 static void drawIcon(int m, int x, int y, int s, Col c);
+// ---------------------------------------------------------------- Touch-Flaechen (Fernbedienung im Browser)
+// Jede Zeichenfunktion meldet ihre bedienbaren Flaechen; Touch prueft gegen das zuletzt gezeichnete Bild (oberste zuerst).
+enum HitKind { HK_TRACK, HK_PAGE, HK_SLOT, HK_STEP, HK_MUTE, HK_SOLO, HK_MIXCH, HK_MENU, HK_YES, HK_NO, HK_LIVE, HK_BTN, HK_SET, HK_SONG, HK_PRJ, HK_BLOCK };
+struct Hit { short x, y, w, h; uint8_t k; short a, b; };
+enum { MAX_HITS = 320 };
+static Hit hits[MAX_HITS];
+static int nHits = 0, hitModalAt = 0;
+static void hitAdd(int x, int y, int w, int h, int k, int a = 0, int b = -1) {
+    if (nHits < MAX_HITS) hits[nHits++] = Hit{(short)x, (short)y, (short)w, (short)h, (uint8_t)k, (short)a, (short)b};
+}
+static void hitModal() { hitModalAt = nHits; hitAdd(0, 0, SW, SH, HK_BLOCK); }   // Fenster darueber: darunter nichts mehr treffen
+
 static void drawHeader() {
     char b[64];
     Col tc = TCOL[track];
@@ -859,6 +871,7 @@ static void drawHeader() {
         for (int i = first; i < n; i++) {
             int p = list[i], w = textW(PAGE_NAMES[p]) + 4;
             if (x + w > right) { text(right - 4, 4, ">", C_DIM); break; }
+            hitAdd(x - 2, 0, w + 4, 22, HK_PAGE, p);
             if (p == page) { rrect(x, 3, w, 18, 4, C_ACC); text(x + 2, 4, PAGE_NAMES[p], C_BG); }
             else text(x + 2, 4, PAGE_NAMES[p], C_DIM);
             x += w + 1;
@@ -2187,6 +2200,8 @@ static void drawMixer(int ox) {
         bool sel = t == track;
         Col tc = eng.audible(t) ? TCOL[t] : dimC(TCOL[t], 0.35f);
         rrect(x + 2, y + 1, 76, 188, 8, sel ? C_SEL : C_PANEL);
+        hitAdd(x + 2, y + 1, 76, 188, HK_MIXCH, t);
+        hitAdd(x + 48, y + 3, 26, 17, HK_MUTE, t); hitAdd(x + 48, y + 20, 26, 17, HK_SOLO, t);
         snprintf(b, sizeof b, "T%d", t + 1);
         text(x + 8, y + 4, b, sel ? TCOL[t] : C_TEXT);
         drawIcon(P.machine[t] % M_COUNT, x + 8, y + 19, 22, mix(TCOL[t], C_PLAY, flash[t] * 0.5f));
@@ -2322,6 +2337,7 @@ static void mapSummary(int p, char* b, int n) {
 static void drawExportModal();
 static void drawWtEditorIfOpen();
 static void drawMenu() {
+    hitModal();
     rrect(10, 30, 620, 420, 14, C_ACC);
     rrect(12, 32, 616, 416, 13, C_BG);
     char b[64];
@@ -2345,6 +2361,7 @@ static void drawMenu() {
                 fill(x - 11, y + h / 2, 9, 2, ac); fill(x - 5, y + h / 2 - 2, 2, 6, ac); fill(x - 4, y + h / 2 - 1, 2, 4, ac);
             }
             Col bg = sel ? (r <= 2 ? tc : C_ACC) : (cur ? C_SEL : C_PANEL);
+            hitAdd(x, y, w, h, HK_MENU, p);
             rrect(x, y, w, h, 7, av ? bg : C_BG);
             if (cur && !sel) { Col fc = r <= 2 ? tc : C_ACC; rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); }
             if (!av) { rrect(x, y, w, h, 7, C_DARK); text(x + 8, y + 5, r <= 2 ? sigName(p) : mapName(p), C_OFF2); continue; }
@@ -2370,6 +2387,7 @@ static void drawConfirm() {
     rrect(320 - w / 2, 170, w, 110, 14, C_ACC);
     rrect(322 - w / 2, 172, w - 4, 106, 13, C_BG, 250);
     textC(320, 190, confirmText, C_TEXT);
+    hitModal(); hitAdd(220, 222, 90, 40, HK_YES); hitAdd(330, 222, 90, 40, HK_NO);
     rrect(220, 226, 90, 32, 8, C_GREEN); textC(265, 234, "A = JA", C_BG);
     rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, TR("B = NEIN", "B = NO"), C_TEXT);
 }
@@ -2550,7 +2568,7 @@ static void drawKnobs() {
             int gx = 4 + ox, gy = y + 2, gw = 632, gh = 62;
             int selRel = (slot / 4 == row) ? slot % 4 : -1;
             drawPageGraph(gk, gx, gy, gw, gh, selRel);
-            for (int k = row * 4; k < row * 4 + 4; k++) paramChip(k, (k % 4) * 160 + ox, y + 66, tc);
+            for (int k = row * 4; k < row * 4 + 4; k++) { paramChip(k, (k % 4) * 160 + ox, y + 66, tc); hitAdd((k % 4) * 160 + ox + 4, y + 64, 152, 30, HK_SLOT, k); }
             continue;
         }
         for (int k = row * 4; k < row * 4 + 4; k++) {
@@ -2560,6 +2578,7 @@ static void drawKnobs() {
             bool ok = knobInfo(k, d, val, locked, baseVal, label, sizeof label);
             int cx = x + 80, cy = y + 38;
             if (ok && d.kind == K_ACT) {   // Schaltflaeche
+                hitAdd(x + 4, y + 2, 152, 88, HK_PRJ, k);
                 if (sel) rrect(x + 4, y + 2, 152, 88, 10, C_SEL);
                 float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
                 prjIcon(k, x + 14, y + 12, 44, sel ? C_ACC : dimC(C_ACC, 0.6f));
@@ -2572,6 +2591,7 @@ static void drawKnobs() {
             Col kc = trackPage(page) ? tc : C_ACC;
             if (ok && d.kind == K_GR) kc = C_TRIG;
             tile(x, y, k, ok ? d : PDEF_NONE, val, baseVal, locked, label, sel, kc, now);
+            if (ok && d.kind != K_NONE) hitAdd(x + 4, y + 2, 152, 88, HK_SLOT, k);
         }
     }
 overlays:
@@ -2587,6 +2607,7 @@ static void drawGrid() {
     rrect(0, (int)hlY - 2, SW, 18, 4, C_PANEL);   // gleitende Spur-Markierung
     for (int t = 0; t < NTRACKS; t++) {
         int y = y0 + t * 18;
+        hitAdd(0, y - 2, 80, 18, HK_TRACK, t);
         Col tc = eng.muted(t) ? dimC(TCOL[t], 0.35f) : TCOL[t];
         int chipH = 14 + (int)(flash[t] * 4);
         rrect(4, y + 7 - chipH / 2, 4, chipH, 1, mix(tc, C_PLAY, flash[t] * 0.7f));
@@ -2606,6 +2627,7 @@ static void drawGrid() {
             int s = base + s0;
             int x = 82 + s0 * 34;
             if (s >= len) continue;
+            hitAdd(x - 1, y - 2, 34, 18, HK_STEP, s, t);
             const Step& st = P.s[t][s];
             bool ph = eng.playing && eng.playedStep[t] == s;
             int pul = P.p[t][P_PULS];
@@ -2662,6 +2684,7 @@ static void drawSteps() {
         int s = base + s0;
         int x = 6 + s0 * 39, y = 398;
         if (s >= len) { rrect(x, y, 36, 40, 6, C_DARK); continue; }
+        hitAdd(x - 1, y - 4, 39, 46, HK_STEP, s, track);
         const Step& st = P.s[track][s];
         bool ph = eng.playing && eng.playedStep[track] == s;
         int pul = P.p[track][P_PULS];
@@ -2854,6 +2877,7 @@ static void drawSigB() {
     int base = (cursor / 16) * 16;
     for (int t = 0; t < NTRACKS; t++) {
         int y = 46 + t * 46, x = 2, w = 110, h = 43;
+        hitAdd(x, y, w, h, HK_TRACK, t);
         bool sel = t == track;
         Col c = eng.muted(t) ? dimC(TCOL[t], 0.35f) : TCOL[t];
         rrect(x, y, w, h, 5, sel ? C_SEL : C_PANEL);
@@ -2898,6 +2922,7 @@ static void drawSigB() {
                 if (p < 0 || !pageAvail(p)) continue;
                 int y = y0 + r * (rowH + 1);
                 bool sel = p == page || (c == 1 && r == 1 && m == M_FM && (page == PG_SRC2 || page == PG_SRC3 || page == PG_SRC4 || page == PG_SRC5));
+                hitAdd(x, y, cw, rowH, HK_PAGE, p);
                 rrect(x, y, cw, rowH - 1, 4, sel ? tc : (side ? C_BG : C_PANEL));
                 char nm[24], sm[24], cb[40];
                 snprintf(nm, sizeof nm, "%s", sigName(sel && c == 1 && r == 1 ? page : p));
@@ -2944,8 +2969,9 @@ static void drawSigB() {
     int tw = (W - 12 - 3 * 6) / 4;
     for (int k = 0; k < 8; k++) {
         if (page == PG_FLT2 && k == 1) continue;   // BASE + WDTH = eine breite Kachel
-        if (page == PG_FLT2 && k == 0) { bwTile(X0 + 6, ty, tw * 2 + 6, th, tc); continue; }
+        if (page == PG_FLT2 && k == 0) { bwTile(X0 + 6, ty, tw * 2 + 6, th, tc); hitAdd(X0 + 6, ty, tw + 3, th, HK_SLOT, 0); hitAdd(X0 + 9 + tw, ty, tw + 3, th, HK_SLOT, 1); continue; }
         miniTile(k, X0 + 6 + (k % 4) * (tw + 6), ty + (k / 4) * (th + 6), tw, th, tc);
+        hitAdd(X0 + 6 + (k % 4) * (tw + 6), ty + (k / 4) * (th + 6), tw, th, HK_SLOT, k);
     }
     // --- Steps der Spur
     int sy = 392;
@@ -2954,6 +2980,7 @@ static void drawSigB() {
     for (int s0 = 0; s0 < 16; s0++) {
         int s = base + s0, sx = X0 + s0 * 32;
         if (s >= len0) { rrect(sx, sy, 30, 40, 4, C_DARK); continue; }
+        hitAdd(sx, sy - 2, 31, 46, HK_STEP, s, track);
         const Step& st = P.s[track][s];
         bool pl = eng.playing && eng.playedStep[track] == s;
         bool shown = st.on == 1;
@@ -2996,6 +3023,7 @@ static void drawLive() {
         int cx = t < 4 ? 160 : 480, cy = 232, k = t % 4;
         int w = 100, h = 56, x = cx + OX[k] * 105 - w / 2, y = cy + OY[k] * 64 - h / 2;
         bool m = eng.muted(t);
+        hitAdd(x, y, w, h, HK_LIVE, t);
         Col tc = TCOL[t];
         Col bg = m ? C_DARK : mix(dimC(tc, 0.25f), dimC(tc, 0.7f), flash[t]);
         rrect(x, y, w, h, 8, m ? C_OFF2 : tc);
@@ -3019,6 +3047,7 @@ static void drawLive() {
         {"SEL + </>", "PATTERN -/+", eng.nextPat >= 0, C_ACC}, {"START", eng.playing ? "STOP" : "PLAY", eng.playing, C_GREEN}};
     for (int i = 0; i < 4; i++) {
         int x = 6 + i * 158;
+        { static const int LB[4] = {BT_L1, BT_R1, -1, BT_START}; if (LB[i] >= 0) hitAdd(x, y, 150, 40, HK_BTN, LB[i]); }
         bool blink = ch[i].on && (i != 1 || (SDL_GetTicks() / 400) % 2);
         rrect(x, y, 150, 40, 7, blink ? ch[i].c : C_PANEL);
         text(x + 8, y + 3, ch[i].key, blink ? C_BG : ch[i].c);
@@ -3044,7 +3073,9 @@ static void drawSong();
 static void drawDrive();
 static bool isGrooveboxOS();
 static void runBench(const char* outPath, bool onDevice);
+static bool touchBlocked();
 static void drawAll(bool help) {
+    nHits = 0; hitModalAt = 0;
     animate();
     clearScreen(C_BG);
     drawHeader();
@@ -3055,6 +3086,7 @@ static void drawAll(bool help) {
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
     if (menuOpen) drawMenu();
+    if (touchBlocked()) hitModal();   // Explorer/Tastatur/Editor/Export: per Steuerkreuz bedienen
     drawWtEditorIfOpen();
     drawExportModal();
     if (fbOpen) drawBrowser();
@@ -3453,6 +3485,7 @@ enum SetItem {
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
+static bool setIn = false;   // SET: false = Bereiche links waehlen, true = in den Eintraegen des Bereichs (A rein, B raus)
 static int poolMissing = 0;   // beim letzten Projekt-Laden nicht gefundene Samples
 // Rhythmus-Vorlagen (Bit i = Step i+1 von 16), werden ueber die ganze Spurlaenge wiederholt
 static const char* const RHY_NAMES_DE[] = {"Four on the Floor", "Backbeat (2+4)", "Offbeat", "Achtel", "Sechzehntel", "Breakbeat-Kick",
@@ -3863,16 +3896,27 @@ static void setAction(int i) {
 static void settingsInput(Input& I, Uint32 now, float dt) {
     int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0) - flick(I.ly, flLY, flLYt, now);
     if (setIsHeader(setSel)) setSel++;
-    if (dy) {   // innerhalb des Bereichs (im Kreis)
-        int h = setCatOf(setSel), e = setCatEnd(h), n = e - h - 1;
-        setSel = h + 1 + ((setSel - h - 1 + dy) % n + n) % n;
-    }
-    int dc = (I.pressed(BT_R1) ? 1 : 0) - (I.pressed(BT_L1) ? 1 : 0);
-    if (dc) {   // L1/R1: Bereich wechseln
+    auto nextCat = [&](int dc) {   // Bereich wechseln (im Kreis), erster Eintrag
         int h = setCatOf(setSel);
         if (dc > 0) { h = setCatEnd(h); if (h >= SI_COUNT) h = 0; }
         else { h = h > 0 ? setCatOf(h - 1) : setCatOf(SI_COUNT - 1); }
         setSel = h + 1; setScroll = 0;
+    };
+    int dc = (I.pressed(BT_R1) ? 1 : 0) - (I.pressed(BT_L1) ? 1 : 0);
+    if (dc) nextCat(dc);   // L1/R1: Bereich wechseln (auf beiden Ebenen)
+    if (!setIn) {   // Ebene 1: Bereiche links. hoch/runter = Bereich, A/rechts = hinein, B = SET verlassen
+        if (dy) nextCat(dy);
+        if (I.pressed(BT_A) || I.pressed(BT_RIGHT)) setIn = true;
+        else if (I.pressed(BT_B)) page = prevPage == PG_SYS ? PG_TRG : prevPage;
+        if (I.pressed(BT_L2)) gotoPage(-1);
+        if (I.pressed(BT_R2)) gotoPage(1);
+        if (startTap(I, now)) startStop();
+        return;
+    }
+    if (I.pressed(BT_B)) { setIn = false; return; }   // Ebene 2 -> zurueck zu den Bereichen
+    if (dy) {   // innerhalb des Bereichs (im Kreis)
+        int h = setCatOf(setSel), e = setCatEnd(h), n = e - h - 1;
+        setSel = h + 1 + ((setSel - h - 1 + dy) % n + n) % n;
     }
     int dx = (I.repeat(BT_RIGHT, now) ? 1 : 0) - (I.repeat(BT_LEFT, now) ? 1 : 0) + (I.repeat(BT_X, now) ? 1 : 0) - (I.repeat(BT_Y, now) ? 1 : 0);
     if (fabsf(I.rx) > fabsf(I.ry)) dx += flick(I.rx, flRX, flRXt, now); else flRX = 0;
@@ -3884,7 +3928,6 @@ static void settingsInput(Input& I, Uint32 now, float dt) {
         if (d) { stickAcc -= d; setChange(setSel, d); }
     } else if (fabsf(ry) <= 0.25f) stickAcc = 0;
     if (I.pressed(BT_A)) setAction(setSel);
-    if (I.pressed(BT_B)) page = prevPage == PG_SYS ? PG_TRG : prevPage;
     if (I.pressed(BT_L2)) gotoPage(-1);
     if (I.pressed(BT_R2)) gotoPage(1);
     if (startTap(I, now)) startStop();
@@ -4052,6 +4095,9 @@ static void drawSong() {
         int y = (int)yf;
         const Project::SongRow& r = J.row[i];
         bool sel = i == songSel, play = eng.songOn && eng.playing && eng.songPos == i;
+        hitAdd(xAll, y, wAll, rowH - 4, HK_SONG, i, SC_ALL);
+        for (int t2 = 0; t2 < NTRACKS; t2++) hitAdd(xT + t2 * wT, y, wT, rowH - 4, HK_SONG, i, SC_T1 + t2);
+        hitAdd(xRep, y, wRep, rowH - 4, HK_SONG, i, SC_REP);
         if (sel && !songExp) { rrect(10, y - 1, 620, rowH - 2, 6, C_SEL); rrect(10, y + 4, 3, rowH - 12, 1, C_ACC); }
         if (i >= ea && i <= eb) fill(6, y - 1, 2, rowH, dimC(C_CYAN, 0.6f));   // Export-Bereich
         snprintf(b, sizeof b, "%02d", i + 1); text(20, y + 6, b, play ? C_PLAY : C_DIM);
@@ -4240,11 +4286,17 @@ static void drawSettings() {
         if (!setIsHeader(i)) continue;
         setLabel(i, l, sizeof l, v, sizeof v);
         bool sel = i == cat;
-        rrect(10, cy, 140, 30, 7, sel ? C_ACC : C_BG);
-        text(20, cy + 7, l, sel ? C_BG : C_TEXT);
+        hitAdd(10, cy, 140, 30, HK_SET, i + 1, 1);   // Bereich: erster Eintrag
+        if (sel && !setIn) {   // Bereiche-Ebene: gewaehlter Bereich leuchtet und pulsiert
+            float pl = 0.5f + 0.5f * sinf(animTime * 4.f);
+            rrect(8, cy - 2, 144, 34, 8, mix(C_ACC, C_PLAY, 0.3f * pl));
+        }
+        rrect(10, cy, 140, 30, 7, sel ? (setIn ? dimC(C_ACC, 0.45f) : C_ACC) : C_BG);
+        text(20, cy + 7, l, sel ? (setIn ? C_TEXT : C_BG) : C_TEXT);
+        if (sel) text(136, cy + 7, setIn ? ">" : "", C_TEXT);
         cy += 36;
     }
-    text(12, cy + 6, TR("L1/R1 = BEREICH", "L1/R1 = SECTION"), C_DIM);
+    text(12, cy + 6, setIn ? TR("B = BEREICHE", "B = SECTIONS") : TR("A = ÖFFNEN", "A = OPEN"), C_DIM);
     if (436 - (cy + 30) > 40) { rrect(10, cy + 30, 140, 436 - (cy + 30), 8, C_BG); drawSpectrum(14, cy + 36, 132, 436 - (cy + 30) - 12, C_ACC, 12); }
     // rechts: Eintraege des Bereichs
     const int X0 = 158, W = 470, rowH = 27, top = 56, visible = 13;
@@ -4261,7 +4313,8 @@ static void drawSettings() {
         if (yf < top - 4 || yf > top + (visible - 1) * rowH + 4) continue;
         int y = (int)yf;
         setLabel(i, l, sizeof l, v, sizeof v);
-        bool sel = i == setSel;
+        bool sel = i == setSel && setIn;
+        hitAdd(X0, y, W, rowH - 2, HK_SET, i, 0);
         if (sel) { rrect(X0, y, W, rowH - 3, 6, C_SEL); rrect(X0, y + 4, 3, rowH - 11, 1, C_ACC); }
         text(X0 + 12, y + 5, l, sel ? C_TEXT : C_DIM);
         if (setIsAction(i)) {
@@ -4293,7 +4346,8 @@ static void drawSettings() {
             else text(X0, 418, hb, C_TEXT);
         }
     }
-    hint(6, 452, TR("[^v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [L1/R1]BEREICH [L2/R2]SEITE [B]ZURÜCK", "[^v]SELECT [</>]CHANGE [A]RUN [L1/R1]SECTION [L2/R2]PAGE [B]BACK"), C_ACC, C_DIM);
+    if (setIn) hint(6, 452, TR("[^v]WÄHLEN [</>]ÄNDERN [A]AUSFÜHREN [B]ZU DEN BEREICHEN [L1/R1]BEREICH [L2/R2]SEITE", "[^v]SELECT [</>]CHANGE [A]RUN [B]TO SECTIONS [L1/R1]SECTION [L2/R2]PAGE"), C_ACC, C_DIM);
+    else hint(6, 452, TR("[^v]BEREICH [A]ÖFFNEN [B]ZURÜCK [L2/R2]SEITE [SEL]KARTE", "[^v]SECTION [A]OPEN [B]BACK [L2/R2]PAGE [SEL]MAP"), C_ACC, C_DIM);
 }
 
 // (frueher) Linker Stick zeigt direkt auf einen der 8 Regler (oben 1-4, unten 5-8)
@@ -4379,8 +4433,12 @@ static void liveInput(Input& I, Uint32 now, float dt) {
     if (f) eng.proj.bpm = (uint16_t)clampi(eng.proj.bpm + f, 30, 300);
 }
 
+static bool touchBlocked() { return wteOpen || expState == 1 || fbOpen || kbOpen; }
+#include "touch.inc"
+
 static void handleInput(Uint32 now, float dt) {
     Input& I = in;
+    touchProcess(now);
     if (confirmOpen) {
         if (I.pressed(BT_A)) { confirmOpen = false; runAction(confirmAct, confirmArg); }
         else if (I.pressed(BT_B) || I.pressed(BT_SELECT)) { confirmOpen = false; toast(TR("ABGEBROCHEN", "CANCELLED")); }
@@ -4752,6 +4810,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     pcInMix((float*)stream, frames, pcInGain);    // PC-Ton dazumischen (nach dem Senden: kein Echo zum PC)
     recPush((const float*)stream, frames);
     scopePush((const float*)stream, frames);      // fuer Oszilloskop/Spektrum der Oberflaeche
+    remoteAudioPush((const float*)stream, frames, eng.sr);   // Ton in den Browser (nur bei Zuhoerern)
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
     if (el * 1000.0 > audWorkMax) audWorkMax = el * 1000.0;
@@ -5102,7 +5161,7 @@ int main(int argc, char** argv) {
             Pp.s[4][37].on = 1; Pp.s[4][37].lock[P_COND] = CND_AB + 35 + 5; slot = 7; editSlot = 7; editAt = 1;
             holdPat = curPi(); holdTrack = 4; holdStep = 37; aHeld = true; eng.fill = true;
         }
-        if (page == PG_SYS) { setSel = SI_OUT; setScroll = SI_OUT - 7.5f; animate(); }
+        if (page == PG_SYS) { setSel = SI_OUT; setIn = true; setScroll = SI_OUT - 7.5f; animate(); }
         if (page == PG_CMP) {   // Sidechain-Beispiel
             eng.proj.cmp[CM_SRC] = 1; eng.proj.cmp[CM_THR] = 40; eng.proj.cmp[CM_RAT] = 6; slot = 5;
             for (int k = 0; k < 4; k++) eng.render(tmp, 22050 / 2);

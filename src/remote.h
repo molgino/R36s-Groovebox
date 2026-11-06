@@ -15,3 +15,12 @@ bool remoteWanted();                                   // hat in den letzten 2 s
 void remoteSnapshot(const uint32_t* argb, int pitchPx, int w, int h);   // aus dem Hauptthread
 // Web-Thread: Bild seit Nummer "since" kodieren; liefert Laenge (0 = nichts Neues), out wird (re)alloziert
 size_t remoteEncode(unsigned since, uint8_t** out, size_t* cap);
+// Web-Thread: Anfrage "GET /ws" mit Upgrade -> Handshake, eigener Thread uebernimmt fd (true = fd nicht schliessen)
+bool remoteWsAccept(int fd, const char* headers, bool audio = false);   // audio: /wsa (Ton-Strom)
+// Ton in den Browser: aus audioCb (float Stereo), billig wenn niemand zuhoert
+void remoteAudioPush(const float* st, int frames, int rate);
+bool remoteAudioWanted();
+// Touch auf dem Bild (Koordinaten 640x480): 't' Finger auf, 'm' bewegt, 'e' Finger weg, 'c' alle weg (Verbindung zu)
+enum { REMOTE_TOUCH_IDS = 10 };
+struct RemoteTouch { char type; int id, x, y; };
+bool remoteTouchPop(RemoteTouch& e);   // Hauptthread
