@@ -260,90 +260,183 @@ refreshInfo();loadDir(cwd);
 // Bildschirm-Spiegelung + Fernbedienung (http://<ip>/screen)
 extern const char WEB_SCREEN[];
 const char WEB_SCREEN[] = R"HTML(<!doctype html>
-<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>SYNTH CITY – Bildschirm</title>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#080612">
+<title>SYNTH CITY – Fernbedienung</title>
 <style>
-:root{--bg:#080612;--panel:#141026;--panel2:#20183a;--text:#d6eeff;--dim:#8a80b0;--acc:#ff2e88;--cy:#00e0ff}
-*{box-sizing:border-box;-webkit-user-select:none;user-select:none;touch-action:manipulation}
-body{margin:0;background:linear-gradient(180deg,#080612,#140a2a 60%,#2a0a3a) fixed;color:var(--text);font:14px ui-monospace,Menlo,Consolas,monospace}
-main{max-width:1100px;margin:0 auto;padding:14px 16px 40px}
-header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px}
-h1{font-size:22px;margin:0;letter-spacing:.18em;color:#fff;text-shadow:-2px 0 var(--acc),2px 0 var(--cy),0 0 14px var(--acc)}
-.dim{color:var(--dim)}a{color:var(--cy)}
-#wrap{position:relative;background:#000;border-radius:12px;padding:10px;box-shadow:0 0 30px #ff2e8833}
-canvas{display:block;width:100%;max-width:1280px;margin:0 auto;image-rendering:pixelated;aspect-ratio:4/3;background:#000;border-radius:4px}
-#pad{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;margin-top:14px;align-items:center}
-.grp{display:grid;gap:6px;justify-content:center}
-.dp{grid-template-columns:repeat(3,54px);grid-template-rows:repeat(3,54px)}
-.fx{grid-template-columns:repeat(3,54px);grid-template-rows:repeat(3,54px)}
-.mid{grid-template-columns:repeat(2,90px)}
-.sh{display:flex;justify-content:space-between;gap:8px;margin-top:12px}
-button{background:var(--panel2);color:var(--text);border:1px solid #3a2f60;border-radius:12px;font:inherit;font-weight:700;cursor:pointer;min-height:44px}
-button.on,button:active{background:var(--acc);color:#fff;border-color:var(--acc);box-shadow:0 0 14px var(--acc)}
-.round{border-radius:50%}.cy{color:var(--cy)}.st{font-size:11px;color:var(--dim)}
-.stk{grid-template-columns:repeat(3,40px);grid-template-rows:repeat(3,40px);margin-top:10px}
-.stk button{min-height:0;font-size:12px}
-#keys{margin-top:14px;font-size:12px;line-height:1.7}
-kbd{background:var(--panel2);border:1px solid #3a2f60;border-radius:5px;padding:1px 6px;color:var(--cy)}
-</style></head><body><main>
-<header><h1>SYNTH CITY</h1><span id="stat" class="dim">verbinde …</span><span style="flex:1"></span>
-<a href="/">Samples &amp; Logs</a><button id="fs" style="min-height:32px;padding:0 12px">Vollbild</button></header>
-<div id="wrap"><canvas id="cv" width="640" height="480"></canvas></div>
-<div class="sh"><span><button data-b="L1" style="width:70px">L1</button> <button data-b="L2" style="width:70px">L2</button></span>
-<span><button data-b="R2" style="width:70px">R2</button> <button data-b="R1" style="width:70px">R1</button></span></div>
-<div id="pad">
- <div>
-  <div class="grp dp"><span></span><button data-b="UP">▲</button><span></span><button data-b="LEFT">◀</button><span></span><button data-b="RIGHT">▶</button><span></span><button data-b="DOWN">▼</button><span></span></div>
-  <div class="grp stk"><span></span><button data-b="LY" data-v="1">↑</button><span></span><button data-b="LX" data-v="-1">←</button><span class="st" style="align-self:center;text-align:center">L</span><button data-b="LX" data-v="1">→</button><span></span><button data-b="LY" data-v="-1">↓</button><span></span></div>
+:root{--bg:#080612;--panel:#141026;--panel2:#20183a;--line:#3a2f60;--text:#d6eeff;--dim:#8a80b0;--acc:#ff2e88;--cy:#00e0ff;--gr:#2bff9a;--b:clamp(44px,7vmin,64px)}
+*{box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:linear-gradient(180deg,#080612,#140a2a 60%,#2a0a3a) fixed;color:var(--text);font:14px ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+#app{height:100%;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header{display:flex;align-items:center;gap:10px;padding:6px 10px;flex-wrap:wrap}
+h1{font-size:16px;margin:0;letter-spacing:.18em;color:#fff;text-shadow:-2px 0 var(--acc),2px 0 var(--cy)}
+#stat{color:var(--dim);font-size:12px}#dot{width:9px;height:9px;border-radius:50%;background:#555;display:inline-block}
+header .sp{flex:1}a{color:var(--cy)}
+.hb{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;font:inherit;font-size:12px;padding:5px 10px;cursor:pointer}
+#stage{flex:1;min-height:0;display:grid;grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto;gap:8px;padding:0 10px 10px}
+#scr{min-height:0;min-width:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px}
+canvas{display:block;flex:none;width:320px;height:240px;image-rendering:pixelated;image-rendering:crisp-edges;background:#000;border-radius:6px;box-shadow:0 0 0 2px #000,0 0 26px #ff2e8840;outline:none}
+#ctl{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;touch-action:none}
+.side{display:flex;flex-direction:column;align-items:center;gap:10px}
+.shd{display:flex;gap:6px}
+.btn{width:calc(var(--b)*1.25);height:calc(var(--b)*.72);display:flex;align-items:center;justify-content:center;background:var(--panel2);border:1px solid var(--line);border-radius:10px;font-weight:700;color:var(--text);touch-action:none;cursor:pointer;transition:background .05s}
+.btn.on{background:var(--acc);border-color:var(--acc);color:#fff;box-shadow:0 0 16px var(--acc)}
+.dpad{position:relative;width:calc(var(--b)*2.9);height:calc(var(--b)*2.9);touch-action:none}
+.dpad i{position:absolute;width:calc(var(--b)*.98);height:calc(var(--b)*.98);background:var(--panel2);border:1px solid var(--line);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--dim);font-style:normal;font-size:18px}
+.dpad i.on{background:var(--acc);border-color:var(--acc);color:#fff;box-shadow:0 0 16px var(--acc)}
+.dpad .u{left:calc(50% - var(--b)*.49);top:0}.dpad .d{left:calc(50% - var(--b)*.49);bottom:0}
+.dpad .l{top:calc(50% - var(--b)*.49);left:0}.dpad .r{top:calc(50% - var(--b)*.49);right:0}
+.dpad .c{left:calc(50% - var(--b)*.3);top:calc(50% - var(--b)*.3);width:calc(var(--b)*.6);height:calc(var(--b)*.6);border-radius:50%;background:var(--panel)}
+.face{position:relative;width:calc(var(--b)*2.9);height:calc(var(--b)*2.9);touch-action:none}
+.face .btn{position:absolute;width:var(--b);height:var(--b);border-radius:50%;font-size:18px}
+.face .x{left:calc(50% - var(--b)/2);top:0}.face .b{left:calc(50% - var(--b)/2);bottom:0}
+.face .y{top:calc(50% - var(--b)/2);left:0}.face .a{top:calc(50% - var(--b)/2);right:0}
+.face .x,.face .y{color:var(--cy)}
+.mid{display:flex;flex-direction:column;align-items:center;gap:8px}
+.mid .row{display:flex;gap:8px}
+.mid .btn{width:calc(var(--b)*1.5);height:calc(var(--b)*.6);font-size:12px;border-radius:20px}
+.stk{display:none;grid-template-columns:repeat(3,calc(var(--b)*.6));grid-template-rows:repeat(3,calc(var(--b)*.6));gap:3px;touch-action:none}
+.stk .btn{width:auto;height:auto;font-size:11px;border-radius:8px}
+body.sticks .stk{display:grid}
+#help{position:fixed;inset:0;background:#080612ee;display:none;align-items:center;justify-content:center;z-index:9;padding:20px}
+#help.show{display:flex}#help div{max-width:560px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;line-height:1.9}
+kbd{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:1px 6px;color:var(--cy)}
+/* Querformat (Handy quer, Tablet, PC-Fenster breit): Bild in der Mitte, Bedienung links und rechts */
+@media (orientation:landscape) and (min-aspect-ratio:13/10){
+ #stage{grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:minmax(0,1fr);align-items:center}
+ #ctl{display:contents}
+ .lside{grid-column:1;grid-row:1}.rside{grid-column:3;grid-row:1}
+ #scr{grid-column:2;grid-row:1;height:100%;width:100%}
+ .mid{flex-direction:row}
+}
+@media (max-height:420px){header{display:none}}
+</style></head><body><div id="app">
+<header><span id="dot"></span><h1>SYNTH CITY</h1><span id="stat">…</span><span class="sp"></span>
+<button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
+<div id="stage">
+ <div id="scr"><canvas id="cv" width="640" height="480" tabindex="0"></canvas>
+  <div class="mid" id="midL"><div class="row"><div class="btn" data-b="SELECT">SELECT</div><div class="btn" data-b="START">START</div></div></div></div>
+ <div id="ctl">
+  <div class="side lside"><div class="shd"><div class="btn" data-b="L2">L2</div><div class="btn" data-b="L1">L1</div></div>
+   <div class="dpad" id="dpad"><i class="u">▲</i><i class="l">◀</i><i class="c"></i><i class="r">▶</i><i class="d">▼</i></div>
+   <div class="stk"><span></span><div class="btn" data-b="LY" data-v="1">↑</div><span></span><div class="btn" data-b="LX" data-v="-1">←</div><span style="align-self:center;text-align:center;color:var(--dim)">L</span><div class="btn" data-b="LX" data-v="1">→</div><span></span><div class="btn" data-b="LY" data-v="-1">↓</div><span></span></div></div>
+  <div class="side rside"><div class="shd"><div class="btn" data-b="R1">R1</div><div class="btn" data-b="R2">R2</div></div>
+   <div class="face"><div class="btn x" data-b="X">X</div><div class="btn y" data-b="Y">Y</div><div class="btn a" data-b="A">A</div><div class="btn b" data-b="B">B</div></div>
+   <div class="stk"><span></span><div class="btn" data-b="RY" data-v="1">↑</div><span></span><div class="btn" data-b="RX" data-v="-1">←</div><span style="align-self:center;text-align:center;color:var(--dim)">R</span><div class="btn" data-b="RX" data-v="1">→</div><span></span><div class="btn" data-b="RY" data-v="-1">↓</div><span></span></div></div>
  </div>
- <div class="grp mid"><button data-b="SELECT">SELECT</button><button data-b="START">START</button></div>
- <div>
-  <div class="grp fx"><span></span><button data-b="X" class="round cy">X</button><span></span><button data-b="Y" class="round cy">Y</button><span></span><button data-b="A" class="round">A</button><span></span><button data-b="B" class="round">B</button><span></span></div>
-  <div class="grp stk"><span></span><button data-b="RY" data-v="1">↑</button><span></span><button data-b="RX" data-v="-1">←</button><span class="st" style="align-self:center;text-align:center">R</span><button data-b="RX" data-v="1">→</button><span></span><button data-b="RY" data-v="-1">↓</button><span></span></div>
- </div>
-</div>
-<div id="keys" class="dim">Tastatur: <kbd>Pfeile</kbd> Steuerkreuz · <kbd>Z</kbd> A · <kbd>X</kbd> B · <kbd>S</kbd> X · <kbd>A</kbd> Y ·
-<kbd>Q</kbd>/<kbd>W</kbd> L1/R1 · <kbd>1</kbd>/<kbd>2</kbd> L2/R2 · <kbd>Shift</kbd> SELECT · <kbd>Enter</kbd> START ·
-<kbd>T F G H</kbd> linker Stick · <kbd>I J K L</kbd> rechter Stick</div>
-</main>
+</div></div>
+<div id="help"><div><b style="color:#fff">Tastatur</b><br>
+<kbd>←↑→↓</kbd> Steuerkreuz &nbsp; <kbd>Z</kbd>/<kbd>Leertaste</kbd> A &nbsp; <kbd>X</kbd>/<kbd>⌫</kbd> B &nbsp; <kbd>S</kbd> X &nbsp; <kbd>A</kbd> Y<br>
+<kbd>Q</kbd> L1 &nbsp; <kbd>W</kbd> R1 &nbsp; <kbd>1</kbd> L2 &nbsp; <kbd>2</kbd> R2 &nbsp; <kbd>Shift</kbd>/<kbd>Tab</kbd> SELECT &nbsp; <kbd>Enter</kbd> START (halten = FILL)<br>
+<kbd>T F G H</kbd> linker Stick &nbsp; <kbd>I J K L</kbd> rechter Stick &nbsp; <kbd>F11</kbd> Vollbild<br>
+<b style="color:#fff">Touch</b>: mehrere Finger gleichzeitig, über das Steuerkreuz und die Tasten wischen geht auch.<br>
+<b style="color:#fff">Gamepad</b>: am PC/Handy angeschlossenes Gamepad wird automatisch erkannt.<br>
+<span style="color:var(--dim)">Tippen zum Schließen</span></div></div>
 <script>
-const cv=document.getElementById('cv'),cx=cv.getContext('2d');
-let W=640,H=480,img=cx.createImageData(W,H),px=new Uint32Array(img.data.buffer),seq=0,frames=0,bytes=0,last=performance.now();
+'use strict';
+const $=id=>document.getElementById(id),cv=$('cv'),cx=cv.getContext('2d',{alpha:false});
+let W=640,H=480,img=cx.createImageData(W,H),px=new Uint32Array(img.data.buffer),seq=0,dirty=false,frames=0,bytes=0,lat=0,mode='',last=performance.now();
 const lut=new Uint32Array(65536);
 for(let v=0;v<65536;v++){const r=(v>>11)&31,g=(v>>5)&63,b=v&31;lut[v]=0xff000000|(((b<<3)|(b>>2))<<16)|(((g<<2)|(g>>4))<<8)|((r<<3)|(r>>2));}
 function decode(buf){
  const dv=new DataView(buf);seq=dv.getUint32(0,true);const w=dv.getUint16(4,true),h=dv.getUint16(6,true);
  if(w!==W||h!==H){W=w;H=h;cv.width=w;cv.height=h;img=cx.createImageData(w,h);px=new Uint32Array(img.data.buffer);}
- const t=new Uint16Array(buf,12,(buf.byteLength-12)>>1);let i=0,k=0;const n=w*h;
+ const t=new Uint16Array(buf,12,(buf.byteLength-12)>>1),n=w*h;let i=0,k=0;
  while(k<t.length&&i<n){const v=t[k++],c=v&0x3fff,m=v>>14;
-  if(m===0)i+=c;
-  else if(m===1){const col=lut[t[k++]];for(let j=0;j<c;j++)px[i++]=col;}
-  else for(let j=0;j<c;j++)px[i++]=lut[t[k++]];}
- cx.putImageData(img,0,0);
+  if(m===0)i+=c;else if(m===1){px.fill(lut[t[k++]],i,i+c);i+=c;}else for(let j=0;j<c;j++)px[i++]=lut[t[k++]];}
+ dirty=true;frames++;bytes+=buf.byteLength;
 }
-async function loop(){
- try{const r=await fetch('/api/screen?since='+seq,{cache:'no-store'});
-  if(r.status===200){const b=await r.arrayBuffer();bytes+=b.byteLength;decode(b);frames++;}
-  else if(r.status===204){await new Promise(z=>setTimeout(z,25));}
-  else throw new Error(r.status);
- }catch(e){document.getElementById('stat').textContent='keine Verbindung – erneuter Versuch …';seq=0;await new Promise(z=>setTimeout(z,800));}
- const now=performance.now();if(now-last>1000){document.getElementById('stat').textContent=frames+' Bilder/s · '+Math.round(bytes/1024)+' kB/s';frames=0;bytes=0;last=now;}
- loop();
+function draw(){if(dirty){cx.putImageData(img,0,0);dirty=false;}pollPad();requestAnimationFrame(draw);}
+requestAnimationFrame(draw);
+// Bild immer ganz sichtbar und so gross wie moeglich (4:3), SELECT/START darunter
+function fit(){const sc=$('scr'),r=sc.getBoundingClientRect(),mh=$('midL').offsetHeight+10;let w=r.width,h=r.height-mh;
+ if(w<=0||h<=0)return;if(w/h>4/3)w=h*4/3;else h=w*3/4;cv.style.width=Math.floor(w)+'px';cv.style.height=Math.floor(h)+'px';}
+addEventListener('resize',fit);if(window.ResizeObserver)new ResizeObserver(fit).observe($('scr'));setTimeout(fit,0);
+// ---- Verbindung: WebSocket (Bildstrom + Tasten), sonst Abfrage
+let ws=null,wsFails=0,pingT=0;
+function setStat(ok,txt){$('dot').style.background=ok?'var(--gr)':'#c33';if(txt)$('stat').textContent=txt;}
+function connect(){
+ if(wsFails>=3){mode='poll';pollLoop();return;}
+ try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');}catch(e){wsFails++;setTimeout(connect,500);return;}
+ ws.binaryType='arraybuffer';
+ ws.onopen=()=>{mode='ws';wsFails=0;setStat(true);};
+ ws.onmessage=e=>{if(typeof e.data==='string'){if(e.data[0]==='P')lat=performance.now()-(+e.data.slice(2));}else decode(e.data);};
+ ws.onclose=()=>{ws=null;if(mode==='ws')mode='';wsFails++;setStat(false,'getrennt – verbinde neu …');releaseAll();setTimeout(connect,600);};
 }
-loop();
-function send(b,v){fetch('/api/input?b='+b+'&v='+v,{method:'POST'}).catch(()=>{});}
-document.querySelectorAll('button[data-b]').forEach(el=>{
- const b=el.dataset.b,v=el.dataset.v||'1';
- const dn=e=>{e.preventDefault();el.setPointerCapture&&el.setPointerCapture(e.pointerId);el.classList.add('on');send(b,v);};
- const up=e=>{if(!el.classList.contains('on'))return;el.classList.remove('on');send(b,0);};
- el.addEventListener('pointerdown',dn);el.addEventListener('pointerup',up);el.addEventListener('pointercancel',up);el.addEventListener('lostpointercapture',up);
+async function pollLoop(){
+ for(;;){try{const r=await fetch('/api/screen?since='+seq,{cache:'no-store'});
+   if(r.status===200){decode(await r.arrayBuffer());}else if(r.status===204){await new Promise(z=>setTimeout(z,20));}else throw 0;
+   setStat(true);}catch(e){setStat(false,'keine Verbindung …');seq=0;await new Promise(z=>setTimeout(z,800));}}
+}
+setInterval(()=>{const now=performance.now(),s=(now-last)/1000;
+ if(ws&&ws.readyState===1)ws.send('p '+now.toFixed(0));
+ $('stat').textContent=(mode==='ws'?'Live':mode==='poll'?'Abfrage':'…')+' · '+Math.round(frames/s)+' fps · '+Math.round(bytes/1024/s)+' kB/s'+(mode==='ws'?' · '+Math.round(lat)+' ms':'');
+ frames=0;bytes=0;last=now;},1000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&ws&&ws.readyState===1)ws.send('f');else releaseAll();});
+connect();
+// ---- Tasten senden (Zaehler je Taste: Touch + Tastatur + Gamepad duerfen sich ueberlappen)
+const cnt={},AX={LX:1,LY:1,RX:1,RY:1};
+function vib(){if(navigator.vibrate)try{navigator.vibrate(8);}catch(e){}}
+function out(msg,b,v){if(ws&&ws.readyState===1)ws.send(msg);else fetch('/api/input?b='+b+'&v='+v,{method:'POST',keepalive:true}).catch(()=>{});}
+function press(b,v){const key=b+(AX[b]?':'+v:'');cnt[key]=(cnt[key]||0)+1;if(cnt[key]>1)return;
+ if(AX[b])out('a '+b+' '+v,b,v);else out('d '+b,b,1);show(key,true);vib();}
+function release(b,v){const key=b+(AX[b]?':'+v:'');if(!cnt[key])return;if(--cnt[key]>0)return;delete cnt[key];
+ if(AX[b])out('a '+b+' 0',b,0);else out('u '+b,b,0);show(key,false);}
+function releaseAll(){for(const k in cnt){const[b,v]=k.split(':');cnt[k]=1;release(b,v===undefined?1:+v);}touches.clear();}
+const dEl={UP:'.u',DOWN:'.d',LEFT:'.l',RIGHT:'.r'};
+function show(key,on){const[b,v]=key.split(':');
+ if(dEl[b]){$('dpad').querySelector(dEl[b]).classList.toggle('on',on);return;}
+ document.querySelectorAll('[data-b="'+b+'"]'+(v!==undefined?'[data-v="'+v+'"]':'')).forEach(e=>e.classList.toggle('on',on));}
+// ---- Touch/Maus: jeder Finger haelt eine Taste (bzw. eine Steuerkreuz-Richtung), Wischen wechselt die Taste
+const touches=new Map();   // pointerId -> Liste [b,v]
+function targetsAt(x,y){
+ const d=$('dpad').getBoundingClientRect();
+ if(x>=d.left&&x<=d.right&&y>=d.top&&y<=d.bottom){
+  const dx=x-(d.left+d.width/2),dy=y-(d.top+d.height/2),r=Math.hypot(dx,dy);if(r<d.width*0.12)return[];
+  const a=Math.atan2(dy,dx)*180/Math.PI,res=[];   // 8 Richtungen: Diagonale = zwei Tasten
+  if(a>-67.5&&a<67.5)res.push(['RIGHT',1]);if(a>112.5||a<-112.5)res.push(['LEFT',1]);
+  if(a>22.5&&a<157.5)res.push(['DOWN',1]);if(a<-22.5&&a>-157.5)res.push(['UP',1]);return res;}
+ const el=document.elementFromPoint(x,y),bt=el&&el.closest('[data-b]');
+ return bt?[[bt.dataset.b,+(bt.dataset.v||1)]]:[];
+}
+function same(a,b){return a.length===b.length&&a.every((t,i)=>t[0]===b[i][0]&&t[1]===b[i][1]);}
+function setTouch(id,list){const old=touches.get(id)||[];if(same(old,list))return;
+ old.forEach(t=>{if(!list.some(n=>n[0]===t[0]&&n[1]===t[1]))release(t[0],t[1]);});
+ list.forEach(t=>{if(!old.some(o=>o[0]===t[0]&&o[1]===t[1]))press(t[0],t[1]);});
+ if(list.length)touches.set(id,list);else touches.delete(id);}
+const ctlArea=[$('ctl'),$('midL')];
+ctlArea.forEach(area=>{
+ area.addEventListener('pointerdown',e=>{const l=targetsAt(e.clientX,e.clientY);if(!l.length)return;e.preventDefault();try{area.setPointerCapture(e.pointerId);}catch(_){}setTouch(e.pointerId,l);});
+ area.addEventListener('pointermove',e=>{if(!touches.has(e.pointerId))return;e.preventDefault();setTouch(e.pointerId,targetsAt(e.clientX,e.clientY));});
+ const end=e=>{setTouch(e.pointerId,[]);};
+ area.addEventListener('pointerup',end);area.addEventListener('pointercancel',end);area.addEventListener('lostpointercapture',end);
 });
-const km={ArrowUp:['UP',1],ArrowDown:['DOWN',1],ArrowLeft:['LEFT',1],ArrowRight:['RIGHT',1],KeyZ:['A',1],KeyX:['B',1],KeyS:['X',1],KeyA:['Y',1],
- KeyQ:['L1',1],KeyW:['R1',1],Digit1:['L2',1],Digit2:['R2',1],ShiftLeft:['SELECT',1],ShiftRight:['SELECT',1],Enter:['START',1],
- KeyT:['LY',1],KeyG:['LY',-1],KeyF:['LX',-1],KeyH:['LX',1],KeyI:['RY',1],KeyK:['RY',-1],KeyJ:['RX',-1],KeyL:['RX',1]};
-const held={};
-addEventListener('keydown',e=>{const m=km[e.code];if(!m)return;e.preventDefault();if(held[e.code])return;held[e.code]=1;send(m[0],m[1]);});
-addEventListener('keyup',e=>{const m=km[e.code];if(!m)return;e.preventDefault();delete held[e.code];send(m[0],0);});
-addEventListener('blur',()=>{for(const c in held){send(km[c][0],0);}for(const c in held)delete held[c];});
-document.getElementById('fs').onclick=()=>{const w=document.getElementById('wrap');(w.requestFullscreen||w.webkitRequestFullscreen).call(w);};
+document.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('touchmove',e=>{if(e.touches.length>1||e.target.closest('#ctl,#midL'))e.preventDefault();},{passive:false});
+// ---- Tastatur
+const km={ArrowUp:['UP',1],ArrowDown:['DOWN',1],ArrowLeft:['LEFT',1],ArrowRight:['RIGHT',1],KeyZ:['A',1],KeyY:['A',1],Space:['A',1],KeyX:['B',1],Backspace:['B',1],Escape:['B',1],
+ KeyS:['X',1],KeyA:['Y',1],KeyQ:['L1',1],KeyW:['R1',1],Digit1:['L2',1],Digit2:['R2',1],ShiftLeft:['SELECT',1],ShiftRight:['SELECT',1],Tab:['SELECT',1],
+ Enter:['START',1],NumpadEnter:['START',1],KeyT:['LY',1],KeyG:['LY',-1],KeyF:['LX',-1],KeyH:['LX',1],KeyI:['RY',1],KeyK:['RY',-1],KeyJ:['RX',-1],KeyL:['RX',1]};
+const kh={};
+addEventListener('keydown',e=>{if(e.ctrlKey||e.metaKey||e.altKey)return;const m=km[e.code];if(!m)return;e.preventDefault();if(kh[e.code])return;kh[e.code]=1;press(m[0],m[1]);});
+addEventListener('keyup',e=>{const m=km[e.code];if(!m||!kh[e.code])return;e.preventDefault();delete kh[e.code];release(m[0],m[1]);});
+addEventListener('blur',()=>{for(const c in kh){release(km[c][0],km[c][1]);delete kh[c];}});
+// ---- Gamepad (Standard-Belegung, Tastenlage wie am R36S: rechts A, unten B, oben X, links Y)
+const gpMap={1:'A',0:'B',3:'X',2:'Y',4:'L1',5:'R1',6:'L2',7:'R2',8:'SELECT',9:'START',12:'UP',13:'DOWN',14:'LEFT',15:'RIGHT'};
+const gpState={};
+function pollPad(){const gps=navigator.getGamepads?navigator.getGamepads():[];
+ for(const gp of gps){if(!gp)continue;
+  for(const i in gpMap){const p=gp.buttons[i]&&gp.buttons[i].pressed,k='g'+gp.index+'b'+i;if(p&&!gpState[k]){gpState[k]=1;press(gpMap[i],1);}else if(!p&&gpState[k]){delete gpState[k];release(gpMap[i],1);}}
+  [['LX',0,1],['LY',1,-1],['RX',2,1],['RY',3,-1]].forEach(([n,ai,sg])=>{const a=gp.axes[ai]||0,v=a>0.5?sg:(a<-0.5?-sg:0),k='g'+gp.index+n,o=gpState[k]||0;
+   if(v!==o){if(o)release(n,o);if(v)press(n,v);if(v)gpState[k]=v;else delete gpState[k];}});}}
+// ---- Kopfzeile
+$('bHelp').onclick=()=>$('help').classList.add('show');$('help').onclick=()=>$('help').classList.remove('show');
+$('bSt').onclick=()=>{document.body.classList.toggle('sticks');try{localStorage.sticks=document.body.classList.contains('sticks')?1:'';}catch(e){}};
+try{if(localStorage.sticks)document.body.classList.add('sticks');}catch(e){}
+let wl=null;async function wake(){try{if(navigator.wakeLock&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>wl=null);}}catch(e){}}
+document.addEventListener('pointerdown',wake);document.addEventListener('keydown',wake);
+$('bFs').onclick=()=>{const d=document.documentElement;if(document.fullscreenElement||document.webkitFullscreenElement){(document.exitFullscreen||document.webkitExitFullscreen).call(document);}
+ else{(d.requestFullscreen||d.webkitRequestFullscreen).call(d);try{screen.orientation.lock('landscape').catch(()=>{});}catch(e){}}};
 </script></body></html>)HTML";

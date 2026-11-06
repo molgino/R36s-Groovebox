@@ -15,3 +15,5 @@ bool remoteWanted();                                   // hat in den letzten 2 s
 void remoteSnapshot(const uint32_t* argb, int pitchPx, int w, int h);   // aus dem Hauptthread
 // Web-Thread: Bild seit Nummer "since" kodieren; liefert Laenge (0 = nichts Neues), out wird (re)alloziert
 size_t remoteEncode(unsigned since, uint8_t** out, size_t* cap);
+// Web-Thread: Anfrage "GET /ws" mit Upgrade -> Handshake, eigener Thread uebernimmt fd (true = fd nicht schliessen)
+bool remoteWsAccept(int fd, const char* headers);

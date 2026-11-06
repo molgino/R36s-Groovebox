@@ -575,7 +575,11 @@ Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, w
 
 **Power-Taste:** kurz drücken schaltet das Display aus und wieder an (die Musik läuft weiter, spart Akku), **lang drücken (1,5 s)** speichert das Projekt und fährt den R36S sauber herunter.
 
-**Bildschirm & Fernbedienung im Browser:** Unter http://192.168.77.1/screen erscheint das Live-Bild der Groovebox (bis ca. 30 Bilder/s, nur geänderte Bildteile werden übertragen). Bedienen per Maus/Touch über die eingeblendeten Tasten oder per Tastatur: Pfeile = Steuerkreuz, Z = A, X = B, S = X, A = Y, Q/W = L1/R1, 1/2 = L2/R2, Shift = SELECT, Enter = START, T/F/G/H = linker Stick, I/J/K/L = rechter Stick. Mit „Vollbild“ groß darstellen, z. B. für Aufnahmen oder Streams.
+**Bildschirm & Fernbedienung im Browser:** Unter http://192.168.77.1/screen erscheint das Live-Bild der Groovebox (bis ca. 30 Bilder/s über eine dauerhafte WebSocket-Verbindung, nur geänderte Bildteile; Tasten kommen ohne Umweg an). Oben stehen Bilder/s, Datenrate und Verzögerung (ms).
+* **Touch (Handy/Tablet):** Im Querformat liegt das Bild in der Mitte, Steuerkreuz + L1/L2 links, A/B/X/Y + R1/R2 rechts, SELECT/START darunter – wie am R36S. Mehrere Finger gleichzeitig gehen (z. B. A halten + Steuerkreuz), Wischen über das Steuerkreuz wechselt die Richtung, Diagonalen drücken zwei Richtungen. ⛶ = Vollbild (dreht auf Querformat, Bildschirm bleibt an). „Sticks“ blendet die Analog-Sticks ein.
+* **Tastatur:** Pfeile = Steuerkreuz, Z/Leertaste = A, X/Rücktaste/Esc = B, S = X, A = Y, Q/W = L1/R1, 1/2 = L2/R2, Shift/Tab = SELECT, Enter = START (halten = FILL), T/F/G/H = linker Stick, I/J/K/L = rechter Stick. „?“ zeigt die Belegung.
+* **Gamepad:** Ein am PC oder Handy angeschlossenes Gamepad (Xbox, PlayStation, Bluetooth …) wird erkannt, Tasten in der Lage wie am R36S.
+* Bis zu 3 Geräte können gleichzeitig zuschauen und bedienen. Reißt die Verbindung ab, verbindet sich die Seite selbst neu und lässt alle Tasten los.
 
 **Logs im Browser:** Auf der Upload-Seite (http://192.168.77.1) unter „Logs“ lassen sich groovebox.log, boot.txt, update.log und pc-modus.log direkt ansehen und herunterladen.
 
