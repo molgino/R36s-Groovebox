@@ -467,6 +467,30 @@ static void testMultiCore() {
 }
 
 // Routing: Spur 1 + Spur 2 auf dasselbe Paar = Summe der einzelnen Ausgaenge
+// LFO laeuft frei weiter, auch wenn die Stimme zwischen kurzen Noten stumm ist
+static void testLfoFreeRun() {
+    curTest = "LFO frei";
+    static Engine X; static float out[512];
+    X.init(44100); X.stop(); X.audioThreads = 1; X.defaultProject(false); X.proj.bpm = 120;
+    Pattern& P = X.proj.pat[0];
+    Engine::initTrack(P, 4, M_SYNTH);
+    for (int t = 0; t < NTRACKS; t++) for (int s2 = 0; s2 < 64; s2++) P.s[t][s2].on = 0;
+    for (int s2 = 0; s2 < 16; s2 += 4) P.s[4][s2].on = 1;
+    P.p[4][P_LEN] = 32;
+    P.p[4][P_L1 + LF_DEST] = P_FREQ + 1; P.p[4][P_L1 + LF_DEPTH] = 120; P.p[4][P_L1 + LF_RATE] = 70;
+    P.p[4][P_L1 + LF_MODE] = LM_FREE; P.p[4][P_L1 + LF_SYNC] = 0;
+    X.start();
+    int idle = 0; float moved = 0, prev = -1;
+    for (int i = 0; i < 44100 * 3; i += 256) {
+        X.render(out, 256);
+        float ph = X.v[4].lfPh[0];
+        if (!X.v[4].active && prev >= 0) { idle++; float d = ph - prev; if (d < 0) d += 1.f; moved += d; }
+        prev = ph;
+    }
+    printf("  LFO frei: %d stumme Bloecke, Phase dabei um %.2f Zyklen weiter\n", idle, moved);
+    CHECK(idle > 50 && moved > 1.f, "LFO steht zwischen den Noten still (%.2f Zyklen in %d Bloecken)", moved, idle);
+}
+
 static void testMultiRoute() {
     curTest = "USB-Routing";
     static float out[44100 * 2], a[44100 * 8], b[44100 * 8];
@@ -638,6 +662,7 @@ int main(int argc, char** argv) {
     testMultiOut();
     testMultiOut8();
     testMultiRoute();
+    testLfoFreeRun();
     testPcm24(sdir);
     printf("%s: %d Pruefungen ok, %d Fehler\n", nFail ? "FEHLGESCHLAGEN" : "OK", nPass, nFail);
     return nFail ? 1 : 0;

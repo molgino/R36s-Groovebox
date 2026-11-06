@@ -252,6 +252,32 @@ void Voice::lfoTrigger() {
     }
 }
 
+// Phase eines LFO um n Samples weiterdrehen (ONE/HALF bleiben am Ende stehen)
+void Voice::lfoStep(int k, int n, float sr) {
+    int b = LFO_BASE[k];
+    int sync = PR(b + LF_SYNC) % 12, mode = PR(b + LF_MODE);
+    float hz = sync ? 1.f / (LFO_SYNC_STEPS[sync] * stepSec) : 0.05f * fastExp2(PR(b + LF_RATE) * (9.f / 127.f));
+    float inc = hz * n / sr;
+    float lim = mode == LM_ONE ? 1.f : (mode == LM_HALF ? 0.5f : 1e9f);
+    if (lfRun[k] < lim) {
+        if (lfRun[k] + inc > lim) inc = lim - lfRun[k] - 1e-5f;
+        lfRun[k] += inc;
+        lfPh[k] += inc;
+        if (lfPh[k] >= 1.f) { lfPh[k] -= floorf(lfPh[k]); lfSHp[k] = lfSH[k]; lfSH[k] = rng.next(); }
+    }
+}
+
+// Stimme klingt nicht: LFOs laufen trotzdem weiter (wie bei Elektron), damit die naechste Note
+// an der richtigen Stelle der Kurve einsetzt statt immer am selben Punkt
+void Voice::lfoAdvance(int n, float sr) {
+    if (!base) return;
+    for (int k = 0; k < NLFO; k++) {
+        int b = LFO_BASE[k];
+        if (PR(b + LF_DEST) == 0 || PR(b + LF_DEPTH) == 64) continue;
+        lfoStep(k, n, sr);
+    }
+}
+
 void Voice::lfoUpdate(int n, float sr) {
     noteMod = 0;
     lfAny = false; lfMask[0] = lfMask[1] = 0;
@@ -260,16 +286,8 @@ void Voice::lfoUpdate(int n, float sr) {
         int dest = PR(b + LF_DEST) - 1;
         float depth = (PR(b + LF_DEPTH) - 64) / 64.f;
         if (dest < 0 || depth == 0.f) { lfDst[k] = -1; lfVal[k] = 0; continue; }
-        int sync = PR(b + LF_SYNC) % 12, wave = PR(b + LF_WAVE) % LW_COUNT, mode = PR(b + LF_MODE);
-        float hz = sync ? 1.f / (LFO_SYNC_STEPS[sync] * stepSec) : 0.05f * fastExp2(PR(b + LF_RATE) * (9.f / 127.f));
-        float inc = hz * n / sr;
-        float lim = mode == LM_ONE ? 1.f : (mode == LM_HALF ? 0.5f : 1e9f);
-        if (lfRun[k] < lim) {
-            if (lfRun[k] + inc > lim) inc = lim - lfRun[k] - 1e-5f;
-            lfRun[k] += inc;
-            lfPh[k] += inc;
-            if (lfPh[k] >= 1.f) { lfPh[k] -= floorf(lfPh[k]); lfSHp[k] = lfSH[k]; lfSH[k] = rng.next(); }
-        }
+        int wave = PR(b + LF_WAVE) % LW_COUNT, mode = PR(b + LF_MODE);
+        lfoStep(k, n, sr);
         float w = mode == LM_HOLD ? lfHeld[k] : Voice_lfoWave(*this, k, wave, lfPh[k]);
         int fd = PR(b + LF_FADE) - 64;
         if (fd) {
@@ -1599,7 +1617,9 @@ void Engine::processBlock(float* out, int n) {
     static const float WEIGHT[M_COUNT] = {1.9f, 2.3f, 2.f, 1.7f, 2.3f, 3.2f, 1.7f, 1.8f, 1.6f, 1.9f, 2.5f, 1.8f, 2.1f};
     int nAct = 0; float tot = 0.f;
     WkItem* act = wkList;
+    const float stepS = (float)(stepSamples() / sr);
     for (int t = 0; t < NTRACKS; t++) {
+        if (!v[t].active) { v[t].stepSec = stepS; v[t].lfoAdvance(n, (float)sr); }
         if (v[t].active) { act[nAct].v = &v[t]; act[nAct].key = t == key; act[nAct].t = t; nAct++; tot += WEIGHT[v[t].machine % M_COUNT]; }
         for (int k = 0; k < NCHORDV; k++) if (cv[t][k].active) { act[nAct].v = &cv[t][k]; act[nAct].key = t == key; act[nAct].t = t; nAct++; tot += WEIGHT[cv[t][k].machine % M_COUNT]; }
     }

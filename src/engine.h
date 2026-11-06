@@ -154,6 +154,8 @@ struct Voice {
     }
     void lfoUpdate(int n, float sr);
     void lfoTrigger();
+    void lfoStep(int k, int n, float sr);
+    void lfoAdvance(int n, float sr);
     void noteOn(int machine, const uint8_t* base, const uint8_t* locks, float velScale, int gateSamples, float sr);
     void noteOff() { aenv.off(); fenv.off(); for (int k = 0; k < 4; k++) if (fmSt[k]) fmSt[k] = 3; }
     bool gated() const { return machine == M_SYNTH || machine == M_FM || machine == M_WTBL || machine == M_GRAN || (machine == M_SAMPLE && P(P_S5)); }

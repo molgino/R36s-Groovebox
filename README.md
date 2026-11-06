@@ -263,7 +263,7 @@ Jede Spur hat drei LFOs. Jeder kann **jeden Parameter der Spur** modulieren, auc
 | ZIEL | Zielparameter (NOTE = Tonhöhe, ±12 Halbtöne bei voller Tiefe) |
 | DEPTH | Tiefe, bipolar |
 | WAVE | SIN, TRI, SAW+, SAW−, SQR, **EXP+**, **EXP−**, S&H, RND (weicher Zufall) |
-| MODE | **FREE** (läuft durch), **TRIG** (Neustart bei jedem Trig), **HOLD** (Wert beim Trig festhalten), **ONE** (eine Periode, dann stehen bleiben), **HALF** (halbe Periode) |
+| MODE | **FREE** (läuft durch, auch zwischen den Noten), **TRIG** (Neustart bei jedem Trig), **HOLD** (Wert beim Trig festhalten), **ONE** (eine Periode, dann stehen bleiben), **HALF** (halbe Periode) |
 | PHASE | Startphase bei TRIG/ONE/HALF |
 | FADE | links einblenden, rechts ausblenden (startet bei jedem Trig) |
 
