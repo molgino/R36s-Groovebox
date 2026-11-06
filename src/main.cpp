@@ -85,8 +85,8 @@ static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang, usbNet, uac; char project[64]; };   // usbNet 0 NCM / 1 RNDIS, uac 2 / 1
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, 0, 2, ""};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang, usbNet, uac, uacSendOnly; char project[64]; };   // usbNet 0 NCM / 1 RNDIS, uac 2 / 1
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, 0, 2, 0, ""};
 static bool intMuted = false;   // interne Ausgabe stumm, weil USB-Audio laeuft
 static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
@@ -171,6 +171,7 @@ static void loadSettings() {
         else if (!strcmp(line, "audio_cores")) cfg.cores = clampi(atoi(v), 1, 2);
         else if (!strcmp(line, "usb_net")) cfg.usbNet = clampi(atoi(v), 0, 1);
         else if (!strcmp(line, "usb_audio_class")) cfg.uac = atoi(v) == 1 ? 1 : 2;
+        else if (!strcmp(line, "usb_audio_send_only")) cfg.uacSendOnly = atoi(v) != 0;
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
@@ -178,8 +179,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nusb_net %d\nusb_audio_class %d\nproject %s\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.usbNet, cfg.uac, cfg.project);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nusb_net %d\nusb_audio_class %d\nusb_audio_send_only %d\nproject %s\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.usbNet, cfg.uac, cfg.uacSendOnly, cfg.project);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -3586,7 +3587,7 @@ enum SetItem {
     SI_H_TRK, SI_LEN, SI_SPEED, SI_TMPL, SI_CLRTRK,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_USBNET, SI_UACVER, SI_MIDIINFO,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_USBNET, SI_UACVER, SI_UACDIR, SI_MIDIINFO,
     SI_H_SMP, SI_SAMPLES, SI_WEB, SI_DRIVE, SI_OLDSMP,
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_BAT, SI_QUIT, SI_COUNT
 };
@@ -3655,6 +3656,7 @@ static const char* setHelp(int i) {
     case SI_PCIN: return TR("Ton vom PC über den R36S hören", "Hear PC audio through the R36S");
     case SI_PCREC: return TR("Ton vom PC als Sample aufnehmen (samples/pc)", "Record PC audio as a sample (samples/pc)");
     case SI_IP: return TR("Adresse des R36S im PC-Modus", "Address of the R36S in PC mode");
+    case SI_UACDIR: return TR("NUR SENDEN: Handy/PC sieht die Groovebox nur als Eingang und behält Lautsprecher/Bluetooth (z. B. iPhone + Ton im Browser). Dann kein PC-Ton zum R36S", "SEND ONLY: phone/PC sees the groovebox only as input and keeps its speaker/Bluetooth (e.g. iPhone + audio in browser). No PC audio to the R36S then");
     case SI_USBNET: return TR("NCM: ohne Treiber an Windows 11, Mac, iPad, Linux. RNDIS: nur für ältere Windows 10", "NCM: driverless on Windows 11, Mac, iPad, Linux. RNDIS: only for older Windows 10");
     case SI_UACVER: return TR("UAC2: 44,1/48 kHz, Standard. UAC1: für ältere Geräte ohne UAC2 (Windows 7/8, Konsolen)", "UAC2: 44.1/48 kHz, default. UAC1: for older devices without UAC2 (Windows 7/8, consoles)");
     case SI_MIDIINFO: return TR("Verbundene MIDI-Geräte und empfangene/gesendete Nachrichten", "Connected MIDI devices and received/sent messages");
@@ -3740,6 +3742,8 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else if (pcRecState() == 2) snprintf(v, vn, TR("AUFNAHME %.1f s (A = STOP)", "RECORDING %.1f s (A = STOP)"), pcRecSeconds());
         else if (usbMode != 2) snprintf(v, vn, TR("erst PC MIDI+Audio", "needs PC MIDI+audio"));
         break;
+    case SI_UACDIR: snprintf(l, ln, TR("USB-Audio-Richtung", "USB audio direction"));
+        snprintf(v, vn, "%s", cfg.uacSendOnly ? TR("NUR SENDEN (Gerät behält Lautsprecher)", "SEND ONLY (device keeps speaker)") : TR("BEIDE (Standard)", "BOTH (default)")); break;
     case SI_USBNET: snprintf(l, ln, TR("USB-Netzwerk", "USB network")); snprintf(v, vn, "%s", cfg.usbNet ? TR("RNDIS (altes Windows)", "RNDIS (old Windows)") : TR("NCM (Standard)", "NCM (standard)")); break;
     case SI_UACVER: snprintf(l, ln, TR("USB-Audio-Klasse", "USB audio class"));
         snprintf(v, vn, "%s", cfg.uac == 1 ? TR("UAC1 (ältere Geräte)", "UAC1 (older devices)") : "UAC2 (44,1/48 kHz)");
@@ -3831,6 +3835,7 @@ static void setChange(int i, int d) {
     case SI_USBAUDIO: cfg.usbAudio = !cfg.usbAudio; saveSettings(); break;
     case SI_USBVOL: cfg.usbVol = clampi(cfg.usbVol + (d > 0 ? 5 : -5), 0, 100); saveSettings(); break;
     case SI_INTUSB: cfg.intUsb = !cfg.intUsb; saveSettings(); break;
+    case SI_UACDIR: cfg.uacSendOnly = !cfg.uacSendOnly; saveSettings(); if (usbMode == 2) usbApplyAt = SDL_GetTicks() + 1200; break;   // Gadget neu aufbauen
     case SI_USBNET: cfg.usbNet = !cfg.usbNet; saveSettings(); if (usbMode) usbApplyAt = SDL_GetTicks() + 1200; break;   // Gadget neu aufbauen
     case SI_UACVER: cfg.uac = cfg.uac == 1 ? 2 : 1; saveSettings(); if (usbMode == 2) usbApplyAt = SDL_GetTicks() + 1200; break;
     case SI_MUTATE: mutAmt = clampi(mutAmt + (d > 0 ? 1 : -1), 0, 2); break;
@@ -3894,8 +3899,8 @@ static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &
 static void reloadSamples();
 // Umgebung fuer pc-modus.sh: Netzwerk- und Audio-Klasse aus SET
 static const char* usbEnv() {
-    static char e[64];
-    snprintf(e, sizeof e, "GB_USB_NET=%s GB_UAC=%d ", cfg.usbNet ? "rndis" : "ncm", cfg.uac == 1 ? 1 : 2);
+    static char e[96];
+    snprintf(e, sizeof e, "GB_USB_NET=%s GB_UAC=%d GB_UAC_IN=%d ", cfg.usbNet ? "rndis" : "ncm", cfg.uac == 1 ? 1 : 2, cfg.uacSendOnly ? 0 : 1);
     return e;
 }
 static bool usbScript(const char* args, char* okMsg, int n) {

@@ -9,6 +9,7 @@
 #   GB_USB_NET=ncm|rndis   Netzwerk: NCM (Standard: Windows 11/10 ab 2004, macOS, iPadOS, Linux, Android) oder RNDIS (aeltere Windows 10)
 #   GB_UAC=2|1             Audio: UAC2 (Standard, 44,1 + 48 kHz) oder UAC1 (aeltere Geraete/Konsolen; braucht CONFIG_USB_CONFIGFS_F_UAC1)
 #   GB_UAC_RATES="44100,48000"   angebotene Abtastraten (der PC waehlt)
+#   GB_UAC_IN=1|0          0 = nur senden: Host sieht nur einen Eingang (behaelt eigenen Lautsprecher, z. B. iPhone)
 #   GB_USB_POWER=<mA>      Strombedarf melden (Standard: eigene Stromversorgung, 2 mA - fuer iPhone/iPad)
 DIR=/opt/groovebox
 LOG=$DIR/pc-modus.log
@@ -84,7 +85,8 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
             if [ "${GB_UAC:-2}" = 1 ]; then          # UAC1: auch fuer Geraete ohne UAC2 (Windows 7/8, Konsolen, alte Recorder)
                 if mkdir functions/uac1.usb0 2>/dev/null; then
                     U=functions/uac1.usb0
-                    echo 3 > $U/p_chmask; echo 3 > $U/c_chmask; echo $SS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize
+                    CIN=3; [ "${GB_UAC_IN:-1}" = 0 ] && CIN=0
+                    echo 3 > $U/p_chmask; echo $CIN > $U/c_chmask; echo $SS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize
                     echo $RATES > $U/p_srate 2>/dev/null || echo 44100 > $U/p_srate
                     echo $RATES > $U/c_srate 2>/dev/null || echo 44100 > $U/c_srate
                     echo "Synth City" > $U/function_name 2>/dev/null
@@ -98,7 +100,8 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
                 mkdir -p functions/uac2.usb0
                 U=functions/uac2.usb0
                 echo 3 > $U/p_chmask; echo $SS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize   # Groovebox -> PC
-                echo 3 > $U/c_chmask; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize   # PC -> Groovebox
+                CIN=3; [ "${GB_UAC_IN:-1}" = 0 ] && CIN=0   # 0: kein Ausgang am Host -> Handy/PC behaelt Lautsprecher
+                echo $CIN > $U/c_chmask; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize   # PC -> Groovebox
                 echo $RATES > $U/p_srate 2>/dev/null || echo 44100 > $U/p_srate   # mehrere Raten: Kernel >= 5.18
                 echo $RATES > $U/c_srate 2>/dev/null || echo 44100 > $U/c_srate
                 echo "Synth City" > $U/function_name 2>/dev/null
