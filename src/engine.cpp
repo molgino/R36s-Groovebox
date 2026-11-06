@@ -1733,11 +1733,15 @@ void Engine::processBlock(float* out, int n) {
         if (mo) {   // Mehrkanal: Master, Spuren, Busse (Spuren/Busse vor Master-Kompressor/-Lautstaerke, Pegel wie Master bei VOL 100)
             float* o = multiBuf + (size_t)(moPos + i) * multiCh;
             o[0] = oL; o[1] = oR;
-            int c = 2, d = 0, dp = moDlyPos;
-            auto put = [&](float x) { float y = moDly[d][dp]; moDly[d][dp] = x * 0.6f; d++; o[c++] = y; };
-            if (multiCh >= 18) for (int t = 0; t < NTRACKS; t++) { put(TL[t][i]); put(TR[t][i]); }
-            if (multiCh == 8 || multiCh >= 24) for (int b = 0; b < NBUS; b++) { put(BL[b][i]); put(BR[b][i]); }
-            while (c < multiCh) o[c++] = 0.f;
+            for (int c = 2; c < multiCh; c++) o[c] = 0.f;
+            const int dp = moDlyPos;
+            for (int q = 0; q < NTRACKS + NBUS; q++) {   // Quelle verzoegern (immer, damit die Lage stimmt), dann auf ihr Paar addieren
+                float xl = q < NTRACKS ? TL[q][i] : BL[q - NTRACKS][i], xr = q < NTRACKS ? TR[q][i] : BR[q - NTRACKS][i];
+                float yl = moDly[q * 2][dp], yr = moDly[q * 2 + 1][dp];
+                moDly[q * 2][dp] = xl * 0.6f; moDly[q * 2 + 1][dp] = xr * 0.6f;
+                int r = multiRoute[q], c = 2 + 2 * r;
+                if (r >= 0 && c + 1 < multiCh) { o[c] += yl; o[c + 1] += yr; }
+            }
             moDlyPos = (moDlyPos + 1) % (LIM_LA - 1);   // Verzoegerung LIM_LA-1 = wie der Limiter
         }
         float al = fabsf(oL), ar = fabsf(oR);

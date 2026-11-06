@@ -316,9 +316,11 @@ private:
     static void* wkMain(void* arg);
 public:
     // Mehrkanal-Ausgang (USB): render() schreibt zusaetzlich frames x multiCh Werte nach multiBuf.
-    // Belegung: 0-1 Master, dann je nach Kanalzahl: 8 = 3 Effekt-Busse; 18 = 8 Spuren; 24 = 8 Spuren + 3 Busse (je Stereo)
+    // Kanal 0-1 = Master, danach Stereo-Paare; multiRoute[q] = Paar (0 = Kanal 3-4 ...) fuer Quelle q (0-7 Spuren, 8-10 FX A/B/C), -1 = nur Master.
+    // Mehrere Quellen auf demselben Paar werden addiert.
     float* multiBuf = nullptr;
     int multiCh = 2;
+    signed char multiRoute[NTRACKS + NBUS] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bool helperReady() const { return wkOn; }
     int audioThreads = 1;   // 1 oder 2 (gesetzt in init: 2, wenn mehrere Kerne und GB_AUDIO_THREADS != 1)
     long wkBlocks = 0;      // Bloecke, die zweikernig gerechnet wurden (Anzeige/Test)

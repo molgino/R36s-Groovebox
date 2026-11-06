@@ -466,6 +466,36 @@ static void testMultiCore() {
     CHECK(md < 1e-4f, "1 Kern und 2 Kerne klingen verschieden (%.2e)", md);
 }
 
+// Routing: Spur 1 + Spur 2 auf dasselbe Paar = Summe der einzelnen Ausgaenge
+static void testMultiRoute() {
+    curTest = "USB-Routing";
+    static float out[44100 * 2], a[44100 * 8], b[44100 * 8];
+    for (int run = 0; run < 2; run++) {
+        static Engine RT[2];   // zwei frische Engines mit gleicher Vorgeschichte -> gleicher Klang
+        Engine& X = RT[run];
+        X.init(44100); X.stop(); X.audioThreads = 1; X.defaultProject(false); X.proj.bpm = 120;
+        Pattern& P = X.proj.pat[0];
+        Engine::initTrack(P, 0, M_KICK); Engine::initTrack(P, 1, M_SNARE);
+        for (int s2 = 0; s2 < 16; s2 += 2) { P.s[0][s2].on = 1; P.s[1][s2 + 1].on = 1; }
+        for (int q = 0; q < NTRACKS + NBUS; q++) X.multiRoute[q] = -1;
+        if (run == 0) { X.multiRoute[0] = 0; X.multiRoute[1] = 1; } else { X.multiRoute[0] = 2; X.multiRoute[1] = 2; }
+        X.multiCh = 8; X.start();
+        float* m = run ? b : a;
+        for (int i = 0; i < 44100; i += 256) { X.multiBuf = m + (size_t)i * 8; X.render(out + i * 2, 44100 - i < 256 ? 44100 - i : 256); }
+        X.multiBuf = nullptr; X.multiCh = 2;
+        for (int q = 0; q < NTRACKS + NBUS; q++) X.multiRoute[q] = -1;
+    }
+    float md = 0, e = 0;
+    for (int i = 0; i < 44100; i++) for (int c = 0; c < 2; c++) {
+        float sum = a[i * 8 + 2 + c] + a[i * 8 + 4 + c];
+        float d = fabsf(b[i * 8 + 6 + c] - sum); if (d > md) md = d; e += fabsf(sum);
+    }
+    float rest = 0; for (int i = 0; i < 44100; i++) for (int c = 2; c < 6; c++) rest += fabsf(b[i * 8 + c]);
+    printf("  USB-Routing: Summe auf einem Paar Abweichung %.2e (Energie %.0f), andere Paare %.2e\n", md, e, rest);
+    CHECK(e > 1.f && md < 1e-4f, "zwei Spuren auf einem Paar ergeben nicht die Summe (%.2e)", md);
+    CHECK(rest == 0.f, "nicht belegte Paare sind nicht still");
+}
+
 // 8 Kanaele: Master + FX A/B/C - die Bus-Kanaele muessen den Effektanteil tragen
 static void testMultiOut8() {
     curTest = "Mehrkanal 8";
@@ -476,8 +506,10 @@ static void testMultiOut8() {
     Pattern& P = X.proj.pat[0];
     for (int t = 0; t < 4; t++) { Engine::initTrack(P, t, t ? M_SNARE : M_KICK); for (int s2 = 0; s2 < 16; s2 += 4) P.s[t][s2].on = 1; P.p[t][P_DLY] = 60; P.p[t][P_REV] = 60; P.p[t][P_SNDC] = 60; }
     X.multiCh = 8; X.start();
+    for (int q = 0; q < NTRACKS + NBUS; q++) X.multiRoute[q] = (signed char)(q >= NTRACKS ? q - NTRACKS : -1);
     for (int i = 0; i < 44100; i += 256) { X.multiBuf = mb + (size_t)i * 8; X.render(out + i * 2, 44100 - i < 256 ? 44100 - i : 256); }
     X.multiBuf = nullptr; X.multiCh = 2;
+    for (int q = 0; q < NTRACKS + NBUS; q++) X.multiRoute[q] = -1;
     float e[8] = {0};
     for (int i = 0; i < 44100; i++) for (int c = 0; c < 8; c++) e[c] += fabsf(mb[i * 8 + c]);
     printf("  Mehrkanal 8: Energie je Kanal %.0f %.0f | A %.0f %.0f | B %.0f %.0f | C %.0f %.0f\n", e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
@@ -498,10 +530,12 @@ static void testMultiOut() {
         Pattern& P = X.proj.pat[0];
         for (int t = 0; t < NTRACKS; t++) { Engine::initTrack(P, t, ms[t]); for (int s2 = 0; s2 < 16; s2 += 2) P.s[t][s2].on = 1; P.p[t][P_PAN] = (uint8_t)(t * 16); P.p[t][P_REV] = 40; }
         X.multiBuf = run ? mb : nullptr; X.multiCh = run ? 24 : 2;
+        for (int q = 0; q < NTRACKS + NBUS; q++) X.multiRoute[q] = (signed char)q;   // jede Quelle ein eigenes Paar
         X.start();
         float* o = run ? out : ref;
         for (int i = 0; i < 44100; i += 256) { if (run) X.multiBuf = mb + (size_t)i * 24; X.render(o + i * 2, 44100 - i < 256 ? 44100 - i : 256); }
         X.multiBuf = nullptr; X.multiCh = 2;
+        for (int q = 0; q < NTRACKS + NBUS; q++) X.multiRoute[q] = -1;
         if (!run) continue;
         float md = 0, mm = 0;
         for (int i = 0; i < 44100 * 2; i++) { float d = fabsf(out[i] - ref[i]); if (d > md) md = d; }
@@ -603,6 +637,7 @@ int main(int argc, char** argv) {
     testMultiCore();
     testMultiOut();
     testMultiOut8();
+    testMultiRoute();
     testPcm24(sdir);
     printf("%s: %d Pruefungen ok, %d Fehler\n", nFail ? "FEHLGESCHLAGEN" : "OK", nPass, nFail);
     return nFail ? 1 : 0;
