@@ -335,7 +335,7 @@ static void testFxBus() {
         for (int i = 0; i < N; i++) in[i] = 0.f;
         for (int k = 0; k < 4; k++) for (int i = 0; i < 400; i++) in[k * 22050 + i] = (i & 1 ? 0.5f : -0.5f) * (1.f - i / 400.f);
         double stepS = 44100 * 60.0 / (120 * 4.0);
-        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, 32, p, stepS);
+        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, N - i < 32 ? N - i : 32, p, stepS);
         float pk = 0, energy = 0; bool fin = true;
         for (int i = 0; i < N; i++) { if (!isfinite(oL[i]) || !isfinite(oR[i])) fin = false; pk = fmaxf(pk, fmaxf(fabsf(oL[i]), fabsf(oR[i]))); energy += oL[i] * oL[i]; }
         CHECK(fin, "%s: NaN/Inf im Ausgang", BUS_TYPE_NAMES[ty]);
@@ -349,7 +349,7 @@ static void testFxBus() {
         fb.reset();
         int N = 44100;
         for (int i = 0; i < N; i++) in[i] = i < 64 ? 0.8f : 0.f;
-        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, 32, p, 44100 * 60.0 / (120 * 4.0));
+        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, N - i < 32 ? N - i : 32, p, 44100 * 60.0 / (120 * 4.0));
         int at = -1; for (int i = 0; i < N && at < 0; i++) if (fabsf(oL[i]) > 0.05f) at = i;
         CHECK(at > 22050 - 300 && at < 22050 + 300, "Delay-Echo bei %d statt 22050", at);
     }
@@ -359,7 +359,7 @@ static void testFxBus() {
         fb.reset();
         int N = 44100 * 6;
         for (int i = 0; i < N; i++) in[i] = i < 2000 ? (i & 1 ? 0.5f : -0.5f) : 0.f;
-        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, 32, p, 5512.5);
+        for (int i = 0; i < N; i += 32) fb.process(in + i, oL + i, oR + i, N - i < 32 ? N - i : 32, p, 5512.5);
         float e1 = 0, e2 = 0; for (int i = 44100; i < 88200; i++) e1 += oL[i] * oL[i]; for (int i = N - 44100; i < N; i++) e2 += oL[i] * oL[i];
         CHECK(e2 < e1, "Reverb waechst statt abzuklingen (%.4f -> %.4f)", e1, e2);
     }
