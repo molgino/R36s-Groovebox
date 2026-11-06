@@ -529,7 +529,7 @@ static float batOcvPct(float v) {   // Ruhespannung (V) -> Ladezustand (%), typi
 #include <linux/gpio.h>
 #include <errno.h>
 #include <sys/ioctl.h>
-static int dcFd = -2, dcRaw = -1, dcIdle = -1;   // dcIdle: Pegel ohne Netzteil (-1 = noch unbekannt, Annahme aktiv-low)
+static int dcFd = -2, dcRaw = -1, dcIdle = -1;   // dcIdle: Pegel ohne Netzteil (-1 = noch unbekannt, Annahme: ohne Netzteil 0 = gemessen am R36S)
 static int readDcDet() {
     if (dcFd == -2) {
         dcFd = -1;
@@ -594,10 +594,10 @@ static void readBattery() {
         if (batMa < -150) dcIdle = dcRaw;
         else if (batMa > 150) dcIdle = !dcRaw;
     }
-    bool dcIn = dcRaw >= 0 && (dcIdle >= 0 ? dcRaw != dcIdle : dcRaw == 0);
-    // eingesteckt: Treiber meldet Laden/voll, ein Lade-Eingang ist online, der dc-det-Pin, oder es fliesst Strom in den Akku
-    // ("Not charging" = Treiber laedt nicht selbst, aber es kommt kein Entladestrom -> externes Laden ueber die DC-Buchse)
-    batPlug = batChg || online || dcIn || batMa > 50 || !strncmp(batStatus, "Not charging", 12);
+    bool dcIn = dcRaw >= 0 && (dcIdle >= 0 ? dcRaw != dcIdle : dcRaw == 1);
+    // eingesteckt: Treiber meldet Laden/voll, ein Lade-Eingang ist online, der dc-det-Pin, oder es fliesst Strom in den Akku.
+    // Nicht "Not charging": der R36S meldet Strom 0 mA, dann steht der Status auch ohne Netzteil auf "Not charging".
+    batPlug = batChg || online || dcIn || batMa > 50;
     if (batMv > 2500 && batMv < 4600) {   // Spannungs-Schaetzung
         float ia = fabsf((float)batMa) / 1000.f;
         if (ia > 3.f) ia = 0.f;   // unplausibel (Einheit/Treiber) -> ohne Ausgleich
