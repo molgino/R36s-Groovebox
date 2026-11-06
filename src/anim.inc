@@ -30,7 +30,7 @@ static void drawScope(int x, int y, int w, int h, Col c, int step = 2, bool glow
     int cy = y + h / 2, py = cy;
     bool silent = pk < 1e-4f;
     for (int i = 0; i < w; i++) {
-        float v = silent ? 0.12f * sinf(animTime * 1.7f + i * 0.045f) * sinf(animTime * 0.6f + i * 0.011f)
+        float v = silent ? 0.45f * sinf(i * 0.11f - animTime * 4.f) * (0.35f + 0.65f * fabsf(sinf(animTime * 0.7f + i * 0.013f)))
                          : scopeBuf[(st + trig + i * step) & (SCOPE_N - 1)] * scopeGain;
         if (v > 1.f) v = 1.f;
         if (v < -1.f) v = -1.f;
@@ -68,7 +68,7 @@ static void drawSpectrum(int x, int y, int w, int h, Col c, int bands = SPEC_N) 
     int bw = w / bands;
     for (int b = 0; b < bands; b++) {
         int si = b * SPEC_N / bands;
-        float idle = 0.06f + 0.04f * sinf(animTime * 2.f + b * 0.7f);
+        float idle = 0.12f + 0.22f * (0.5f + 0.5f * sinf(animTime * 2.3f + b * 0.55f)) * (0.6f + 0.4f * sinf(animTime * 0.9f - b * 0.3f));   // Ruhe: sanfte Welle
         float v = fmaxf(specVal[si], idle);
         int hh = (int)(v * (h - 4)), bx = x + b * bw;
         for (int s = 0; s < hh; s += 4) fill(bx + 1, y + h - 2 - s - 3, bw - 2, 3, mix(dimC(c, 0.5f), c, s / (float)h));
