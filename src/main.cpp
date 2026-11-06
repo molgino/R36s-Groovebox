@@ -1594,7 +1594,25 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         for (int i = 0; i < 5; i++) rrect(x + bp[i] * kw + kw * 2 / 3, y + 4, kw * 2 / 3, (h - 6) * 3 / 5, 2, bk[i] == pc ? c : C_BG);
         return;
     }
-    if (d.kind == K_OCT || d.kind == K_SUBO || (!strcmp(n, "OCT") && d.kind == K_CNT)) {   // Treppe, ein Punkt springt bis zur Oktave
+    if (d.kind == K_OCT || d.kind == K_SUBO) {   // Oktave bipolar: Mitte = 0, Balken nach oben (+) bzw. unten (-); ein Punkt huepft von 0 zur Oktave
+        int lo = d.kind == K_OCT ? -3 : -2, hi = d.kind == K_OCT ? 3 : 0;
+        int cur = d.kind == K_OCT ? val - 3 : -(val + 1);
+        int nst = hi - lo + 1, sw2 = w / nst, unit = (h / 2 - 3) / (hi > -lo ? hi : -lo);
+        fill(x, cy, nst * sw2, 1, C_DIM);
+        for (int i = lo; i <= hi; i++) {
+            int bx = x + (i - lo) * sw2, hh = abs(i) * unit;
+            bool on = cur != 0 && (cur > 0 ? (i > 0 && i <= cur) : (i < 0 && i >= cur));
+            Col bc = i == cur ? c : (on ? cd : C_OFF2);
+            if (i == 0) rrect(bx, cy - 2, sw2 - 2, 5, 2, cur == 0 ? c : C_DIM);
+            else rrect(bx, i > 0 ? cy - hh : cy + 1, sw2 - 2, hh, 2, bc);
+        }
+        int steps = abs(cur) + 1, hop = (int)(animTime * 3.f) % steps, hi2 = cur < 0 ? -hop : hop;
+        float fy = fmodf(animTime * 3.f, 1.f);
+        int ty = hi2 > 0 ? cy - hi2 * unit - 4 : (hi2 < 0 ? cy + (-hi2) * unit + 4 : cy - 5);
+        disc(x + (hi2 - lo) * sw2 + sw2 / 2 - 1, ty - (int)(sinf(fy * 3.14159f) * 4.f) * (hi2 < 0 ? -1 : 1), 2, C_PLAY);
+        return;
+    }
+    if (!strcmp(n, "OCT") && d.kind == K_CNT) {   // Arp-Oktavbereich: Treppe aufwaerts
         int nst = d.max + 1, cur = val; if (nst < 2) nst = 2;
         int sw2 = w / nst;
         for (int i = 0; i < nst; i++) { int hh = 4 + i * (h - 8) / (nst - 1); rrect(x + i * sw2, y + h - hh, sw2 - 2, hh, 2, i == cur ? c : (i < cur ? cd : C_OFF2)); }
@@ -2630,8 +2648,13 @@ static void miniTile(int k, int x, int y, int w, int h, Col tc) {
         paramSymbol(d, val, knobAnim[k], x + (w - sw) / 2, sy, sw, sh, sc2);
     }
     int bw = (int)((w - 14) * knobAnim[k]);
+    Col bc = locked ? C_LOCK : (sel ? tc : dimC(tc, 0.7f));
     fill(x + 7, y + h - 7, w - 14, 2, C_OFF2);
-    if (bw > 0) fill(x + 7, y + h - 7, bw, 2, locked ? C_LOCK : (sel ? tc : dimC(tc, 0.7f)));
+    if (d.kind == K_BIP || d.kind == K_OCT) {   // bipolar: Balken ab der Mitte
+        int mid = x + 7 + (w - 14) / 2, e = x + 7 + bw;
+        fill(mid, y + h - 9, 1, 6, C_DIM);
+        if (e != mid) fill(e < mid ? e : mid, y + h - 7, abs(e - mid), 2, bc);
+    } else if (bw > 0) fill(x + 7, y + h - 7, bw, 2, bc);
 }
 static void drawSigB() {
     const Pattern& P = curP();
