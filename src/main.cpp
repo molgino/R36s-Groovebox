@@ -1751,8 +1751,34 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     }
     if (nameIs(n, NOISE)) { Rng rr; rr.s = 1234 + (int)(animTime * 14.f); for (int i = 0; i < w; i += 2) { int a = (int)(rr.next() * (0.12f + 0.88f * fr) * h / 2); fill(x + i, cy - (a > 0 ? a : 0), 2, abs(a) + 1, c); } return; }
     if (nameIs(n, DRIVE)) { float g = 1.f + fr * 8.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = sinf((t * 2.f + symScroll()) * 6.2831853f) * g; return 0.5f + 0.5f * (sv > 1 ? 1 : (sv < -1 ? -1 : sv)); }, false); return; }
-    if (!strcmp(n, "CRSH")) { int st = 2 + (int)((1.f - fr) * 14.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = 0.5f + 0.5f * sinf((t + symScroll()) * 6.2831853f); return floorf(sv * st) / st; }, false); return; }
-    if (!strcmp(n, "SRR")) { int st = 32 - (int)(fr * 28.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float q = floorf((t + symScroll()) * st) / st; return 0.5f + 0.5f * sinf(q * 6.2831853f); }, false); return; }
+    if (!strcmp(n, "CRSH")) {   // Bitcrush: links die Bits als Zellen (je weniger, desto groeber), rechts die Welle als Treppe
+        int bits = 8 - (int)(fr * 7.f + 0.5f), st = 1 << (bits > 4 ? 4 : bits);
+        int cw2 = 10, ch = (h - 4) / 8;
+        for (int i = 0; i < 8; i++) {
+            bool on = i < bits; bool lsb = on && i == bits - 1;
+            rrect(x, y + h - 2 - (i + 1) * ch, cw2, ch - 1, 1, on ? (lsb ? mix(c, C_PLAY, 0.5f + 0.5f * sinf(animTime * 8.f)) : c) : C_OFF2);
+        }
+        int sx = x + cw2 + 6, sw = w - cw2 - 6;
+        for (int i = 0; i <= st && st <= 8; i++) fill(sx, y + 4 + i * (h - 8) / st, sw, 1, C_OFF2);
+        symCurve(sx, y + 4, sw, h - 8, c, [&](float t) { float sv = 0.5f + 0.5f * sinf((t * 1.5f + symScroll()) * 6.2831853f); return floorf(sv * st + 0.5f) / st; }, false);
+        return;
+    }
+    if (!strcmp(n, "SRR")) {   // Abtastrate: senkrechte Abtastpunkte (Stiel + Punkt), gehalten bis zum naechsten
+        int st = 22 - (int)(fr * 18.f); float sc = symScroll();
+        symCurve(x, y + 4, w, h - 8, cd, [&](float t) { return 0.5f + 0.5f * sinf((t + sc) * 6.2831853f); }, false);
+        int by = y + h - 4, hh = h - 8, py = -1;
+        for (int i = 0; i <= st; i++) {
+            float t = (i - fmodf(sc * st, 1.f)) / st; if (t < 0) continue;
+            float q = floorf((t + sc) * st + 0.5f) / st;
+            int sx = x + (int)(t * w), sy = by - (int)((0.5f + 0.5f * sinf(q * 6.2831853f)) * hh);
+            if (sx > x + w) break;
+            if (py >= 0) fill(sx - (w / st), py, w / st, 1, c);   // Halten
+            fill(sx, sy < by ? sy : by, 1, abs(by - sy) / 3 + 1, dimC(c, 0.5f));
+            disc(sx, sy, st > 20 ? 1 : 2, i == (int)(animTime * 6.f) % (st + 1) ? C_PLAY : c);
+            py = sy;
+        }
+        return;
+    }
     if (nameIs(n, GLIDE)) { float sl = 0.05f + fr * 0.9f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return t < sl ? 0.15f + 0.7f * t / sl : 0.85f; }, false); return; }
     if (nameIs(n, BRIGHT)) {   // Sonne: Strahlen = Helligkeit
         disc(cx, cy, h / 6, c);
