@@ -1530,6 +1530,7 @@ const float* wavetableFrame(int t, int f);
 static bool nameIs(const char* n, const char* const* list) { for (; *list; list++) if (!strcmp(n, *list)) return true; return false; }
 
 // Kurve aus Funktionswerten v(t) in [0,1] in ein Rechteck zeichnen
+static inline float fastTanhUi(float x) { return x < -3.f ? -1.f : (x > 3.f ? 1.f : x * (27.f + x * x) / (27.f + 9.f * x * x)); }
 static float symScroll() { return fmodf(animTime * 0.35f, 1.f); }   // Laufschrift fuer periodische Wert-Symbole
 template <typename Fn> static void symCurve(int x, int y, int w, int h, Col c, Fn f, bool fillUnder = true) {
     int py = y + h - (int)(f(0.f) * h);
@@ -1645,6 +1646,68 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         for (int i = 0; i < 5; i++) fill(x + 4, y + 3 + i * (h - 6) / 4, w - 8, 1, C_OFF2);
         for (int i = 0; i < nn; i++) { int py = y + h - 5 - i * (h - 10) / (nn - 1 > 0 ? nn - 1 : 1), px = cx + (i - nn / 2) * 12; fill(px + 4, py - 12, 1, 12, c); disc(px, py, 4, i == hot ? C_PLAY : c); }
         return;
+    }
+    if (n[0] == 'P' && n[1] >= '1' && n[1] <= '3' && !n[2]) {   // Insert-Regler P1-P3: Bild je Effekt-Typ und Regler
+        int ty = pv(P_ITYP) % INS_COUNT, k = n[1] - '1';
+        float v = val / 127.f, t0 = animTime;
+        auto band = [&](float pos, float q, float amt) {   // Frequenzgang mit Kerbe/Spitze bei pos
+            return [=](float t) { float d2 = (t - pos) * q; return 0.55f + amt * expf(-d2 * d2); };
+        };
+        switch (ty) {
+        case INS_CHORUS:
+            if (k == 0) {   // RATE: zwei Stimmen laufen gegeneinander, Tempo = Wert
+                float ph = sinf(t0 * (0.5f + v * 6.f)) * 0.25f;
+                symCurve(x, y + 3, w, h - 6, cd, [&](float t) { return 0.5f + 0.42f * sinf((t * 2.f + symScroll()) * 6.2831853f); }, false);
+                symCurve(x, y + 3, w, h - 6, c, [&](float t) { return 0.5f + 0.42f * sinf((t * 2.f + symScroll() + ph) * 6.2831853f); }, false);
+            } else if (k == 1) {   // DEPTH: Kopie pendelt um so weiter, je tiefer
+                for (int j = 2; j >= 0; j--) { float ph = sinf(t0 * 2.f + j * 2.1f) * v * 0.3f * (j ? 1.f : 0.f);
+                    symCurve(x, y + 3, w, h - 6, j ? dimC(c, 0.45f) : c, [&](float t) { return 0.5f + 0.42f * sinf((t * 2.f + symScroll() + ph) * 6.2831853f); }, false); }
+            } else {   // WIDTH: zwei Stimmen links/rechts, Abstand = Breite
+                int sp = (int)(v * (w / 2 - 10) * (0.85f + 0.15f * sinf(t0 * 2.f)));
+                text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM);
+                for (int j = -1; j <= 1; j += 2) { int px = cx + j * sp; disc(px, cy + (int)(sinf(t0 * 3.f + j) * 4.f), 5, c); ring(px, cy, 8 + (int)(fmodf(t0, 1.f) * 6), 1, dimC(c, 1.f - fmodf(t0, 1.f))); }
+            }
+            return;
+        case INS_PHASER: case INS_FLANGER: {
+            bool fl = ty == INS_FLANGER;
+            float rate = k == 0 ? v : pv(P_IP1) / 127.f, dep = k == 1 ? v : pv(P_IP2) / 127.f, fb = k == 2 ? v : pv(P_IP3) / 127.f;
+            float sw = 0.5f + 0.5f * sinf(t0 * (0.4f + rate * 5.f));
+            float lo = 0.5f - dep * 0.4f, hi = 0.5f + dep * 0.4f, pos = lo + (hi - lo) * sw;
+            if (k == 1) fill(x + (int)(lo * w), y, (int)((hi - lo) * w) + 1, h, dimC(c, 0.15f));   // DEPTH: Bereich der Bewegung
+            if (fl) symCurve(x, y + 2, w, h - 4, c, [&](float t) { float cm = cosf((t / (0.06f + pos * 0.12f)) * 6.2831853f); return 0.5f + 0.4f * cm * (0.4f + 0.6f * fb); }, false);
+            else {
+                float amt = -(0.3f + 0.25f * fb);
+                auto n1 = band(pos * 0.6f, 9.f + fb * 20.f, amt), n2 = band(pos * 0.6f + 0.35f, 9.f + fb * 20.f, amt);
+                symCurve(x, y + 2, w, h - 4, c, [&](float t) { return fminf(n1(t), n2(t)) + (k == 2 ? fb * 0.25f * expf(-((t - pos * 0.6f - 0.17f) * 14.f) * ((t - pos * 0.6f - 0.17f) * 14.f)) : 0.f); });
+            }
+            if (k == 0) disc(x + (int)(pos * w), y + 2, 2, C_PLAY);
+            return;
+        }
+        case INS_DRIVE:
+            if (k == 0) { float g = 1.f + v * 9.f; symCurve(x, y + 3, w, h - 6, c, [&](float t) { float sv = sinf((t * 2.f + symScroll()) * 6.2831853f) * g; return 0.5f + 0.45f * fastTanhUi(sv); }, false); }
+            else if (k == 1) { float tl = (v - 0.5f) * 0.8f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return 0.5f + tl * (t - 0.5f) + 0.04f * sinf(t * 20.f + t0 * 3.f); }); }
+            else { int lv = 1 + (int)(v * 7.f); int hot = (int)(t0 * 8.f) % (lv + 1); for (int i = 0; i < 8; i++) { int hh = 4 + i * (h - 6) / 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, i < lv ? (i == hot ? C_PLAY : c) : C_OFF2); } }
+            return;
+        case INS_RING: {   // FREQ/FINE: Traeger * Signal, Schwebung
+            float cf = 2.f + (pv(P_IP1) / 127.f) * 14.f, fi = (pv(P_IP2) - 64) / 64.f;
+            symCurve(x, y + 3, w, h - 6, cd, [&](float t) { return 0.5f + 0.42f * sinf((t * 1.5f + symScroll()) * 6.2831853f); }, false);
+            symCurve(x, y + 3, w, h - 6, c, [&](float t) { float p = (t + symScroll() * 0.5f) * 6.2831853f; return 0.5f + 0.42f * sinf(p * 1.5f) * sinf(p * (cf + fi * (k == 1 ? 2.f : 0.5f)) + t0 * 2.f); }, false);
+            return;
+        }
+        case INS_APAN: {   // RATE/DEPTH: Punkt wandert zwischen L und R
+            float rate = k == 0 ? v : pv(P_IP1) / 127.f, dep = k == 1 ? v : pv(P_IP2) / 127.f;
+            text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM);
+            fill(x + 12, cy, w - 24, 1, C_OFF2);
+            int rx = (int)(dep * (w / 2 - 14));
+            fill(cx - rx, cy - 1, 2 * rx + 1, 3, dimC(c, 0.3f));
+            float ph = sinf(t0 * (0.5f + rate * 8.f));
+            int px = cx + (int)(ph * rx);
+            for (int j = 1; j < 5; j++) { float pp = sinf((t0 - j * 0.04f) * (0.5f + rate * 8.f)); disc(cx + (int)(pp * rx), cy, 4 - j / 2, dimC(c, 1.f - j * 0.2f)); }
+            disc(px, cy, 6, c);
+            return;
+        }
+        default: break;
+        }
     }
     if (d.kind == K_LMODE) {   // LFO-Modus: Kurve laeuft frei / startet mit dem Trig neu / haelt / einmal / halbe Welle
         int m = val % 5; float sc = symScroll() * 2.f;
@@ -5006,7 +5069,7 @@ int main(int argc, char** argv) {
         if (page == PG_SRC) { track = 7; slot = 0; }
         if (page == PG_SRC || page == PG_SRC2 || shotPage == 27) { }
         if (shotPage == 27) { page = PG_SRC2; track = 6; slot = 0; }   // FM Operator 1
-        if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
+        if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = getenv("GB_INS") ? (uint8_t)atoi(getenv("GB_INS")) : INS_CHORUS; editAt = getenv("GB_INS") ? 0 : 1; editSlot = 0; slot = 0; }
         if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.setMute(3, true); for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
         if (page == PG_PRJ) { slot = 2; }
         if (shotPage >= 30 && shotPage <= 33) {   // Engine-Grafiken: 30 KICK, 31 WTBL, 32 CHOP, 33 GRAN
