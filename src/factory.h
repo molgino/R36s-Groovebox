@@ -5,7 +5,7 @@
 #include <string.h>
 
 struct FSet { uint8_t p, v; };
-struct FSound { uint8_t machine; const char* name; FSet set[16]; };
+struct FSound { uint8_t machine; const char* name; FSet set[28]; };
 
 static const FSound FACTORY[] = {
     // Drums
@@ -46,13 +46,74 @@ static const FSound FACTORY[] = {
                            {P_AREL, 80}, {P_REV, 70}, {P_LEN, 110}, {255, 0}}},
     {M_WTBL, "DIGITAL PLUCK", {{P_S0, 3}, {P_S1, 30}, {P_S6, 100}, {P_FTYP, FT_LP24}, {P_FREQ, 80}, {P_FENV, 90}, {P_ADEC, 40}, {P_ASUS, 0},
                                {P_DLY, 45}, {P_NOTE, 60}, {P_VOL, 127}, {255, 0}}},
+    // ---- Rave & Acid (90er): 303-Acid, Reese, Hoover, Stabs, Supersaw, House-Orgel
+    // Acid: Ladder-Filter mit hoher Resonanz, kurzer Filter-Decay, GLID = Slide bei ueberlappenden Trigs (LEN > 1 Step), VELF = Akzent
+    {M_SYNTH, "303 ACID", {{P_S0, 0}, {P_S3, 0}, {P_FTYP, FT_LADR}, {P_FREQ, 32}, {P_RESO, 108}, {P_FENV, 112}, {P_FDEC, 36},
+                           {P_FSUS, 0}, {P_ADEC, 70}, {P_ASUS, 100}, {P_AREL, 14}, {P_S7, 26}, {P_DRIV, 18}, {P_VELF, 92},
+                           {P_KEYT, 30}, {P_LEN, 40}, {P_NOTE, 36}, {P_VOL, 110}, {255, 0}}},
+    {M_SYNTH, "303 SQUARE ACID", {{P_S0, 1}, {P_S3, 0}, {P_S6, 64}, {P_FTYP, FT_LADR}, {P_FREQ, 28}, {P_RESO, 112}, {P_FENV, 118},
+                                  {P_FDEC, 30}, {P_FSUS, 0}, {P_ADEC, 60}, {P_ASUS, 95}, {P_AREL, 12}, {P_S7, 24}, {P_DRIV, 30},
+                                  {P_VELF, 96}, {P_LEN, 40}, {P_NOTE, 36}, {P_VOL, 105}, {255, 0}}},
+    {M_SYNTH, "ACID SCREAMER", {{P_S0, 0}, {P_S3, 0}, {P_FTYP, FT_LADR}, {P_FREQ, 42}, {P_RESO, 122}, {P_FENV, 120}, {P_FDEC, 44},
+                                {P_FSUS, 0}, {P_ASUS, 100}, {P_AREL, 16}, {P_S7, 30}, {P_ITYP, INS_DRIVE}, {P_IMIX, 100}, {P_DRIV, 70},
+                                {P_L1 + LF_DEST, P_FREQ + 1}, {P_L1 + LF_SYNC, 3}, {P_L1 + LF_WAVE, LW_TRI}, {P_L1 + LF_DEPTH, 84},
+                                {P_DLY, 35}, {P_VELF, 90}, {P_LEN, 40}, {P_NOTE, 36}, {P_VOL, 127}, {255, 0}}},
+    {M_SYNTH, "ACID DEEP", {{P_S0, 0}, {P_S3, 0}, {P_S4, 40}, {P_FTYP, FT_LADR}, {P_FREQ, 22}, {P_RESO, 96}, {P_FENV, 100}, {P_FDEC, 55},
+                            {P_FSUS, 0}, {P_ASUS, 100}, {P_AREL, 20}, {P_S7, 34}, {P_DRIV, 25}, {P_VELF, 85}, {P_REV, 20},
+                            {P_LEN, 40}, {P_NOTE, 36}, {P_VOL, 115}, {255, 0}}},
+    // Reese: zwei leicht verstimmte Saegezaehne schweben gegeneinander (Jungle/DnB), Filter bewegt sich langsam
+    {M_SYNTH, "REESE BASS", {{P_S0, 0}, {P_S1, 0}, {P_S2, 80}, {P_S3, 64}, {P_S4, 45}, {P_FTYP, FT_LP24}, {P_FREQ, 52}, {P_RESO, 25},
+                             {P_FENV, 72}, {P_FDEC, 70}, {P_ADEC, 90}, {P_ASUS, 120}, {P_AREL, 30}, {P_DRIV, 30},
+                             {P_L1 + LF_DEST, P_FREQ + 1}, {P_L1 + LF_RATE, 30}, {P_L1 + LF_WAVE, LW_SIN}, {P_L1 + LF_DEPTH, 76},
+                             {P_NOTE, 36}, {P_VOL, 110}, {255, 0}}},
+    {M_SYNTH, "REESE GROWL", {{P_S0, 0}, {P_S1, 0}, {P_S2, 92}, {P_S3, 64}, {P_S4, 35}, {P_FTYP, FT_LP24}, {P_FREQ, 48}, {P_RESO, 60},
+                              {P_FENV, 70}, {P_ASUS, 120}, {P_AREL, 25}, {P_ITYP, INS_PHASER}, {P_IP1, 40}, {P_IP2, 90}, {P_IMIX, 90},
+                              {P_DRIV, 45}, {P_L1 + LF_DEST, P_FREQ + 1}, {P_L1 + LF_SYNC, 4}, {P_L1 + LF_WAVE, LW_TRI},
+                              {P_L1 + LF_DEPTH, 90}, {P_NOTE, 36}, {P_VOL, 105}, {255, 0}}},
+    // Hoover: verstimmte Saegezaehne + Oktave tiefer, starker Chorus, Tonhoehe schwingt beim Anschlag von unten ein, Glide
+    {M_SYNTH, "HOOVER", {{P_S0, 0}, {P_S1, 0}, {P_S2, 98}, {P_S3, 70}, {P_S4, 40}, {P_S7, 45}, {P_X1, 2}, {P_FTYP, FT_LP24},
+                         {P_FREQ, 92}, {P_RESO, 20}, {P_FENV, 70}, {P_ADEC, 90}, {P_ASUS, 115}, {P_AREL, 50},
+                         {P_ITYP, INS_CHORUS}, {P_IP1, 55}, {P_IP2, 110}, {P_IP3, 110}, {P_IMIX, 110},
+                         {P_L1 + LF_DEST, P_NOTE + 1}, {P_L1 + LF_RATE, 92}, {P_L1 + LF_WAVE, LW_EXPDN}, {P_L1 + LF_MODE, LM_ONE},
+                         {P_L1 + LF_DEPTH, 50}, {P_L2 + LF_DEST, P_S2 + 1}, {P_L2 + LF_RATE, 45}, {P_L2 + LF_DEPTH, 84}}},
+    {M_SYNTH, "HOOVER LEAD", {{P_S0, 0}, {P_S1, 1}, {P_S2, 104}, {P_S3, 60}, {P_S6, 40}, {P_S7, 55}, {P_X1, 2}, {P_FTYP, FT_LP24},
+                              {P_FREQ, 100}, {P_RESO, 25}, {P_AATK, 4}, {P_ASUS, 115}, {P_AREL, 55},
+                              {P_ITYP, INS_CHORUS}, {P_IP1, 60}, {P_IP2, 120}, {P_IMIX, 115},
+                              {P_L1 + LF_DEST, P_NOTE + 1}, {P_L1 + LF_RATE, 88}, {P_L1 + LF_WAVE, LW_EXPDN}, {P_L1 + LF_MODE, LM_ONE},
+                              {P_L1 + LF_DEPTH, 46}, {P_L2 + LF_DEST, P_S6 + 1}, {P_L2 + LF_RATE, 50}, {P_L2 + LF_DEPTH, 100},
+                              {P_REV, 45}, {P_DLY, 30}, {P_NOTE, 60}}},
+    // Stabs: Akkord auf einer Taste (ARP-Modus AKKD), kurz und hell, mit Hall
+    {M_SYNTH, "RAVE STAB", {{P_S0, 0}, {P_S1, 1}, {P_S2, 76}, {P_S3, 50}, {P_FTYP, FT_LP24}, {P_FREQ, 78}, {P_RESO, 35}, {P_FENV, 92},
+                            {P_FDEC, 35}, {P_FSUS, 0}, {P_ADEC, 42}, {P_ASUS, 0}, {P_AREL, 35}, {P_AMOD, ARP_CHORD}, {P_ACHD, 3},
+                            {P_REV, 50}, {P_DLY, 25}, {P_NOTE, 60}, {P_VOL, 90}, {255, 0}}},
+    {M_SYNTH, "DUB CHORD", {{P_S0, 0}, {P_S1, 0}, {P_S2, 72}, {P_S3, 64}, {P_FTYP, FT_LP24}, {P_FREQ, 60}, {P_RESO, 45}, {P_FENV, 96},
+                            {P_FDEC, 30}, {P_FSUS, 0}, {P_ADEC, 36}, {P_ASUS, 0}, {P_AREL, 30}, {P_AMOD, ARP_CHORD}, {P_ACHD, 6},
+                            {P_DLY, 75}, {P_REV, 65}, {P_NOTE, 60}, {P_VOL, 120}, {255, 0}}},
+    // Supersaw / Trance
+    {M_SYNTH, "SUPERSAW", {{P_S0, 0}, {P_S1, 0}, {P_S2, 100}, {P_S3, 64}, {P_S4, 25}, {P_FTYP, FT_LP24}, {P_FREQ, 100}, {P_RESO, 15},
+                           {P_AATK, 2}, {P_ASUS, 110}, {P_AREL, 60}, {P_ITYP, INS_CHORUS}, {P_IP1, 50}, {P_IP2, 100}, {P_IP3, 127},
+                           {P_IMIX, 110}, {P_REV, 50}, {P_DLY, 35}, {P_NOTE, 72}, {P_VOL, 115}, {255, 0}}},
+    {M_SYNTH, "TRANCE PLUCK", {{P_S0, 0}, {P_S1, 0}, {P_S2, 84}, {P_S3, 64}, {P_FTYP, FT_LP24}, {P_FREQ, 45}, {P_RESO, 40}, {P_FENV, 110},
+                               {P_FDEC, 30}, {P_FSUS, 0}, {P_ADEC, 45}, {P_ASUS, 0}, {P_AREL, 30}, {P_DLY, 55}, {P_REV, 40},
+                               {P_NOTE, 72}, {P_VOL, 100}, {255, 0}}},
+    {M_SYNTH, "WOBBLE BASS", {{P_S0, 0}, {P_S1, 1}, {P_S2, 70}, {P_S3, 50}, {P_S4, 60}, {P_FTYP, FT_LP24}, {P_FREQ, 40}, {P_RESO, 70},
+                              {P_ASUS, 120}, {P_AREL, 20}, {P_DRIV, 50}, {P_L1 + LF_DEST, P_FREQ + 1}, {P_L1 + LF_SYNC, 6},
+                              {P_L1 + LF_WAVE, LW_SIN}, {P_L1 + LF_MODE, LM_TRIG}, {P_L1 + LF_DEPTH, 110}, {P_NOTE, 36}, {P_VOL, 110}, {255, 0}}},
+    {M_SYNTH, "JUNGLE SUB", {{P_S0, 3}, {P_S3, 0}, {P_S4, 30}, {P_S7, 40}, {P_FTYP, FT_LP24}, {P_FREQ, 60}, {P_FENV, 64}, {P_ADEC, 90},
+                             {P_ASUS, 120}, {P_AREL, 35}, {P_DRIV, 20}, {P_NOTE, 36}, {P_VOL, 120}, {255, 0}}},
+    // House-Orgel (90er Orgel-Bass): 4 Traeger als Zugriegel 1/2/3/4, perkussiv, etwas Feedback fuer Biss
+    {M_FM, "HOUSE ORGAN", {{P_S0, 7}, {P_S1, 30}, {P_X0 + OP_RAT, 3}, {P_X0 + OP_LVL, 120}, {P_X0 + OP_DEC, 60}, {P_X0 + OP_SUS, 30},
+                           {P_Y0 + OP_RAT, 7}, {P_Y0 + OP_LVL, 90}, {P_Y0 + OP_DEC, 50}, {P_Y0 + OP_SUS, 20},
+                           {P_Z0 + OP_RAT, 9}, {P_Z0 + OP_LVL, 70}, {P_Z0 + OP_DEC, 40}, {P_Z0 + OP_SUS, 10},
+                           {P_W0 + OP_RAT, 11}, {P_W0 + OP_LVL, 55}, {P_W0 + OP_DEC, 30}, {P_W0 + OP_SUS, 0},
+                           {P_ADEC, 60}, {P_ASUS, 50}, {P_AREL, 25}, {P_REV, 30}, {P_NOTE, 48}, {P_VOL, 95}, {255, 0}}},
 };
 enum { NFACTORY = sizeof FACTORY / sizeof *FACTORY };
 
 static inline void applyFactory(Pattern& P, int t, int idx) {
     const FSound& f = FACTORY[idx];
     Engine::initTrack(P, t, f.machine);
-    for (int i = 0; i < 16 && f.set[i].p != 255 && (f.set[i].p || f.set[i].v); i++) P.p[t][f.set[i].p] = f.set[i].v;   // Ende: 255 oder leerer Eintrag
+    for (int i = 0; i < 28 && f.set[i].p != 255 && (f.set[i].p || f.set[i].v); i++) P.p[t][f.set[i].p] = f.set[i].v;   // Ende: 255 oder leerer Eintrag
 }
 static inline int factoryByName(const char* nm) {
     for (int i = 0; i < NFACTORY; i++) if (!strcmp(FACTORY[i].name, nm)) return i;

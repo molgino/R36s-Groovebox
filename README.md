@@ -12,6 +12,8 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 * **SELECT antippen** öffnet die **Seitenkarte** mit allen Seiten (Signalweg der Spur, LIVE/Mix/FX, Song/Projekt/Einstellungen). **SELECT halten** zeigt die Tastenhilfe.
 * Unten im Bedienfeld steht zu jedem Regler eine kurze Erklärung.
 * Fertige Klänge: Seite PRJ → **PRESET** über Platz 32 hinaus drehen → **Werksklänge** (z. B. „NIGHT DRIVE BASS“, „PUNCH KICK“, „HAZE PAD“) → **P.LADEN**. Ein Werksklang setzt auch die Engine.
+* **Rave & Acid (Werksklänge):** „303 ACID“, „303 SQUARE ACID“, „ACID SCREAMER“, „ACID DEEP“ (Acid-Bässe im 303-Stil), „REESE BASS“, „REESE GROWL“ (Jungle/DnB), „HOOVER“, „HOOVER LEAD“, „RAVE STAB“ (Moll-Akkord auf einer Taste), „DUB CHORD“, „SUPERSAW“, „TRANCE PLUCK“, „WOBBLE BASS“, „JUNGLE SUB“, „HOUSE ORGAN“ (FM).
+  * **Acid spielen wie auf der 303:** Die Acid-Presets haben eine kurze Notenlänge (LEN 0.71). **Slide** = einen Trig mit LEN über 1 Step locken – die Note läuft dann zur nächsten hin (GLID bestimmt die Gleitzeit). **Akzent** = höhere Anschlagstärke (VEL-Lock): VELF öffnet dabei das Filter weiter. Am meisten passiert mit FREQ, RESO, ENV und F.DEC – am besten per LFO oder P-Lock bewegen.
 * Vertan? **SELECT + B** macht die letzte Änderung rückgängig (12 Schritte), SET → „Wiederholen“ stellt sie wieder her.
 
 ## Oberfläche: Signalweg
