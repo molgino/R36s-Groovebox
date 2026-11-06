@@ -573,6 +573,8 @@ Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, w
 
 **Lautstärke:** Die Lautstärketasten am R36S regeln im Groovebox-OS Lautsprecher und Kopfhörer (Anzeige auf dem Display, wird gespeichert).
 
+**Akku-Anzeige:** Oben rechts. Der Prozentwert wird aus der Akkuspannung berechnet (mit Ausgleich der Last und geglättet über 1–2 Minuten) – der eingebaute Zähler des Akku-Chips ist beim R36S meist nicht kalibriert und springt oder hängt bei 100 %. Beim Laden (Netzteil an der separaten Ladebuchse) erscheint ein **gelber Blitz** – erkannt über den Lade-Pin der Buchse und den Akkustrom, das Symbol wird grün und füllt sich. SET → SYSTEM → **Akku** zeigt Spannung, Strom und zum Vergleich den Wert des Akku-Chips; im Log steht jede Minute eine Zeile „Akku: …“.
+
 **Power-Taste:** kurz drücken schaltet das Display aus und wieder an (die Musik läuft weiter, spart Akku), **lang drücken (1,5 s)** speichert das Projekt und fährt den R36S sauber herunter.
 
 **Bildschirm & Fernbedienung im Browser:** Unter http://192.168.77.1/screen erscheint das Live-Bild der Groovebox (bis ca. 30 Bilder/s über eine dauerhafte WebSocket-Verbindung, nur geänderte Bildteile; Tasten kommen ohne Umweg an). Oben stehen Bilder/s, Datenrate und Verzögerung (ms).
@@ -581,6 +583,7 @@ Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, w
 * **Tastatur:** Pfeile = Steuerkreuz, Z/Leertaste = A, X/Rücktaste/Esc = B, S = X, A = Y, Q/W = L1/R1, 1/2 = L2/R2, Shift/Tab = SELECT, Enter = START (halten = FILL), T/F/G/H = linker Stick, I/J/K/L = rechter Stick. „?“ zeigt die Belegung.
 * **Gamepad:** Ein am PC oder Handy angeschlossenes Gamepad (Xbox, PlayStation, Bluetooth …) wird erkannt, Tasten in der Lage wie am R36S.
 * **Ton im Browser:** Oben auf „🔈 Ton“ tippen – der Klang der Groovebox kommt dann live im Browser (16 Bit Stereo, ca. 175 kB/s, Verzögerung ca. 0,1–0,2 s; der Regler daneben ist die Lautstärke). Lautsprecher/Kopfhörer am R36S laufen weiter (leiser drehen per Lautstärketasten). War der Ton beim letzten Mal an, startet er beim ersten Antippen der Seite wieder (Browser verlangen eine Berührung, bevor sie Ton abspielen). Am iPhone den Lautlos-Schalter beachten.
+* **Handy über USB verbunden und kein Ton am Handy?** Im Modus PC (MIDI + Audio) meldet sich die Groovebox als USB-Audiogerät „Synth City“ – iPhone/iPad schalten dann ihren Ton dorthin um, Lautsprecher und Kopfhörer des Handys sind weg. Lösung: SET → USB & PC → **USB-Audio-Richtung = NUR SENDEN**. Das Handy sieht die Groovebox dann nur als Eingang (Aufnahme in Apps geht weiter), behält seinen eigenen Lautsprecher bzw. Bluetooth, und „Ton im Browser“ ist zu hören. Nur MIDI/Netz ohne Audio: USB-Modus = PC (MIDI).
 * **Als App auf dem Homescreen:** iPhone/iPad: in Safari `http://192.168.77.1/screen` öffnen → Teilen → „Zum Home-Bildschirm“ – startet danach ohne Browserleiste im Vollbild mit dem SYNTH-CITY-Symbol. Android: Chrome-Menü → „Zum Startbildschirm hinzufügen“. Hinweis: Weil der R36S unverschlüsselt (http) erreichbar ist, bietet Chrome kein „App installieren“ an; die Verknüpfung öffnet die Seite dann im Browser.
 * Bis zu 3 Geräte können gleichzeitig zuschauen, bedienen und zuhören. Reißt die Verbindung ab, verbindet sich die Seite selbst neu und lässt alle Tasten los.
 

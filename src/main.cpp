@@ -85,8 +85,8 @@ static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang, usbNet, uac; char project[64]; };   // usbNet 0 NCM / 1 RNDIS, uac 2 / 1
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, 0, 2, ""};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang, usbNet, uac, uacSendOnly; char project[64]; };   // usbNet 0 NCM / 1 RNDIS, uac 2 / 1
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, 0, 2, 0, ""};
 static bool intMuted = false;   // interne Ausgabe stumm, weil USB-Audio laeuft
 static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
@@ -171,6 +171,7 @@ static void loadSettings() {
         else if (!strcmp(line, "audio_cores")) cfg.cores = clampi(atoi(v), 1, 2);
         else if (!strcmp(line, "usb_net")) cfg.usbNet = clampi(atoi(v), 0, 1);
         else if (!strcmp(line, "usb_audio_class")) cfg.uac = atoi(v) == 1 ? 1 : 2;
+        else if (!strcmp(line, "usb_audio_send_only")) cfg.uacSendOnly = atoi(v) != 0;
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
@@ -178,8 +179,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nusb_net %d\nusb_audio_class %d\nproject %s\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.usbNet, cfg.uac, cfg.project);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nusb_net %d\nusb_audio_class %d\nusb_audio_send_only %d\nproject %s\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.usbNet, cfg.uac, cfg.uacSendOnly, cfg.project);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -394,7 +395,8 @@ static float slideOff = 0;                  // Seitenwechsel: Inhalt schiebt ein
 static float knobAnim[8];                   // Regler gleiten zum Zielwert
 static float hlY = -1, curXg = -1;          // Spur-Markierung und Cursor gleiten
 static float oscDrift = 0;
-static int batPct = -1; static bool batChg = false; static Uint32 batAt = 0;
+static int batPct = -1; static bool batChg = false, batFull = false; static Uint32 batAt = 0;
+static int batDrv = -1, batMv = 0, batMa = 0, batSrcV = 0; static bool batPlug = false; static float batEst = -1.f; static char batStatus[24] = "";
 static char batPath[300] = "";
 
 // Aufnahme vom PC als Sample speichern: samples/pc/pc-NN.wav (24 Bit Stereo, Engine-Rate), danach Samples neu laden
@@ -501,31 +503,126 @@ static void pollVolumeKeys() {
     }
 }
 
-static void readBattery() {
-    if (!batPath[0]) {
-        DIR* d = opendir("/sys/class/power_supply");
-        if (!d) { batPct = -2; return; }
-        struct dirent* e;
-        while ((e = readdir(d))) {
-            if (e->d_name[0] == '.') continue;
-            char p[300], ty[32] = "";
-            snprintf(p, sizeof p, "/sys/class/power_supply/%s/type", e->d_name);
-            FILE* f = fopen(p, "r");
-            if (!f) continue;
-            if (fgets(ty, sizeof ty, f) && !strncmp(ty, "Battery", 7)) snprintf(batPath, sizeof batPath, "/sys/class/power_supply/%s", e->d_name);
-            fclose(f);
-            if (batPath[0]) break;
+// Akku: Prozent aus der Spannung (Ruhespannung ~ Spannung + Strom x Innenwiderstand, Li-Ion-Kennlinie), geglaettet;
+// der Wert des Treibers (Coulomb-Zaehler) ist beim R36S oft unkalibriert (springt, haengt bei 100 %) - er steht nur zur Info in SET.
+// Laden: Status "Charging/Full" ODER ein Netzteil/USB-Eingang meldet online.
+static char chgPath[8][300]; static int chgN = -1;
+static bool readSysInt(const char* dir, const char* name, long& v) {
+    char p[400], b[40] = ""; snprintf(p, sizeof p, "%s/%s", dir, name);
+    FILE* f = fopen(p, "r"); if (!f) return false;
+    bool ok = fgets(b, sizeof b, f) != nullptr; fclose(f);
+    if (!ok) return false;
+    v = atol(b); return true;
+}
+static float batOcvPct(float v) {   // Ruhespannung (V) -> Ladezustand (%), typische LiPo-Zelle
+    static const float T[][2] = {{3.30f, 0}, {3.61f, 5}, {3.69f, 10}, {3.71f, 15}, {3.73f, 20}, {3.75f, 25}, {3.77f, 30}, {3.79f, 35}, {3.80f, 40},
+                                 {3.82f, 45}, {3.84f, 50}, {3.85f, 55}, {3.87f, 60}, {3.91f, 65}, {3.95f, 70}, {3.98f, 75}, {4.02f, 80},
+                                 {4.08f, 85}, {4.11f, 90}, {4.15f, 95}, {4.19f, 100}};
+    const int N = sizeof T / sizeof *T;
+    if (v <= T[0][0]) return 0.f;
+    if (v >= T[N - 1][0]) return 100.f;
+    for (int i = 1; i < N; i++) if (v < T[i][0]) return T[i - 1][1] + (v - T[i - 1][0]) / (T[i][0] - T[i - 1][0]) * (T[i][1] - T[i - 1][1]);
+    return 100.f;
+}
+// Ladebuchse (separater DC-Port): Pin dc-det = GPIO0_B3 (Bank gpio0, Leitung 11). Der Akku-Treiber wertet ihn nicht aus,
+// darum hier direkt lesen. Polaritaet unbekannt -> lernen: bei deutlichem Entladestrom ist der Pegel "nicht eingesteckt".
+#include <linux/gpio.h>
+#include <errno.h>
+#include <sys/ioctl.h>
+static int dcFd = -2, dcRaw = -1, dcIdle = -1;   // dcIdle: Pegel ohne Netzteil (-1 = noch unbekannt, Annahme: ohne Netzteil 0 = gemessen am R36S)
+static int readDcDet() {
+    if (dcFd == -2) {
+        dcFd = -1;
+        for (int c = 0; c < 8 && dcFd < 0; c++) {
+            char p[32]; snprintf(p, sizeof p, "/dev/gpiochip%d", c);
+            int fd = open(p, O_RDONLY | O_CLOEXEC);
+            if (fd < 0) continue;
+            struct gpiochip_info ci; memset(&ci, 0, sizeof ci);
+            bool bank0 = ioctl(fd, GPIO_GET_CHIPINFO_IOCTL, &ci) == 0 && (!strcmp(ci.label, "gpio0") || strstr(ci.label, "ff040000"));
+            if (bank0) {
+                struct gpiohandle_request rq; memset(&rq, 0, sizeof rq);
+                rq.lineoffsets[0] = 11; rq.lines = 1; rq.flags = GPIOHANDLE_REQUEST_INPUT;
+                snprintf(rq.consumer_label, sizeof rq.consumer_label, "groovebox-dcdet");
+                if (ioctl(fd, GPIO_GET_LINEHANDLE_IOCTL, &rq) == 0) dcFd = rq.fd;
+                else printf("Akku: dc-det (GPIO0_B3) nicht lesbar (%s)\n", strerror(errno));
+            }
+            close(fd);
         }
-        closedir(d);
-        if (!batPath[0]) { batPct = -2; return; }
     }
-    char p[340], b[32] = "";
-    snprintf(p, sizeof p, "%s/capacity", batPath);
-    FILE* f = fopen(p, "r");
-    if (f) { if (fgets(b, sizeof b, f)) batPct = atoi(b); fclose(f); }
-    snprintf(p, sizeof p, "%s/status", batPath);
-    f = fopen(p, "r");
-    if (f) { if (fgets(b, sizeof b, f)) batChg = !strncmp(b, "Charging", 8) || !strncmp(b, "Full", 4); fclose(f); }
+    if (dcFd < 0) return -1;
+    struct gpiohandle_data hd; memset(&hd, 0, sizeof hd);
+    if (ioctl(dcFd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &hd) != 0) return -1;
+    return hd.values[0];
+}
+
+static void readBattery() {
+    if (chgN < 0) {   // einmal: Akku und Lade-Eingaenge suchen
+        chgN = 0;
+        const char* root = getenv("GB_POWER_SUPPLY") ? getenv("GB_POWER_SUPPLY") : "/sys/class/power_supply";   // Tests: nachgebautes Verzeichnis
+        DIR* d = opendir(root);
+        if (d) {
+            struct dirent* e;
+            while ((e = readdir(d))) {
+                if (e->d_name[0] == '.') continue;
+                char p[300], ty[32] = "";
+                snprintf(p, sizeof p, "%s/%s/type", root, e->d_name);
+                FILE* f = fopen(p, "r");
+                if (!f) continue;
+                if (!fgets(ty, sizeof ty, f)) ty[0] = 0;
+                fclose(f);
+                if (!strncmp(ty, "Battery", 7) && !batPath[0]) snprintf(batPath, sizeof batPath, "%s/%s", root, e->d_name);
+                else if (chgN < 8 && (!strncmp(ty, "Mains", 5) || !strncmp(ty, "USB", 3))) snprintf(chgPath[chgN++], sizeof chgPath[0], "%s/%s", root, e->d_name);
+            }
+            closedir(d);
+        }
+    }
+    if (!batPath[0]) { batPct = -2; return; }
+    long v;
+    batDrv = readSysInt(batPath, "capacity", v) ? (int)v : -1;
+    batMv = readSysInt(batPath, "voltage_now", v) ? (int)(v / 1000) : 0;
+    if (batMv <= 0 && readSysInt(batPath, "voltage_avg", v)) batMv = (int)(v / 1000);
+    batMa = readSysInt(batPath, "current_now", v) ? (int)(v / 1000) : 0;
+    {   char p[340]; snprintf(p, sizeof p, "%s/status", batPath);
+        FILE* f = fopen(p, "r"); batStatus[0] = 0;
+        if (f) { if (fgets(batStatus, sizeof batStatus, f)) batStatus[strcspn(batStatus, "\r\n")] = 0; fclose(f); } }
+    bool online = false;
+    for (int i = 0; i < chgN; i++) if (readSysInt(chgPath[i], "online", v) && v > 0) online = true;
+    batFull = !strncmp(batStatus, "Full", 4);
+    batChg = !strncmp(batStatus, "Charging", 8) || batFull;
+    dcRaw = getenv("GB_POWER_SUPPLY") ? -1 : readDcDet();
+    if (dcRaw >= 0) {   // Polaritaet lernen: deutlicher Entlade- bzw. Ladestrom zeigt den Pegel
+        if (batMa < -150) dcIdle = dcRaw;
+        else if (batMa > 150) dcIdle = !dcRaw;
+    }
+    bool dcIn = dcRaw >= 0 && (dcIdle >= 0 ? dcRaw != dcIdle : dcRaw == 1);
+    // eingesteckt: Treiber meldet Laden/voll, ein Lade-Eingang ist online, der dc-det-Pin, oder es fliesst Strom in den Akku.
+    // Nicht "Not charging": der R36S meldet Strom 0 mA, dann steht der Status auch ohne Netzteil auf "Not charging".
+    batPlug = batChg || online || dcIn || batMa > 50;
+    if (batMv > 2500 && batMv < 4600) {   // Spannungs-Schaetzung
+        float ia = fabsf((float)batMa) / 1000.f;
+        if (ia > 3.f) ia = 0.f;   // unplausibel (Einheit/Treiber) -> ohne Ausgleich
+        const float R = 0.15f;    // Innenwiderstand + Leitungen (Ohm)
+        float ocv = batMv / 1000.f + (batPlug ? -ia * R : ia * R);
+        float p = batOcvPct(ocv);
+        if (batEst < 0.f) batEst = p;
+        else {
+            float k = batPlug ? 0.05f : 0.1f;   // ~1-2 min Zeitkonstante bei 5-s-Takt
+            float n = batEst + (p - batEst) * k;
+            if (!batPlug && n > batEst) n = batEst + (n - batEst) * 0.1f;   // beim Entladen kaum steigen (Spannung erholt sich nach Last)
+            if (batPlug && n < batEst) n = batEst;                          // beim Laden nicht fallen
+            batEst = n;
+        }
+        if (batFull) batEst = 100.f;
+        batSrcV = 1;
+        batPct = clampi((int)(batEst + 0.5f), 0, 100);
+    } else { batSrcV = 0; batPct = batDrv; }
+    static Uint32 logAt = 0;
+    Uint32 now = SDL_GetTicks();
+    if (!logAt || now - logAt > 60000) {   // Diagnose im Log (zum Vergleichen mit dem Treiberwert)
+        logAt = now;
+        printf("Akku: %d %% (Treiber %d %%), %d mV, %d mA, Status %s, Netz %s, dc-det %d (ohne Netzteil %d), Lade-Eingang %s\n", batPct, batDrv, batMv, batMa,
+               batStatus[0] ? batStatus : "?", batPlug ? "an" : "aus", dcRaw, dcIdle, online ? "online" : "-");
+    }
 }
 
 static void animate() {
@@ -569,7 +666,7 @@ static void animate() {
         lastPg = pg;
     }
     oscDrift += dt;
-    if (now - batAt > 10000 || batAt == 0) { batAt = now; readBattery(); }
+    if (now - batAt > 5000 || batAt == 0) { batAt = now; readBattery(); }
     { static Uint32 jackAt = 0; if (now - jackAt > 500) { jackAt = now; audioJackPoll(); } }
     pollVolumeKeys();
     {   // USB-Audio zum PC an/aus je nach Modus (Geraet erscheint erst nach dem Umschalten in den PC-Modus)
@@ -775,15 +872,25 @@ static bool stepHasLock(const Step& s) {
 static void battery(int x, int y) {
     if (batPct < 0) return;
     Col c = batPct <= 15 ? C_TRIG : (batPct <= 30 ? C_LOCK : C_DIM);
-    if (batChg) c = C_GREEN;
-    if (batPct <= 10 && !batChg && (SDL_GetTicks() / 500) % 2) c = dimC(C_TRIG, 0.4f);
+    if (batPlug) c = C_GREEN;
+    if (batPct <= 10 && !batPlug && (SDL_GetTicks() / 500) % 2) c = dimC(C_TRIG, 0.4f);
     rrect(x, y, 22, 11, 2, c);
     rrect(x + 1, y + 1, 20, 9, 2, C_PANEL);
     fill(x + 22, y + 3, 2, 5, c);
     int w = clampi(batPct * 18 / 100, 0, 18);
+    if (batPlug && !batFull) {   // Laden: Fuellung laeuft vom Ladestand bis voll
+        float f = fmodf(animTime * 0.6f, 1.f);
+        int w2 = w + (int)((18 - w) * f);
+        if (w2 > w) rrect(x + 2, y + 2, w2, 7, 1, dimC(C_GREEN, 0.35f + 0.3f * (1.f - f)));
+    }
     if (w) rrect(x + 2, y + 2, w, 7, 1, c);
-    if (batChg) {   // Blitz
-        fill(x + 11, y + 2, 2, 4, C_PANEL); fill(x + 9, y + 5, 4, 1, C_PANEL); fill(x + 9, y + 6, 2, 3, C_PANEL);
+    if (batPlug) {   // Ladeblitz links neben dem Symbol, pulsiert
+        float pl = 0.6f + 0.4f * sinf(animTime * 4.f);
+        Col bc = mix(C_LOCK, C_PLAY, batFull ? 0.f : 0.3f * pl);
+        int bx = x - 10, by = y - 3;
+        for (int i = 0; i < 7; i++) fill(bx + 5 - i / 2, by + i, 3, 1, bc);        // obere Haelfte (schraeg)
+        fill(bx + 1, by + 7, 7, 2, bc);                                            // Querbalken
+        for (int i = 0; i < 6; i++) fill(bx + 5 - i / 2, by + 9 + i, 2, 1, bc);    // untere Spitze
     }
     char b[8]; snprintf(b, sizeof b, "%d%%", batPct);
     text(x + 27, y - 3, b, c);
@@ -3480,9 +3587,9 @@ enum SetItem {
     SI_H_TRK, SI_LEN, SI_SPEED, SI_TMPL, SI_CLRTRK,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_USBNET, SI_UACVER, SI_MIDIINFO,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_USBNET, SI_UACVER, SI_UACDIR, SI_MIDIINFO,
     SI_H_SMP, SI_SAMPLES, SI_WEB, SI_DRIVE, SI_OLDSMP,
-    SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_QUIT, SI_COUNT
+    SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_BAT, SI_QUIT, SI_COUNT
 };
 static int setSel = SI_PATTERN, prevPage = PG_TRG;
 static bool setIn = false;   // SET: false = Bereiche links waehlen, true = in den Eintraegen des Bereichs (A rein, B raus)
@@ -3549,6 +3656,7 @@ static const char* setHelp(int i) {
     case SI_PCIN: return TR("Ton vom PC über den R36S hören", "Hear PC audio through the R36S");
     case SI_PCREC: return TR("Ton vom PC als Sample aufnehmen (samples/pc)", "Record PC audio as a sample (samples/pc)");
     case SI_IP: return TR("Adresse des R36S im PC-Modus", "Address of the R36S in PC mode");
+    case SI_UACDIR: return TR("NUR SENDEN: Handy/PC sieht die Groovebox nur als Eingang und behält Lautsprecher/Bluetooth (z. B. iPhone + Ton im Browser). Dann kein PC-Ton zum R36S", "SEND ONLY: phone/PC sees the groovebox only as input and keeps its speaker/Bluetooth (e.g. iPhone + audio in browser). No PC audio to the R36S then");
     case SI_USBNET: return TR("NCM: ohne Treiber an Windows 11, Mac, iPad, Linux. RNDIS: nur für ältere Windows 10", "NCM: driverless on Windows 11, Mac, iPad, Linux. RNDIS: only for older Windows 10");
     case SI_UACVER: return TR("UAC2: 44,1/48 kHz, Standard. UAC1: für ältere Geräte ohne UAC2 (Windows 7/8, Konsolen)", "UAC2: 44.1/48 kHz, default. UAC1: for older devices without UAC2 (Windows 7/8, consoles)");
     case SI_MIDIINFO: return TR("Verbundene MIDI-Geräte und empfangene/gesendete Nachrichten", "Connected MIDI devices and received/sent messages");
@@ -3561,6 +3669,7 @@ static const char* setHelp(int i) {
     case SI_LEARN: return TR("Tasten und Sticks neu zuordnen", "Map buttons and sticks again");
     case SI_BENCH: return TR("Misst Audio- und Bildleistung (Bericht: Logs/bench.txt)", "Measures audio and display performance (report: logs/bench.txt)");
     case SI_INFO: return TR("Version, Samples, Aussetzer seit dem Start", "Version, samples, dropouts since start");
+    case SI_BAT: return TR("Ladestand aus der Akkuspannung (geglättet), dahinter Spannung, Strom und der Wert des Akku-Treibers zum Vergleich", "Charge from the battery voltage (smoothed), then voltage, current and the battery driver's value for comparison");
     case SI_QUIT: return TR("Speichert das Projekt und beendet die Groovebox", "Saves the project and quits the groovebox");
     }
     return "";
@@ -3633,6 +3742,8 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else if (pcRecState() == 2) snprintf(v, vn, TR("AUFNAHME %.1f s (A = STOP)", "RECORDING %.1f s (A = STOP)"), pcRecSeconds());
         else if (usbMode != 2) snprintf(v, vn, TR("erst PC MIDI+Audio", "needs PC MIDI+audio"));
         break;
+    case SI_UACDIR: snprintf(l, ln, TR("USB-Audio-Richtung", "USB audio direction"));
+        snprintf(v, vn, "%s", cfg.uacSendOnly ? TR("NUR SENDEN (Gerät behält Lautsprecher)", "SEND ONLY (device keeps speaker)") : TR("BEIDE (Standard)", "BOTH (default)")); break;
     case SI_USBNET: snprintf(l, ln, TR("USB-Netzwerk", "USB network")); snprintf(v, vn, "%s", cfg.usbNet ? TR("RNDIS (altes Windows)", "RNDIS (old Windows)") : TR("NCM (Standard)", "NCM (standard)")); break;
     case SI_UACVER: snprintf(l, ln, TR("USB-Audio-Klasse", "USB audio class"));
         snprintf(v, vn, "%s", cfg.uac == 1 ? TR("UAC1 (ältere Geräte)", "UAC1 (older devices)") : "UAC2 (44,1/48 kHz)");
@@ -3660,6 +3771,10 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
     case SI_BENCH: snprintf(l, ln, TR("Leistungstest (ca. 30 s)", "Benchmark (approx. 30 s)")); snprintf(v, vn, TR("A = START", "A = GO")); break;
     case SI_INFO: snprintf(l, ln, "Info");
         snprintf(v, vn, TR("%.12s  %d Smp  Aussetzer %d", "%.12s  %d smp  dropouts %d"), versionStr[0] ? versionStr : "dev", sampleCount(), audLateTotal + audLate);
+        break;
+    case SI_BAT: snprintf(l, ln, TR("Akku", "Battery"));
+        if (batPct < 0) snprintf(v, vn, TR("kein Akku gefunden", "no battery found"));
+        else snprintf(v, vn, "%d%%%s %.2fV %dmA DC%d %s%d%%", batPct, batPlug ? (batFull ? TR(" VOLL", " FULL") : TR(" LÄDT", " CHG")) : "", batMv / 1000.f, batMa, dcRaw, TR("Chip ", "chip "), batDrv);
         break;
     case SI_QUIT: snprintf(l, ln, TR("Groovebox beenden", "Quit groovebox")); break;
     case SI_DRIVE: snprintf(l, ln, TR("USB-Laufwerk (Samples vom PC)", "USB drive (samples from PC)")); if (!isGrooveboxOS()) snprintf(v, vn, TR("nur Groovebox-OS", "Groovebox OS only")); break;
@@ -3720,6 +3835,7 @@ static void setChange(int i, int d) {
     case SI_USBAUDIO: cfg.usbAudio = !cfg.usbAudio; saveSettings(); break;
     case SI_USBVOL: cfg.usbVol = clampi(cfg.usbVol + (d > 0 ? 5 : -5), 0, 100); saveSettings(); break;
     case SI_INTUSB: cfg.intUsb = !cfg.intUsb; saveSettings(); break;
+    case SI_UACDIR: cfg.uacSendOnly = !cfg.uacSendOnly; saveSettings(); if (usbMode == 2) usbApplyAt = SDL_GetTicks() + 1200; break;   // Gadget neu aufbauen
     case SI_USBNET: cfg.usbNet = !cfg.usbNet; saveSettings(); if (usbMode) usbApplyAt = SDL_GetTicks() + 1200; break;   // Gadget neu aufbauen
     case SI_UACVER: cfg.uac = cfg.uac == 1 ? 2 : 1; saveSettings(); if (usbMode == 2) usbApplyAt = SDL_GetTicks() + 1200; break;
     case SI_MUTATE: mutAmt = clampi(mutAmt + (d > 0 ? 1 : -1), 0, 2); break;
@@ -3783,8 +3899,8 @@ static bool isGrooveboxOS() { struct stat st; return stat("/etc/groovebox-os", &
 static void reloadSamples();
 // Umgebung fuer pc-modus.sh: Netzwerk- und Audio-Klasse aus SET
 static const char* usbEnv() {
-    static char e[64];
-    snprintf(e, sizeof e, "GB_USB_NET=%s GB_UAC=%d ", cfg.usbNet ? "rndis" : "ncm", cfg.uac == 1 ? 1 : 2);
+    static char e[96];
+    snprintf(e, sizeof e, "GB_USB_NET=%s GB_UAC=%d GB_UAC_IN=%d ", cfg.usbNet ? "rndis" : "ncm", cfg.uac == 1 ? 1 : 2, cfg.uacSendOnly ? 0 : 1);
     return e;
 }
 static bool usbScript(const char* args, char* okMsg, int n) {
