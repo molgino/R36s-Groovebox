@@ -1740,6 +1740,7 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
 
 // ---------------------------------------------------------------- Kacheln statt Drehregler
 
+static void filler(int x, int y, int w, int h, Col c, int seed);
 static void tile(int x, int y, int k, const ParamDef& d, int val, int baseVal, bool locked, const char* label, bool sel, Col tc, Uint32 now) {
     char b[32];
     bool justEdited = sel && editAt && now - editAt < 300;
@@ -1750,7 +1751,7 @@ static void tile(int x, int y, int k, const ParamDef& d, int val, int baseVal, b
         rrect(x + 4, y + 2, 152, 2, 1, fc); rrect(x + 4, y + 88, 152, 2, 1, fc);
         rrect(x + 4, y + 2, 2, 88, 1, fc); rrect(x + 154, y + 2, 2, 88, 1, fc);
     }
-    if (d.kind == K_NONE) return;
+    if (d.kind == K_NONE) { filler(x + 6, y + 6, 148, 80, tc, k + page); return; }   // leeres Feld: Animation statt Leere
     char nm[24];
     snprintf(nm, sizeof nm, "%.18s", label[0] ? label : d.name);
     text(x + 14, y + 6, nm, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
@@ -1943,7 +1944,12 @@ static int graphKind(int row) {
     if (page == PG_SEQ && row == 0) return 7;
     if (page == PG_ARP && row == 0) return 13;
     if (page == PG_FLT2 && row == 0) return 12;
-    if (busOfPage(page) >= 0 && row == 0) return 15;   // Effekt-Bus: Signalfluss + Erklaerung
+    if (busOfPage(page) >= 0) return row == 0 ? 15 : 21;   // Effekt-Bus: Signalfluss + Erklaerung, darunter Animation des Effekts
+    if (page == PG_TRG && row == 0) return 16;            // TRIG: Piano-Roll der Spur
+    if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_SYNTH) return 17;   // Oszillatoren
+    if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_WTBL) return 18;    // Wavetable-Stapel
+    if (page == PG_INS && row == 0) return 19;            // Insert-Effekt
+    if (page == PG_SEND && row == 0) return 20;           // Sends zu den Bussen
     return 0;
 }
 static int pv(int idx) {   // Wert (inkl. Lock beim Halten) eines Spurparameters
@@ -2148,6 +2154,8 @@ static void drawConfirm() {
     rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, TR("B = NEIN", "B = NO"), C_TEXT);
 }
 
+#include "anim.inc"
+
 static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
     Col tc = TCOL[track];
     const Voice& v = eng.v[track];
@@ -2178,6 +2186,12 @@ static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
         int op = fmOpPage(page);
         fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, op >= 0 ? op : (selRel == 0 ? 4 : -1), &v, tc);
     } break;
+    case 16: trigGraph(gx, gy, gw, gh, tc); break;
+    case 17: oscPageGraph(gx, gy, gw, gh, tc); break;
+    case 18: wtStackGraph(gx, gy, gw, gh, tc); break;
+    case 19: insGraph(gx, gy, gw, gh, tc); break;
+    case 20: sendGraph(gx, gy, gw, gh, tc); break;
+    case 21: busAnimGraph(gx, gy, gw, gh, busOfPage(page) < 0 ? 0 : busOfPage(page)); break;
     case 15: {   // Effekt-Bus: Spuren -> Bus -> (naechster Bus) -> Summe, Pegel, Erklaerung des Reglers
         int b = busOfPage(page);
         const uint8_t* bp = eng.proj.bus[b];
@@ -2328,8 +2342,10 @@ static void drawKnobs() {
             if (ok && d.kind == K_ACT) {   // Schaltflaeche
                 if (sel) rrect(x + 4, y + 2, 152, 88, 10, C_SEL);
                 float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
-                rrect(cx - 54, cy - 18, 108, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
-                textC(cx, cy - 8, d.name, sel ? C_BG : C_TEXT);
+                prjIcon(k, x + 14, y + 12, 44, sel ? C_ACC : dimC(C_ACC, 0.6f));
+                rrect(x + 64, cy - 18, 86, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
+                char an[16]; snprintf(an, sizeof an, "%.10s", d.name);
+                textC(x + 107, cy - 8, an, sel ? C_BG : C_TEXT);
                 textC(cx, y + 70, sel ? TR("A = START", "A = GO") : label, sel ? C_DIM : C_TEXT);
                 continue;
             }
@@ -2544,7 +2560,7 @@ static void miniTile(int k, int x, int y, int w, int h, Col tc) {
         Col fc = dimC(locked ? C_LOCK : tc, 0.6f + 0.25f * sinf(animTime * 3.f));
         rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); rrect(x, y, 2, h, 1, fc); rrect(x + w - 2, y, 2, h, 1, fc);
     }
-    if (!ok || d.kind == K_NONE) return;
+    if (!ok || d.kind == K_NONE) { filler(x + 2, y + 2, w - 4, h - 4, dimC(tc, 0.8f), k + page); return; }
     if (d.kind == K_ACT) { textC(x + w / 2, y + h / 2 - 8, d.name, sel ? C_ACC : C_TEXT); return; }
     char nm[24];
     snprintf(nm, sizeof nm, "%.*s", (w - 12) / FONT_W, label[0] ? label : d.name);
@@ -2692,6 +2708,7 @@ static const char* const LIVE_KEY[NTRACKS] = {"^", ">", "v", "<", "X", "A", "B",
 static void drawLive() {
     const Pattern& P = curP();
     char b[48];
+    liveArt();   // Spektrum oben, Takt-Ringe in der Mitte
     text(10, 48, "LIVE", C_ACC, 2);
     snprintf(b, sizeof b, "PATTERN %02d", curPi() + 1);
     text(120, 50, b, C_TEXT);
@@ -3750,8 +3767,8 @@ static void drawSong() {
     if (target > J.songLen - visible) target = J.songLen > visible ? J.songLen - visible : 0;
     songScroll += (target - songScroll) * (1.f - expf(-animDt * 14.f));
     if (J.songLen == 0) {
-        textC(320, 200, TR("NOCH LEER - L1 LEGT EINE ZEILE MIT DEM", "STILL EMPTY - L1 ADDS A ROW WITH THE"), C_DIM);
-        textC(320, 220, TR("AKTUELLEN PATTERN UND SEINEN MUTES AN", "CURRENT PATTERN AND ITS MUTES"), C_DIM);
+        textC(320, 136, TR("NOCH LEER - L1 LEGT EINE ZEILE MIT DEM", "STILL EMPTY - L1 ADDS A ROW WITH THE"), C_DIM);
+        textC(320, 156, TR("AKTUELLEN PATTERN UND SEINEN MUTES AN", "CURRENT PATTERN AND ITS MUTES"), C_DIM);
     }
     for (int i = 0; i < J.songLen; i++) {
         float yf = top + (i - songScroll) * rowH;
@@ -3790,6 +3807,10 @@ static void drawSong() {
         snprintf(b, sizeof b, play ? "%d/%d" : "x%d", play ? eng.songRep + 1 : rep, rep);
         text(xRep + 6, y + 6, b, sel && songCol == SC_REP ? C_ACC : (play ? C_PLAY : C_TEXT));
         if (sel && !songExp && songCol == SC_REP) { rrect(xRep, y, wRep, 2, 1, C_ACC); rrect(xRep, y + rowH - 6, wRep, 2, 1, C_ACC); }
+    }
+    {   // freie Flaeche unter der Matrix: Zeitleiste des Songs + Oszilloskop
+        int yfree = top + (J.songLen - (int)songScroll) * rowH + 4;
+        if (J.songLen < visible && 386 - yfree >= 50) songTimeline(10, yfree, 620, 386 - yfree);
     }
     // Export-Leiste: Zeilen von..bis als WAV (Standard: ganzer Song)
     {
@@ -3948,6 +3969,7 @@ static void drawSettings() {
         cy += 36;
     }
     text(12, cy + 6, TR("L1/R1 = BEREICH", "L1/R1 = SECTION"), C_DIM);
+    if (436 - (cy + 30) > 40) { rrect(10, cy + 30, 140, 436 - (cy + 30), 8, C_BG); drawSpectrum(14, cy + 36, 132, 436 - (cy + 30) - 12, C_ACC, 12); }
     // rechts: Eintraege des Bereichs
     const int X0 = 158, W = 470, rowH = 27, top = 56, visible = 13;
     int first = cat + 1, end = setCatEnd(cat), n = end - first;
@@ -3976,6 +3998,11 @@ static void drawSettings() {
             text(X0 + W - 18 - textW(vb), y + 5, vb, sel ? C_ACC : C_TEXT);
             if (sel) { text(X0 + W - 18 - textW(vb) - 14, y + 5, "<", C_DIM); text(X0 + W - 12, y + 5, ">", C_DIM); }
         }
+    }
+    {   // freie Flaeche unter der Liste: Bild zum Bereich
+        int used = top + (n - (int)setScroll) * rowH + 6;
+        int ci = 0; for (int i = 0; i < cat; i++) if (setIsHeader(i)) ci++;
+        if (n <= visible && 404 - used >= 44) settingsArt(ci, X0, used, W, 404 - used);
     }
     // Erklaerung des gewaehlten Eintrags
     fill(X0, 410, W, 1, C_OFF2);
@@ -4448,6 +4475,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     usbAudioPush((const float*)stream, frames);   // parallel an den PC (falls aktiv)
     pcInMix((float*)stream, frames, pcInGain);    // PC-Ton dazumischen (nach dem Senden: kein Echo zum PC)
     recPush((const float*)stream, frames);
+    scopePush((const float*)stream, frames);      // fuer Oszilloskop/Spektrum der Oberflaeche
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
     if (el * 1000.0 > audWorkMax) audWorkMax = el * 1000.0;
@@ -4827,6 +4855,12 @@ int main(int argc, char** argv) {
         if (shotPage == 55) { page = PG_LFO1; track = 4; slot = LF_DEST; fbParam = P_L1 + LF_DEST; openBrowser(FB_LDEST); }   // LFO-Ziel-Liste
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
+        {   // Oszilloskop/Spektrum mit echtem Signal fuellen (sonst Ruhe-Animation)
+            bool wasPlaying = eng.playing;
+            if (!wasPlaying && shotPage != 26) { lockA(); eng.start(); unlockA(); }
+            for (int k2 = 0; k2 < 4; k2++) { eng.render(tmp, 2048); scopePush(tmp, 2048); }
+            for (int k2 = 0; k2 < 3; k2++) animate();
+        }
         lastPage = page;
         if (getenv("GB_BENCH")) {   // Zeichenzeit messen: GB_BENCH=frames ./groovebox --shot x.bmp <seite>
             int n = atoi(getenv("GB_BENCH")); Uint64 t0 = SDL_GetPerformanceCounter();
