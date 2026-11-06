@@ -299,7 +299,7 @@ private:
     void trigger(int t, const uint8_t* lk, float velScale, bool fromSeq, bool toMidi = true);
     void processBlock(float* out, int n);
     // Mehrkern: ein Hilfs-Thread rechnet pro Block etwa die Haelfte der klingenden Stimmen
-    struct WkItem { Voice* v; bool key; };
+    struct WkItem { Voice* v; bool key; int t; };
     pthread_t wkThread;
     sem_t wkGo;
     volatile int wkGoSeq = 0, wkSleeping = 0, wkDone = 0;   // __atomic: Blocknummer, Schlafzustand, vom Helfer fertige Stimmen
@@ -307,10 +307,20 @@ private:
     bool wkOn = false, wkPrioSet = false;
     WkItem wkList[NTRACKS * (1 + NCHORDV)];
     int wkN = 0, wkNs = 0;
+    volatile bool wkMo = false;
     bool wkClaimOne(uint32_t tag, int& idx);
     float wL[32], wR[32], wS[NBUS][32], wKL[32], wKR[32];
+    float TL[NTRACKS][32], TR[NTRACKS][32], wTL[NTRACKS][32], wTR[NTRACKS][32];   // Mehrkanal: je Spur (nur wenn multiCh > 2)
+    float moDly[22][LIM_LA]; int moDlyPos = 0;   // Spuren/Busse um die Limiter-Vorausschau verzoegern (gleiche Lage wie der Master)
+    int moPos = 0;
     static void* wkMain(void* arg);
 public:
+    // Mehrkanal-Ausgang (USB): render() schreibt zusaetzlich frames x multiCh Werte nach multiBuf.
+    // Kanal 0-1 = Master, danach Stereo-Paare; multiRoute[q] = Paar (0 = Kanal 3-4 ...) fuer Quelle q (0-7 Spuren, 8-10 FX A/B/C), -1 = nur Master.
+    // Mehrere Quellen auf demselben Paar werden addiert.
+    float* multiBuf = nullptr;
+    int multiCh = 2;
+    signed char multiRoute[NTRACKS + NBUS] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
     bool helperReady() const { return wkOn; }
     int audioThreads = 1;   // 1 oder 2 (gesetzt in init: 2, wenn mehrere Kerne und GB_AUDIO_THREADS != 1)
     long wkBlocks = 0;      // Bloecke, die zweikernig gerechnet wurden (Anzeige/Test)

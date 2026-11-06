@@ -7,7 +7,10 @@ int usbAudioStatus();                         // 0 aus, 1 wartet auf PC, 2 PC li
 int usbAudioRate();                           // vom PC gewaehlte Abtastrate (44100/48000), 0 = kein Strom offen
 void usbAudioSetGain(float g);                // USB-Lautstaerke 0..1
 void usbAudioTestTone(int ms);                // 1-kHz-Testton statt der Mischung
-void usbAudioPush(const float* stereo, int frames);   // aus dem Audio-Callback
+void usbAudioPush(const float* stereo, int frames);   // aus dem Audio-Callback (nur bei 2 Kanaelen)
+void usbAudioSetChannels(int ch);             // Kanaele zum PC (2, 8, 18, 24), nur vor usbAudioStart wirksam
+int usbAudioChannels();
+void usbAudioPushMulti(const float* buf, int frames);   // Mehrkanal: frames x Kanaele (0-1 = Master)
 void usbAudioSetEngineRate(int sr);           // tatsaechliche Rate der Engine (nach dem Oeffnen des Audio-Geraets)
 
 // PC -> R36S: was der PC auf "Synth City" abspielt, in den Ausgang mischen und als Sample aufnehmen

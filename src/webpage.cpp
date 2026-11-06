@@ -314,7 +314,9 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padd
  .mid{flex-direction:row}
 }
 @media (max-height:420px){header{padding:2px 8px}h1{font-size:12px}#stat{font-size:10px}.hb{padding:2px 8px}}
-#cvw{position:relative;flex:none;touch-action:none}
+#cvw{position:relative;flex:none;touch-action:none;overflow:hidden;border-radius:6px}
+#cv{transform-origin:0 0}
+#zl{min-width:46px;text-align:center}
 .rip{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid var(--cy);pointer-events:none;animation:rip .45s ease-out forwards}
 .rip.hold{border-color:var(--acc);animation:none;opacity:.8}
 @keyframes rip{from{transform:scale(.4);opacity:1}to{transform:scale(1.6);opacity:0}}
@@ -323,7 +325,7 @@ body.nopad #stage{grid-template-columns:1fr !important}
 body.nopad #scr{grid-column:1 !important}
 </style></head><body><div id="app">
 <header><span id="dot"></span><h1>SYNTH CITY</h1><span id="stat">…</span><span class="sp"></span>
-<button class="hb" id="bAud" title="Ton im Browser">🔈 Ton</button><input id="vol" type="range" min="0" max="100" value="80" style="width:70px;display:none"><button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
+<button class="hb" id="bAud" title="Ton im Browser">🔈 Ton</button><input id="vol" type="range" min="0" max="100" value="80" style="width:70px;display:none"><button class="hb" id="zo" title="Verkleinern (−)">−</button><button class="hb" id="zl" title="Zoom zurücksetzen (0)">100%</button><button class="hb" id="zi" title="Vergrößern (+)">+</button><button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
 <div id="stage">
  <div id="scr"><div id="cvw"><canvas id="cv" width="640" height="480" tabindex="0"></canvas></div>
   <div class="mid" id="midL"><div class="row"><div class="btn" data-b="SELECT">SELECT</div><div class="btn" data-b="START">START</div></div></div></div>
@@ -340,7 +342,7 @@ body.nopad #scr{grid-column:1 !important}
 <kbd>←↑→↓</kbd> Steuerkreuz &nbsp; <kbd>Z</kbd>/<kbd>Leertaste</kbd> A &nbsp; <kbd>X</kbd>/<kbd>⌫</kbd> B &nbsp; <kbd>S</kbd> X &nbsp; <kbd>A</kbd> Y<br>
 <kbd>Q</kbd> L1 &nbsp; <kbd>W</kbd> R1 &nbsp; <kbd>1</kbd> L2 &nbsp; <kbd>2</kbd> R2 &nbsp; <kbd>Shift</kbd>/<kbd>Tab</kbd> SELECT &nbsp; <kbd>Enter</kbd> START (halten = FILL)<br>
 <kbd>T F G H</kbd> linker Stick &nbsp; <kbd>I J K L</kbd> rechter Stick &nbsp; <kbd>F11</kbd> Vollbild<br>
-<b style="color:#fff">Touch aufs Bild</b>: Spur, Seite, Reiter, Kachel oder Step antippen. Auf einer Kachel ziehen (hoch/rechts = mehr) ändert den Wert. Step antippen = Trig an/aus, Step halten + mit zweitem Finger Kachel ziehen = P-Lock. Kachel nochmal antippen = Auswahlliste (Sample, LFO-Ziel, Engine). „Tasten“ blendet das Gamepad aus.<br><b style="color:#fff">Touch-Tasten</b>: mehrere Finger gleichzeitig, Wischen über das Steuerkreuz geht auch.<br>
+<b style="color:#fff">Zoom</b>: zwei Finger gleichzeitig aufs Bild = vergrößern/verschieben, Knöpfe − 100% + oben, am PC Strg+Mausrad (Mausrad verschiebt), Tasten <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>.<br><b style="color:#fff">Touch aufs Bild</b>: Spur, Seite, Reiter, Kachel oder Step antippen. Auf einer Kachel ziehen (hoch/rechts = mehr) ändert den Wert. Step antippen = Trig an/aus, Step halten + mit zweitem Finger Kachel ziehen = P-Lock. Kachel nochmal antippen = Auswahlliste (Sample, LFO-Ziel, Engine). „Tasten“ blendet das Gamepad aus.<br><b style="color:#fff">Touch-Tasten</b>: mehrere Finger gleichzeitig, Wischen über das Steuerkreuz geht auch.<br>
 <b style="color:#fff">Gamepad</b>: am PC/Handy angeschlossenes Gamepad wird automatisch erkannt.<br>
 <span style="color:var(--dim)">Tippen zum Schließen</span></div></div>
 <script>
@@ -361,7 +363,7 @@ function draw(){if(dirty){cx.putImageData(img,0,0);dirty=false;}pollPad();reques
 requestAnimationFrame(draw);
 // Bild immer ganz sichtbar und so gross wie moeglich (4:3), SELECT/START darunter
 function fit(){const sc=$('scr'),r=sc.getBoundingClientRect(),mh=$('midL').offsetHeight+10;let w=r.width,h=r.height-mh;
- if(w<=0||h<=0)return;if(w/h>4/3)w=h*4/3;else h=w*3/4;w=Math.floor(w);h=Math.floor(h);cv.style.width=w+'px';cv.style.height=h+'px';$('cvw').style.width=w+'px';$('cvw').style.height=h+'px';}
+ if(w<=0||h<=0)return;if(w/h>4/3)w=h*4/3;else h=w*3/4;w=Math.floor(w);h=Math.floor(h);cv.style.width=w+'px';cv.style.height=h+'px';$('cvw').style.width=w+'px';$('cvw').style.height=h+'px';fw=w;fh=h;applyZoom();}
 addEventListener('resize',fit);if(window.ResizeObserver)new ResizeObserver(fit).observe($('scr'));setTimeout(fit,0);
 // ---- Verbindung: WebSocket (Bildstrom + Tasten), sonst Abfrage
 let ws=null,wsFails=0,pingT=0;
@@ -455,17 +457,55 @@ ctlArea.forEach(area=>{
 });
 document.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('touchmove',e=>{if(e.touches.length>1||e.target.closest('#ctl,#midL'))e.preventDefault();},{passive:false});
+// ---- Zoom: Bild bis 4x vergroessern, Ausschnitt verschieben (Transform auf dem Canvas; tPos rechnet ueber getBoundingClientRect weiter richtig)
+let zm=1,zx=0,zy=0,fw=640,fh=480;
+function applyZoom(){zm=Math.max(1,Math.min(4,zm));zx=Math.max(0,Math.min(fw*(zm-1),zx));zy=Math.max(0,Math.min(fh*(zm-1),zy));
+ cv.style.transform=zm>1?'translate('+(-zx)+'px,'+(-zy)+'px) scale('+zm+')':'';$('zl').textContent=Math.round(zm*100)+'%';$('zl').classList.toggle('on',zm>1);}
+function zoomAt(nz,cx,cy){   // cx/cy: Punkt im sichtbaren Ausschnitt (CSS-Pixel), der an seiner Stelle bleibt
+ nz=Math.max(1,Math.min(4,nz));const bx=(cx+zx)/zm,by=(cy+zy)/zm;zm=nz;zx=bx*zm-cx;zy=by*zm-cy;applyZoom();}
+function zoomStep(f){zoomAt(zm*f,fw/2,fh/2);}
+$('zi').onclick=()=>zoomStep(1.25);$('zo').onclick=()=>zoomStep(0.8);$('zl').onclick=()=>{zm=1;zx=zy=0;applyZoom();};
+$('cvw').addEventListener('wheel',e=>{const r=$('cvw').getBoundingClientRect();
+ if(e.ctrlKey||e.metaKey){e.preventDefault();zoomAt(zm*Math.exp(-e.deltaY*0.0025),e.clientX-r.left,e.clientY-r.top);}
+ else if(zm>1){e.preventDefault();zx+=e.deltaX;zy+=e.deltaY;applyZoom();}},{passive:false});
+addEventListener('keydown',e=>{if(e.ctrlKey||e.metaKey||e.altKey)return;
+ if(e.key==='+'||e.code==='NumpadAdd'||e.code==='Equal'){e.preventDefault();zoomStep(1.25);}
+ else if(e.key==='-'||e.code==='NumpadSubtract'||e.code==='Minus'){e.preventDefault();zoomStep(0.8);}
+ else if(e.code==='Digit0'||e.code==='Numpad0'){e.preventDefault();zm=1;zx=zy=0;applyZoom();}});
+// Zwei Finger, die fast gleichzeitig (< 150 ms) aufs Bild kommen = Zoomen/Verschieben; spaeter dazukommender Finger = normale
+// Bedienung (Step halten + Kachel ziehen). Dafuer wird der erste Touch-Finger bis zu 150 ms zurueckgehalten.
+const pend=new Map();let gest=null;
+function cvwXY(e){const r=$('cvw').getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top];}
+function gestStart(){const p=[...pend.values()];pend.forEach(q=>clearTimeout(q.tm));pend.clear();
+ const[a,b]=p;gest={ids:[a.pid,b.pid],pos:{[a.pid]:a.xy,[b.pid]:b.xy}};gest.d0=Math.hypot(a.xy[0]-b.xy[0],a.xy[1]-b.xy[1])||1;gest.z0=zm;
+ gest.m0=[(a.xy[0]+b.xy[0])/2,(a.xy[1]+b.xy[1])/2];gest.zx0=zx;gest.zy0=zy;}
+function gestMove(){const[a,b]=gest.ids.map(i=>gest.pos[i]);const d=Math.hypot(a[0]-b[0],a[1]-b[1]),m=[(a[0]+b[0])/2,(a[1]+b[1])/2];
+ const nz=Math.max(1,Math.min(4,gest.z0*d/gest.d0));const bx=(gest.m0[0]+gest.zx0)/gest.z0,by=(gest.m0[1]+gest.zy0)/gest.z0;   // Bildpunkt unter der Anfangsmitte
+ zm=nz;zx=bx*zm-m[0];zy=by*zm-m[1];applyZoom();}
 // ---- Touch direkt auf dem Bild: Kacheln, Steps, Spuren, Reiter ... (die Groovebox wertet die Stelle aus)
 const tIds=new Map(),tPend=new Map(),rips=new Map();
 function tId(pid){if(tIds.has(pid))return tIds.get(pid);for(let i=0;i<10;i++){if(![...tIds.values()].includes(i)){tIds.set(pid,i);return i;}}return -1;}
 function tPos(e){const r=cv.getBoundingClientRect();return[Math.max(0,Math.min(W-1,Math.round((e.clientX-r.left)/r.width*W))),Math.max(0,Math.min(H-1,Math.round((e.clientY-r.top)/r.height*H)))];}
 function tSend(m){if(ws&&ws.readyState===1)ws.send(m);}
 function ripple(e,hold){const r=$('cvw').getBoundingClientRect(),d=document.createElement('div');d.className='rip'+(hold?' hold':'');d.style.left=(e.clientX-r.left)+'px';d.style.top=(e.clientY-r.top)+'px';$('cvw').appendChild(d);if(!hold)setTimeout(()=>d.remove(),460);return d;}
-cv.addEventListener('pointerdown',e=>{e.preventDefault();const id=tId(e.pointerId);if(id<0)return;try{cv.setPointerCapture(e.pointerId);}catch(_){}
- const[x,y]=tPos(e);tSend('t '+id+' '+x+' '+y);ripple(e,false);rips.set(e.pointerId,ripple(e,true));vib();});
-cv.addEventListener('pointermove',e=>{if(!tIds.has(e.pointerId))return;e.preventDefault();tPend.set(e.pointerId,tPos(e));const r=rips.get(e.pointerId);
+function tDown(e){const id=tId(e.pointerId);if(id<0)return;
+ const[x,y]=tPos(e);tSend('t '+id+' '+x+' '+y);ripple(e,false);rips.set(e.pointerId,ripple(e,true));vib();}
+function commit(pid){const q=pend.get(pid);if(!q)return;clearTimeout(q.tm);pend.delete(pid);tDown(q.ev);}
+cv.addEventListener('pointerdown',e=>{e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}
+ if(gest)return;
+ if(e.pointerType==='touch'&&!tIds.size){   // erster Finger: kurz zurueckhalten (Geste?)
+  if(pend.size===1){pend.set(e.pointerId,{pid:e.pointerId,xy:cvwXY(e),ev:e});gestStart();return;}
+  const q={pid:e.pointerId,xy:cvwXY(e),ev:e,x0:e.clientX,y0:e.clientY};q.tm=setTimeout(()=>commit(e.pointerId),150);pend.set(e.pointerId,q);return;}
+ tDown(e);});
+cv.addEventListener('pointermove',e=>{
+ if(gest&&gest.pos[e.pointerId]){e.preventDefault();gest.pos[e.pointerId]=cvwXY(e);gestMove();return;}
+ const q=pend.get(e.pointerId);if(q){if(Math.hypot(e.clientX-q.x0,e.clientY-q.y0)>10)commit(e.pointerId);else return;}
+ if(!tIds.has(e.pointerId))return;e.preventDefault();tPend.set(e.pointerId,tPos(e));const r=rips.get(e.pointerId);
  if(r){const b=$('cvw').getBoundingClientRect();r.style.left=(e.clientX-b.left)+'px';r.style.top=(e.clientY-b.top)+'px';}});
-function tEnd(e){if(!tIds.has(e.pointerId))return;const id=tIds.get(e.pointerId),[x,y]=tPos(e);tPend.delete(e.pointerId);tSend('e '+id+' '+x+' '+y);tIds.delete(e.pointerId);
+function tEnd(e){
+ if(gest&&gest.pos[e.pointerId]){delete gest.pos[e.pointerId];if(!Object.keys(gest.pos).length)gest=null;return;}
+ if(pend.has(e.pointerId))commit(e.pointerId);
+ if(!tIds.has(e.pointerId))return;const id=tIds.get(e.pointerId),[x,y]=tPos(e);tPend.delete(e.pointerId);tSend('e '+id+' '+x+' '+y);tIds.delete(e.pointerId);
  const r=rips.get(e.pointerId);if(r){r.remove();rips.delete(e.pointerId);}}
 cv.addEventListener('pointerup',tEnd);cv.addEventListener('pointercancel',tEnd);
 setInterval(()=>{for(const[pid,p]of tPend){const id=tIds.get(pid);if(id!==undefined)tSend('m '+id+' '+p[0]+' '+p[1]);}tPend.clear();},16);   // Bewegung hoechstens ~60x/s

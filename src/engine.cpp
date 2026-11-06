@@ -966,7 +966,9 @@ void* Engine::wkMain(void* arg) {
             int n = E->wkNs;
             Voice& v = *E->wkList[idx].v;
             v.update(n, (float)E->sr, E->proj.bpm);
-            if (E->wkList[idx].key) v.render(E->wKL, E->wKR, E->wS, n, (float)E->sr);
+            int t = E->wkList[idx].t;
+            if (E->wkMo) v.render(E->wTL[t], E->wTR[t], E->wS, n, (float)E->sr);
+            else if (E->wkList[idx].key) v.render(E->wKL, E->wKR, E->wS, n, (float)E->sr);
             else v.render(E->wL, E->wR, E->wS, n, (float)E->sr);
             __atomic_add_fetch(&E->wkDone, 1, __ATOMIC_RELEASE);
         }
@@ -1583,6 +1585,7 @@ void Engine::render(float* out, int frames) {
                 }
             }
         }
+        moPos = i;
         processBlock(out + 2 * i, m);
         clock += m;
     }
@@ -1597,15 +1600,18 @@ void Engine::processBlock(float* out, int n) {
     int nAct = 0; float tot = 0.f;
     WkItem* act = wkList;
     for (int t = 0; t < NTRACKS; t++) {
-        if (v[t].active) { act[nAct].v = &v[t]; act[nAct].key = t == key; nAct++; tot += WEIGHT[v[t].machine % M_COUNT]; }
-        for (int k = 0; k < NCHORDV; k++) if (cv[t][k].active) { act[nAct].v = &cv[t][k]; act[nAct].key = t == key; nAct++; tot += WEIGHT[cv[t][k].machine % M_COUNT]; }
+        if (v[t].active) { act[nAct].v = &v[t]; act[nAct].key = t == key; act[nAct].t = t; nAct++; tot += WEIGHT[v[t].machine % M_COUNT]; }
+        for (int k = 0; k < NCHORDV; k++) if (cv[t][k].active) { act[nAct].v = &cv[t][k]; act[nAct].key = t == key; act[nAct].t = t; nAct++; tot += WEIGHT[cv[t][k].machine % M_COUNT]; }
     }
     bool split = wkOn && audioThreads > 1 && nAct >= 2 && tot >= 8.f;
+    const bool mo = multiBuf && multiCh > 2;   // Mehrkanal: jede Spur in eigenen Puffer, danach zur Summe
+    if (mo) for (int t = 0; t < NTRACKS; t++) for (int i = 0; i < n; i++) TL[t][i] = TR[t][i] = 0.f;
     if (!split) {
         for (int i = 0; i < nAct; i++) {
             Voice& vc = *act[i].v;
             vc.update(n, (float)sr, proj.bpm);
-            if (act[i].key) vc.render(KL, KR, S, n, (float)sr); else vc.render(L, R, S, n, (float)sr);
+            if (mo) vc.render(TL[act[i].t], TR[act[i].t], S, n, (float)sr);
+            else if (act[i].key) vc.render(KL, KR, S, n, (float)sr); else vc.render(L, R, S, n, (float)sr);
         }
     } else {
         if (!wkPrioSet) {   // Helfer bekommt die Prioritaet des Audio-Threads
@@ -1614,6 +1620,8 @@ void Engine::processBlock(float* out, int n) {
             if (pthread_getschedparam(pthread_self(), &pol, &sp) == 0) pthread_setschedparam(wkThread, pol, &sp);
         }
         for (int i = 0; i < n; i++) { wL[i] = wR[i] = wKL[i] = wKR[i] = 0.f; for (int b = 0; b < NBUS; b++) wS[b][i] = 0.f; }
+        if (mo) for (int t = 0; t < NTRACKS; t++) for (int i = 0; i < n; i++) wTL[t][i] = wTR[t][i] = 0.f;
+        wkMo = mo;
         __atomic_store_n(&wkN, nAct, __ATOMIC_RELAXED); wkNs = n;
         __atomic_store_n(&wkDone, 0, __ATOMIC_RELAXED);
         int seq = wkGoSeq + 1;
@@ -1625,7 +1633,8 @@ void Engine::processBlock(float* out, int n) {
         while (wkClaimOne(tag, idx)) {
             Voice& vc = *act[idx].v;
             vc.update(n, (float)sr, proj.bpm);
-            if (act[idx].key) vc.render(KL, KR, S, n, (float)sr); else vc.render(L, R, S, n, (float)sr);
+            if (mo) vc.render(TL[act[idx].t], TR[act[idx].t], S, n, (float)sr);
+            else if (act[idx].key) vc.render(KL, KR, S, n, (float)sr); else vc.render(L, R, S, n, (float)sr);
             mineN++;
         }
         __atomic_store_n(&wkClaim, (tag << 16) | 0xFFFF, __ATOMIC_RELEASE);   // Block schliessen
@@ -1633,8 +1642,13 @@ void Engine::processBlock(float* out, int n) {
         if (helper > 0) {
             while (__atomic_load_n(&wkDone, __ATOMIC_ACQUIRE) < helper) { __asm__ __volatile__("" ::: "memory"); }
             for (int i = 0; i < n; i++) { L[i] += wL[i]; R[i] += wR[i]; KL[i] += wKL[i]; KR[i] += wKR[i]; for (int b = 0; b < NBUS; b++) S[b][i] += wS[b][i]; }
+            if (mo) for (int t = 0; t < NTRACKS; t++) for (int i = 0; i < n; i++) { TL[t][i] += wTL[t][i]; TR[t][i] += wTR[t][i]; }
             wkBlocks++;
         }
+    }
+    if (mo) for (int t = 0; t < NTRACKS; t++) {   // Spuren zur Summe (Sidechain-Spur am Kompressor vorbei wie sonst)
+        float* dl = t == key ? KL : L; float* dr = t == key ? KR : R;
+        for (int i = 0; i < n; i++) { dl[i] += TL[t][i]; dr[i] += TR[t][i]; }
     }
     // Kompressor-Parameter
     float cThr = cmpThrDb(proj.cmp[CM_THR]);
@@ -1716,6 +1730,20 @@ void Engine::processBlock(float* out, int n) {
             oL = limXL[limPos] * g; oR = limXR[limPos] * g;   // aeltester Wert = um LIM_LA-1 verzoegert
         }
         out[2 * i] = oL; out[2 * i + 1] = oR;
+        if (mo) {   // Mehrkanal: Master, Spuren, Busse (Spuren/Busse vor Master-Kompressor/-Lautstaerke, Pegel wie Master bei VOL 100)
+            float* o = multiBuf + (size_t)(moPos + i) * multiCh;
+            o[0] = oL; o[1] = oR;
+            for (int c = 2; c < multiCh; c++) o[c] = 0.f;
+            const int dp = moDlyPos;
+            for (int q = 0; q < NTRACKS + NBUS; q++) {   // Quelle verzoegern (immer, damit die Lage stimmt), dann auf ihr Paar addieren
+                float xl = q < NTRACKS ? TL[q][i] : BL[q - NTRACKS][i], xr = q < NTRACKS ? TR[q][i] : BR[q - NTRACKS][i];
+                float yl = moDly[q * 2][dp], yr = moDly[q * 2 + 1][dp];
+                moDly[q * 2][dp] = xl * 0.6f; moDly[q * 2 + 1][dp] = xr * 0.6f;
+                int r = multiRoute[q], c = 2 + 2 * r;
+                if (r >= 0 && c + 1 < multiCh) { o[c] += yl; o[c + 1] += yr; }
+            }
+            moDlyPos = (moDlyPos + 1) % (LIM_LA - 1);   // Verzoegerung LIM_LA-1 = wie der Limiter
+        }
         float al = fabsf(oL), ar = fabsf(oR);
         if (al > pl) pl = al;
         if (ar > pr) pr = ar;

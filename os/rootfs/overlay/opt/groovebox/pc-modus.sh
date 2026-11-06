@@ -9,6 +9,7 @@
 #   GB_USB_NET=ncm|rndis   Netzwerk: NCM (Standard: Windows 11/10 ab 2004, macOS, iPadOS, Linux, Android) oder RNDIS (aeltere Windows 10)
 #   GB_UAC=2|1             Audio: UAC2 (Standard, 44,1 + 48 kHz) oder UAC1 (aeltere Geraete/Konsolen; braucht CONFIG_USB_CONFIGFS_F_UAC1)
 #   GB_UAC_RATES="44100,48000"   angebotene Abtastraten (der PC waehlt)
+#   GB_UAC_CH=2|8|18|24    Kanaele zum PC (UAC2): 1-2 Master, 8 = +FX A/B/C, 18 = +8 Spuren, 24 = Spuren + FX
 #   GB_UAC_IN=1|0          0 = nur senden: Host sieht nur einen Eingang (behaelt eigenen Lautsprecher, z. B. iPhone)
 #   GB_USB_POWER=<mA>      Strombedarf melden (Standard: eigene Stromversorgung, 2 mA - fuer iPhone/iPad)
 DIR=/opt/groovebox
@@ -99,7 +100,16 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
             if [ -z "$U" ]; then
                 mkdir -p functions/uac2.usb0
                 U=functions/uac2.usb0
-                echo 3 > $U/p_chmask; echo $SS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize   # Groovebox -> PC
+                CH=${GB_UAC_CH:-2}; case "$CH" in 2|8|18|24) ;; *) CH=2 ;; esac
+                PSS=$SS
+                # 24 Kanaele mit 24 Bit = 936-Byte-Pakete alle 250 us: am R36S (dwc2) stockte es nach einer Minute (Broken pipe,
+                # Audio-Aussetzer); 18 Kanaele (702 Byte) liefen sauber -> bei 24 Kanaelen 16 Bit (624 Byte), ausser GB_UAC_SSIZE ist gesetzt
+                [ "$CH" -ge 24 ] && [ -z "$GB_UAC_SSIZE" ] && PSS=2
+                echo $(( (1 << CH) - 1 )) > $U/p_chmask; echo $PSS > $U/p_ssize 2>/dev/null || echo 2 > $U/p_ssize   # Groovebox -> PC
+                # Paketabstand: so gross wie moeglich (dwc2 mag 1 ms), aber ein Paket (max. 1024 Byte) muss alle Kanaele fassen:
+                # Bytes = Kanaele x Bytes/Sample x (48 kHz-Samples je Abstand + 1); Abstand = 125 us x 2^(bInterval-1)
+                PB=4; SSZ=$(cat $U/p_ssize 2>/dev/null || echo $PSS)
+                while [ $PB -gt 1 ] && [ $(( CH * SSZ * (6 * (1 << (PB - 1)) + 1) )) -gt 1024 ]; do PB=$((PB - 1)); done
                 CIN=3; [ "${GB_UAC_IN:-1}" = 0 ] && CIN=0   # 0: kein Ausgang am Host -> Handy/PC behaelt Lautsprecher
                 echo $CIN > $U/c_chmask; echo $SS > $U/c_ssize 2>/dev/null || echo 2 > $U/c_ssize   # PC -> Groovebox
                 echo $RATES > $U/p_srate 2>/dev/null || echo 44100 > $U/p_srate   # mehrere Raten: Kernel >= 5.18
@@ -107,7 +117,8 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
                 echo "Synth City" > $U/function_name 2>/dev/null
                 # dwc2 (RK3326) schafft isochrone Pakete jede 125 us oft nicht -> Standard: alle 1 ms (bInterval 4) und mehr Anfragen.
                 # Zum Testen in config/groovebox.env: GB_UAC_BINT=1..4, GB_UAC_REQ=2..8
-                echo ${GB_UAC_BINT:-4} > $U/p_hs_bint 2>/dev/null; echo ${GB_UAC_BINT:-4} > $U/c_hs_bint 2>/dev/null
+                echo ${GB_UAC_BINT:-$PB} > $U/p_hs_bint 2>/dev/null; echo ${GB_UAC_BINT:-4} > $U/c_hs_bint 2>/dev/null
+                [ "$CH" -gt 2 ] && echo "UAC2: $CH Kanaele zum PC (p_chmask $(cat $U/p_chmask), Paketabstand bInterval $(cat $U/p_hs_bint 2>/dev/null))"
                 echo ${GB_UAC_REQ:-4} > $U/req_number 2>/dev/null
                 echo "UAC2: p_srate=$(cat $U/p_srate) c_srate=$(cat $U/c_srate) ssize=$(cat $U/p_ssize) p_hs_bint=$(cat $U/p_hs_bint 2>/dev/null) c_hs_bint=$(cat $U/c_hs_bint 2>/dev/null) req_number=$(cat $U/req_number 2>/dev/null)"
             fi
