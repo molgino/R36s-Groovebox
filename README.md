@@ -583,6 +583,16 @@ Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, w
 * **Tastatur:** Pfeile = Steuerkreuz, Z/Leertaste = A, X/Rücktaste/Esc = B, S = X, A = Y, Q/W = L1/R1, 1/2 = L2/R2, Shift/Tab = SELECT, Enter = START (halten = FILL), T/F/G/H = linker Stick, I/J/K/L = rechter Stick. „?“ zeigt die Belegung.
 * **Gamepad:** Ein am PC oder Handy angeschlossenes Gamepad (Xbox, PlayStation, Bluetooth …) wird erkannt, Tasten in der Lage wie am R36S.
 * **Ton im Browser:** Oben auf „🔈 Ton“ tippen – der Klang der Groovebox kommt dann live im Browser (16 Bit Stereo, ca. 175 kB/s, Verzögerung ca. 0,1–0,2 s; der Regler daneben ist die Lautstärke). Lautsprecher/Kopfhörer am R36S laufen weiter (leiser drehen per Lautstärketasten). War der Ton beim letzten Mal an, startet er beim ersten Antippen der Seite wieder (Browser verlangen eine Berührung, bevor sie Ton abspielen). Am iPhone den Lautlos-Schalter beachten.
+* **Mehrkanal zum PC (Einzelspuren aufnehmen):** SET → USB & PC → **USB-Kanäle zum PC**. Die Groovebox erscheint dann am PC als Interface mit mehreren Eingängen (ohne Treiber, nur USB-Audio-Klasse UAC2):
+
+  | Einstellung | Kanäle 1–2 | danach (je Stereo) |
+  |---|---|---|
+  | 2 | Master | – |
+  | 8 | Master | FX A (3–4), FX B (5–6), FX C (7–8) |
+  | 18 | Master | Spur 1 (3–4) … Spur 8 (17–18) |
+  | 24 | Master | Spur 1 (3–4) … Spur 8 (17–18), FX A (19–20), FX B (21–22), FX C (23–24) |
+
+  Spuren sind „trocken“ mit Insert-Effekt, Lautstärke und Panorama; der Hall/Delay-Anteil steckt in den FX-Kanälen. Spuren und FX liegen vor Master-Kompressor, -Lautstärke und -Limiter (gleiche Lage wie der Master, also phasengleich). In der DAW einfach die Eingänge 1–2, 3–4 … als Stereospuren anlegen. Die Umstellung baut die USB-Verbindung kurz neu auf. Mehr Kanäle brauchen kürzere USB-Pakete (24 Kanäle: alle 250 µs) – knackt oder bleibt es still, weniger Kanäle wählen oder in `config/groovebox.env` `GB_UAC_SSIZE=2` (16 Bit) setzen.
 * **Handy über USB verbunden und kein Ton am Handy?** Im Modus PC (MIDI + Audio) meldet sich die Groovebox als USB-Audiogerät „Synth City“ – iPhone/iPad schalten dann ihren Ton dorthin um, Lautsprecher und Kopfhörer des Handys sind weg. Lösung: SET → USB & PC → **USB-Audio-Richtung = NUR SENDEN**. Das Handy sieht die Groovebox dann nur als Eingang (Aufnahme in Apps geht weiter), behält seinen eigenen Lautsprecher bzw. Bluetooth, und „Ton im Browser“ ist zu hören. Nur MIDI/Netz ohne Audio: USB-Modus = PC (MIDI).
 * **Als App auf dem Homescreen:** iPhone/iPad: in Safari `http://192.168.77.1/screen` öffnen → Teilen → „Zum Home-Bildschirm“ – startet danach ohne Browserleiste im Vollbild mit dem SYNTH-CITY-Symbol. Android: Chrome-Menü → „Zum Startbildschirm hinzufügen“. Hinweis: Weil der R36S unverschlüsselt (http) erreichbar ist, bietet Chrome kein „App installieren“ an; die Verknüpfung öffnet die Seite dann im Browser.
 * Bis zu 3 Geräte können gleichzeitig zuschauen, bedienen und zuhören. Reißt die Verbindung ab, verbindet sich die Seite selbst neu und lässt alle Tasten los.

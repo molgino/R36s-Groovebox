@@ -466,6 +466,39 @@ static void testMultiCore() {
     CHECK(md < 1e-4f, "1 Kern und 2 Kerne klingen verschieden (%.2e)", md);
 }
 
+// Mehrkanal-Ausgang (USB): Master gleich wie ohne Mehrkanal, jede Spur einzeln hoerbar - auf 1 und 2 Kernen
+static void testMultiOut() {
+    curTest = "Mehrkanal";
+    static float ref[44100 * 2], out[44100 * 2], mb[44100 * 24];
+    static const int ms[NTRACKS] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_SYNTH, M_FM, M_WTBL, M_SYNTH};
+    // 0: Referenz ohne Mehrkanal (MC[0]), 1: Mehrkanal 1 Kern (MC[1], gleiche Vorgeschichte -> gleicher Klang), 2: Mehrkanal 2 Kerne (MC[0], nur Kanaele)
+    for (int run = 0; run < 3; run++) {
+        Engine& X = MC[run == 1 ? 1 : 0];
+        if (run == 2 && !X.helperReady()) { printf("  Mehrkanal: nur ein Kern - 2-Kern-Lauf uebersprungen\n"); break; }
+        X.init(44100); X.stop(); X.audioThreads = run == 2 ? 2 : 1;
+        X.defaultProject(false); X.proj.bpm = 140;
+        Pattern& P = X.proj.pat[0];
+        for (int t = 0; t < NTRACKS; t++) { Engine::initTrack(P, t, ms[t]); for (int s2 = 0; s2 < 16; s2 += 2) P.s[t][s2].on = 1; P.p[t][P_PAN] = (uint8_t)(t * 16); P.p[t][P_REV] = 40; }
+        X.multiBuf = run ? mb : nullptr; X.multiCh = run ? 24 : 2;
+        X.start();
+        float* o = run ? out : ref;
+        for (int i = 0; i < 44100; i += 256) { if (run) X.multiBuf = mb + (size_t)i * 24; X.render(o + i * 2, 44100 - i < 256 ? 44100 - i : 256); }
+        X.multiBuf = nullptr; X.multiCh = 2;
+        if (!run) continue;
+        float md = 0, mm = 0;
+        for (int i = 0; i < 44100 * 2; i++) { float d = fabsf(out[i] - ref[i]); if (d > md) md = d; }
+        for (int i = 0; i < 44100; i++) for (int c = 0; c < 2; c++) { float d = fabsf(mb[i * 24 + c] - out[i * 2 + c]); if (d > mm) mm = d; }
+        int silent = 0; float busE = 0;
+        for (int t = 0; t < NTRACKS; t++) { float e = 0; for (int i = 0; i < 44100; i++) e += fabsf(mb[i * 24 + 2 + t * 2]) + fabsf(mb[i * 24 + 3 + t * 2]); if (e < 1.f) silent++; }
+        for (int i = 0; i < 44100; i++) for (int c = 18; c < 24; c++) busE += fabsf(mb[i * 24 + c]);
+        printf("  Mehrkanal (%d Kern%s): Abweichung zur Referenz %.2e, Kanal 1-2 = Ausgang %.2e, stumme Spuren %d, Bus-Energie %.0f\n", run, run > 1 ? "e" : "", md, mm, silent, busE);
+        if (run == 1) CHECK(md < 1e-4f, "Mehrkanal veraendert den Master (%.2e)", md);
+        CHECK(mm == 0.f, "Kanal 1-2 ist nicht der Master");
+        CHECK(silent == 0, "%d Spuren fehlen im Mehrkanal-Ausgang", silent);
+        CHECK(busE > 1.f, "Effekt-Bus-Kanaele sind still");
+    }
+}
+
 static void testDeterminism() {
     curTest = "Reproduzierbarkeit";
     static float a[44100 * 2], b[44100 * 2];
@@ -550,6 +583,7 @@ int main(int argc, char** argv) {
     testSaveLoad();
     testDeterminism();
     testMultiCore();
+    testMultiOut();
     testPcm24(sdir);
     printf("%s: %d Pruefungen ok, %d Fehler\n", nFail ? "FEHLGESCHLAGEN" : "OK", nPass, nFail);
     return nFail ? 1 : 0;

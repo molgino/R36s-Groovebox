@@ -85,8 +85,10 @@ static bool selfTesting = false;   // --selftest/--bench: keine Systemaktionen (
 static Project lastSaved;
 
 // System-Einstellungen (settings.cfg)
-struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang, usbNet, uac, uacSendOnly; char project[64]; };   // usbNet 0 NCM / 1 RNDIS, uac 2 / 1
-static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, 0, 2, 0, ""};
+struct Settings { char dev[128]; int buf, midiIn, notesOut, clk, chm, usb, song, dispOff, usbAudio, hwVol, pcIn, usbVol, intUsb, cores, lang, usbNet, uac, uacSendOnly, usbCh; char project[64]; };   // usbNet 0 NCM / 1 RNDIS, uac 2 / 1
+static Settings cfg = {"", 1, 1, 0, 0, 0, 0, 0, 277, 1, 80, 1, 100, 1, 2, 0, 0, 2, 0, 2, ""};
+// Kanaele zum PC (USB-Audio): Mehrkanal nur mit UAC2
+static int usbChannels() { return cfg.uac == 1 ? 2 : (cfg.usbCh == 8 || cfg.usbCh == 18 || cfg.usbCh == 24 ? cfg.usbCh : 2); }
 static bool intMuted = false;   // interne Ausgabe stumm, weil USB-Audio laeuft
 static volatile float pcInGain = 1.f;   // PC-Ton in den Ausgang (0 = nur fuer Aufnahme)   // dispOff: Bild-Versatz in Bytes (Groovebox-OS, R36S-Panel)
 static bool projFromArg = false;
@@ -172,6 +174,7 @@ static void loadSettings() {
         else if (!strcmp(line, "usb_net")) cfg.usbNet = clampi(atoi(v), 0, 1);
         else if (!strcmp(line, "usb_audio_class")) cfg.uac = atoi(v) == 1 ? 1 : 2;
         else if (!strcmp(line, "usb_audio_send_only")) cfg.uacSendOnly = atoi(v) != 0;
+        else if (!strcmp(line, "usb_audio_channels")) { int c = atoi(v); cfg.usbCh = (c == 8 || c == 18 || c == 24) ? c : 2; }
         else if (!strcmp(line, "display_offset")) cfg.dispOff = clampi(atoi(v), -1920, 1920);
     }
     fclose(f);
@@ -179,8 +182,8 @@ static void loadSettings() {
 static void saveSettings() {
     FILE* f = fopen(setPath, "w");
     if (!f) return;
-    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nusb_net %d\nusb_audio_class %d\nusb_audio_send_only %d\nproject %s\n",
-            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.usbNet, cfg.uac, cfg.uacSendOnly, cfg.project);
+    fprintf(f, "# Groovebox Systemeinstellungen\naudio_device %s\nbuffer %d\nmidi_in %d\nmidi_notes_out %d\nmidi_clock %d\nmidi_channels %d\nusb_mode %d\nsong %d\ndisplay_offset %d\nusb_audio %d\nhw_volume %d\npc_in %d\nusb_volume %d\ninternal_on_usb %d\naudio_cores %d\nlanguage %d\nusb_net %d\nusb_audio_class %d\nusb_audio_send_only %d\nusb_audio_channels %d\nproject %s\n",
+            cfg.dev, cfg.buf, cfg.midiIn, cfg.notesOut, cfg.clk, cfg.chm, cfg.usb, cfg.song, cfg.dispOff, cfg.usbAudio, cfg.hwVol, cfg.pcIn, cfg.usbVol, cfg.intUsb, cfg.cores, cfg.lang, cfg.usbNet, cfg.uac, cfg.uacSendOnly, cfg.usbCh, cfg.project);
     fclose(f);
 }
 static void applyMidiSettings() {
@@ -674,7 +677,7 @@ static void animate() {
         if (now - uaAt > 1500) {
             uaAt = now;
             bool want = cfg.usbAudio && usbMode == 2 && !driveOn;
-            if (want && !usbAudioActive()) usbAudioStart();
+            if (want && !usbAudioActive()) { usbAudioSetChannels(usbChannels()); usbAudioStart(); }
             if (!want && usbAudioActive()) usbAudioStop();
             usbAudioSetGain(cfg.usbVol / 100.f);
             bool mute = cfg.intUsb && usbAudioActive();   // interne Ausgabe stumm, solange USB-Audio laeuft
@@ -3587,7 +3590,7 @@ enum SetItem {
     SI_H_TRK, SI_LEN, SI_SPEED, SI_TMPL, SI_CLRTRK,
     SI_H_AUDIO, SI_OUT, SI_BUF, SI_VOL, SI_CORES,
     SI_H_MIDI, SI_MIN, SI_NOUT, SI_CLK, SI_MCH,
-    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_USBNET, SI_UACVER, SI_UACDIR, SI_MIDIINFO,
+    SI_H_USB, SI_USB, SI_USBAUDIO, SI_USBVOL, SI_INTUSB, SI_USBTONE, SI_PCIN, SI_PCREC, SI_IP, SI_USBNET, SI_UACVER, SI_UACDIR, SI_USBCH, SI_MIDIINFO,
     SI_H_SMP, SI_SAMPLES, SI_WEB, SI_DRIVE, SI_OLDSMP,
     SI_H_SYS, SI_LANG, SI_DISP, SI_LEARN, SI_BENCH, SI_INFO, SI_BAT, SI_QUIT, SI_COUNT
 };
@@ -3656,6 +3659,7 @@ static const char* setHelp(int i) {
     case SI_PCIN: return TR("Ton vom PC über den R36S hören", "Hear PC audio through the R36S");
     case SI_PCREC: return TR("Ton vom PC als Sample aufnehmen (samples/pc)", "Record PC audio as a sample (samples/pc)");
     case SI_IP: return TR("Adresse des R36S im PC-Modus", "Address of the R36S in PC mode");
+    case SI_USBCH: return TR("Mehrkanal zum PC: 1-2 Master, dann 8 = FX A/B/C, 18 = Spuren 1-8, 24 = Spuren 1-8 + FX A/B/C (je Stereo). Spuren/FX vor Master-Kompressor. Nur UAC2", "Multichannel to PC: 1-2 master, then 8 = FX A/B/C, 18 = tracks 1-8, 24 = tracks 1-8 + FX A/B/C (stereo each). Tracks/FX before master compressor. UAC2 only");
     case SI_UACDIR: return TR("NUR SENDEN: Handy/PC sieht die Groovebox nur als Eingang und behält Lautsprecher/Bluetooth (z. B. iPhone + Ton im Browser). Dann kein PC-Ton zum R36S", "SEND ONLY: phone/PC sees the groovebox only as input and keeps its speaker/Bluetooth (e.g. iPhone + audio in browser). No PC audio to the R36S then");
     case SI_USBNET: return TR("NCM: ohne Treiber an Windows 11, Mac, iPad, Linux. RNDIS: nur für ältere Windows 10", "NCM: driverless on Windows 11, Mac, iPad, Linux. RNDIS: only for older Windows 10");
     case SI_UACVER: return TR("UAC2: 44,1/48 kHz, Standard. UAC1: für ältere Geräte ohne UAC2 (Windows 7/8, Konsolen)", "UAC2: 44.1/48 kHz, default. UAC1: for older devices without UAC2 (Windows 7/8, consoles)");
@@ -3742,6 +3746,10 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         else if (pcRecState() == 2) snprintf(v, vn, TR("AUFNAHME %.1f s (A = STOP)", "RECORDING %.1f s (A = STOP)"), pcRecSeconds());
         else if (usbMode != 2) snprintf(v, vn, TR("erst PC MIDI+Audio", "needs PC MIDI+audio"));
         break;
+    case SI_USBCH: snprintf(l, ln, TR("USB-Kanäle zum PC", "USB channels to PC"));
+        if (cfg.uac == 1) { snprintf(v, vn, TR("2 (UAC1: nur Stereo)", "2 (UAC1: stereo only)")); break; }
+        snprintf(v, vn, "%s", cfg.usbCh == 24 ? TR("24 (Master + Spuren + FX)", "24 (master + tracks + FX)") : cfg.usbCh == 18 ? TR("18 (Master + 8 Spuren)", "18 (master + 8 tracks)")
+                                : cfg.usbCh == 8 ? TR("8 (Master + FX A/B/C)", "8 (master + FX A/B/C)") : TR("2 (Master)", "2 (master)")); break;
     case SI_UACDIR: snprintf(l, ln, TR("USB-Audio-Richtung", "USB audio direction"));
         snprintf(v, vn, "%s", cfg.uacSendOnly ? TR("NUR SENDEN (Gerät behält Lautsprecher)", "SEND ONLY (device keeps speaker)") : TR("BEIDE (Standard)", "BOTH (default)")); break;
     case SI_USBNET: snprintf(l, ln, TR("USB-Netzwerk", "USB network")); snprintf(v, vn, "%s", cfg.usbNet ? TR("RNDIS (altes Windows)", "RNDIS (old Windows)") : TR("NCM (Standard)", "NCM (standard)")); break;
@@ -3835,6 +3843,12 @@ static void setChange(int i, int d) {
     case SI_USBAUDIO: cfg.usbAudio = !cfg.usbAudio; saveSettings(); break;
     case SI_USBVOL: cfg.usbVol = clampi(cfg.usbVol + (d > 0 ? 5 : -5), 0, 100); saveSettings(); break;
     case SI_INTUSB: cfg.intUsb = !cfg.intUsb; saveSettings(); break;
+    case SI_USBCH: {
+        static const int CH[4] = {2, 8, 18, 24};
+        int k = 0; for (int i = 0; i < 4; i++) if (CH[i] == cfg.usbCh) k = i;
+        cfg.usbCh = CH[(k + (d > 0 ? 1 : 3)) % 4]; saveSettings();
+        if (usbMode == 2) { usbAudioStop(); usbApplyAt = SDL_GetTicks() + 1200; }   // Gadget mit neuer Kanalzahl neu aufbauen
+    } break;
     case SI_UACDIR: cfg.uacSendOnly = !cfg.uacSendOnly; saveSettings(); if (usbMode == 2) usbApplyAt = SDL_GetTicks() + 1200; break;   // Gadget neu aufbauen
     case SI_USBNET: cfg.usbNet = !cfg.usbNet; saveSettings(); if (usbMode) usbApplyAt = SDL_GetTicks() + 1200; break;   // Gadget neu aufbauen
     case SI_UACVER: cfg.uac = cfg.uac == 1 ? 2 : 1; saveSettings(); if (usbMode == 2) usbApplyAt = SDL_GetTicks() + 1200; break;
@@ -3900,7 +3914,7 @@ static void reloadSamples();
 // Umgebung fuer pc-modus.sh: Netzwerk- und Audio-Klasse aus SET
 static const char* usbEnv() {
     static char e[96];
-    snprintf(e, sizeof e, "GB_USB_NET=%s GB_UAC=%d GB_UAC_IN=%d ", cfg.usbNet ? "rndis" : "ncm", cfg.uac == 1 ? 1 : 2, cfg.uacSendOnly ? 0 : 1);
+    snprintf(e, sizeof e, "GB_USB_NET=%s GB_UAC=%d GB_UAC_IN=%d GB_UAC_CH=%d ", cfg.usbNet ? "rndis" : "ncm", cfg.uac == 1 ? 1 : 2, cfg.uacSendOnly ? 0 : 1, usbChannels());
     return e;
 }
 static bool usbScript(const char* args, char* okMsg, int n) {
@@ -4921,8 +4935,13 @@ static void audioCb(void*, Uint8* stream, int len) {
     cbFrames = frames;
     MidiMsg mm;
     while (midiInPop(mm)) eng.midiIn(mm.st, mm.d1, mm.d2);
+    static float multiBuf[4096 * 24];   // Mehrkanal zum PC (Master + Spuren + FX)
+    const int mch = usbAudioActive() ? usbAudioChannels() : 2;
+    bool multi = mch > 2 && frames <= 4096;
+    eng.multiBuf = multi ? multiBuf : nullptr; eng.multiCh = multi ? mch : 2;
     eng.render((float*)stream, frames);
-    usbAudioPush((const float*)stream, frames);   // parallel an den PC (falls aktiv)
+    if (multi) usbAudioPushMulti(multiBuf, frames);
+    else usbAudioPush((const float*)stream, frames);   // parallel an den PC (falls aktiv)
     pcInMix((float*)stream, frames, pcInGain);    // PC-Ton dazumischen (nach dem Senden: kein Echo zum PC)
     recPush((const float*)stream, frames);
     scopePush((const float*)stream, frames);      // fuer Oszilloskop/Spektrum der Oberflaeche

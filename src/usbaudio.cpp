@@ -16,13 +16,16 @@
 #include <alsa/asoundlib.h>
 #include <SDL.h>
 
-enum { RING = 16384, RMASK = RING - 1, MAXLAT = 8192 };   // Frames
-static float g_ring[RING * 2];                 // Float: erst beim Senden auf 24 (bzw. 16) Bit mit Dither runter
+enum { RING = 16384, RMASK = RING - 1, MAXLAT = 8192, MAXCH = 24 };   // Frames, Kanaele
+static float g_ring[RING * MAXCH];             // Float: erst beim Senden auf 24 (bzw. 16) Bit mit Dither runter
+static volatile int g_ch = 2;                  // Kanaele zum PC: 2 (Master) oder Mehrkanal 8/18/24 (siehe Engine::multiCh)
 static volatile unsigned g_w = 0, g_r = 0;     // Schreib-/Leseposition (Frames), nur je ein Thread schreibt
 static volatile Uint64 g_tPush = 0;            // Zeitpunkt der letzten Uebergabe (fuer die Taktregelung)
 static volatile int g_lastN = 256;             // Frames pro Uebergabe (Puffergroesse der internen Karte)
 static volatile bool g_run = false, g_active = false;
 static volatile int g_status = 0;              // 0 aus, 1 wartet auf PC, 2 PC liest
+void usbAudioSetChannels(int ch) { if (!g_active) g_ch = ch >= 2 && ch <= MAXCH ? ch : 2; }
+int usbAudioChannels() { return g_ch; }
 static SDL_Thread* g_thread = nullptr;
 static char g_dev[32];
 static volatile int g_peak = 0;          // groesster Betrag der uebergebenen Samples (seit letzter Statistik)
@@ -36,13 +39,13 @@ void usbAudioSetEngineRate(int sr) { if (sr >= 8000 && sr <= 192000) g_srcRate =
 
 // Sample-Format fuer das Gadget: 24 Bit bevorzugt (p_ssize/c_ssize = 3), sonst 32 oder 16 Bit.
 // Liefert die Bytes je Sample (3/4/2) oder 0, wenn nichts geht.
-static int openFormat(snd_pcm_t* pcm, unsigned rate, unsigned latUs) {
+static int openFormat(snd_pcm_t* pcm, unsigned rate, unsigned latUs, int ch = 2) {
     static const snd_pcm_format_t fm[3] = {SND_PCM_FORMAT_S24_3LE, SND_PCM_FORMAT_S32_LE, SND_PCM_FORMAT_S16_LE};
     static const int by[3] = {3, 4, 2};
     for (int k = 0; k < 3; k++) {
         snd_pcm_hw_params_t* hw; snd_pcm_hw_params_alloca(&hw);
         if (snd_pcm_hw_params_any(pcm, hw) < 0 || snd_pcm_hw_params_test_format(pcm, hw, fm[k]) < 0) continue;
-        if (snd_pcm_set_params(pcm, fm[k], SND_PCM_ACCESS_RW_INTERLEAVED, 2, rate, 0, latUs) == 0) return by[k];
+        if (snd_pcm_set_params(pcm, fm[k], SND_PCM_ACCESS_RW_INTERLEAVED, (unsigned)ch, rate, 0, latUs) == 0) return by[k];
     }
     return 0;
 }
@@ -103,8 +106,8 @@ static bool findGadget(char* out, int n) {
     return true;
 }
 
-static inline float hermite(const float* r, unsigned i, float t, int c, unsigned m = RMASK) {   // 4-Punkt, wie smpRead in der Engine
-    float y0 = r[((i - 1) & m) * 2 + c], y1 = r[(i & m) * 2 + c], y2 = r[((i + 1) & m) * 2 + c], y3 = r[((i + 2) & m) * 2 + c];
+static inline float hermite(const float* r, unsigned i, float t, int c, unsigned m = RMASK, int st = 2) {   // 4-Punkt, wie smpRead in der Engine; st = Kanaele je Frame
+    float y0 = r[((i - 1) & m) * st + c], y1 = r[(i & m) * st + c], y2 = r[((i + 1) & m) * st + c], y3 = r[((i + 2) & m) * st + c];
     float c1 = 0.5f * (y2 - y0), c2 = y0 - 2.5f * y1 + 2.f * y2 - 0.5f * y3, c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
     return ((c3 * t + c2) * t + c1) * t + y1;
 }
@@ -155,22 +158,23 @@ static int usbThread(void*) {
         g_active = false; return 0;
     }
     const int rate = pickRate(pcm, gadgetRate(true));
-    const int bps = openFormat(pcm, (unsigned)rate, 40000);
+    const int ch = g_ch;
+    const int bps = openFormat(pcm, (unsigned)rate, 40000, ch);
     if (!bps) {
-        printf("USB-Audio: Format nicht moeglich (%d Hz)\n", rate);
+        printf("USB-Audio: Format nicht moeglich (%d Hz, %d Kanaele - passt die Kanalzahl zum Gadget?)\n", rate, ch);
         snd_pcm_close(pcm); g_active = false; return 0;
     }
     g_rateOut = rate;
     const int src = g_srcRate;
-    printf("USB-Audio zum PC aktiv (%s, %d Hz, %d Bit, Engine %d Hz)\n", g_dev, rate, bps == 2 ? 16 : 24, src);
+    printf("USB-Audio zum PC aktiv (%s, %d Hz, %d Bit, %d Kanaele, Engine %d Hz)\n", g_dev, rate, bps == 2 ? 16 : 24, ch, src);
     const double base = (double)src / rate;   // Ring-Frames (Engine-Rate) je USB-Frame
     Uint32 rateCheckAt = SDL_GetTicks();
     // Taktausgleich: interne Soundkarte und USB-Host laufen mit leicht unterschiedlicher Uhr. Wir lesen den Ring mit
     // fein geregelter Rate (kubische Interpolation). Der Fuellstand springt mit jeder Uebergabe um eine Puffergroesse;
     // dieser Saegezahn wird ueber den Zeitpunkt der letzten Uebergabe herausgerechnet, sonst zittert die Regelung.
     enum { OUT = 256, TARGET = 2048 };
-    static uint8_t outb[OUT * 2 * 4];
-    const int fb = bps * 2;            // Bytes je Frame
+    static uint8_t outb[OUT * MAXCH * 4];
+    const int fb = bps * ch;           // Bytes je Frame
     int pendOff = 0, pendLen = 0;      // noch nicht geschriebener Teil von outb
     double frac = 0, ratio = base, fillAvg = TARGET;
     bool primed = false; int fadeIn = 0;   // nach Start/Neusynchronisation weich einblenden
@@ -221,8 +225,8 @@ static int usbThread(void*) {
                 unsigned ip = (unsigned)pos;
                 const int fadeLen = rate / 100;   // 10 ms
                 float t = (float)(pos - ip), g = fadeIn < fadeLen ? fadeIn++ / (float)fadeLen : 1.f;
-                for (int c = 0; c < 2; c++)   // TPDF-Dither (+-1 LSB) gegen Quantisierungs-Verzerrung bei leisen Stellen
-                    putSample(&outb[i * fb + c * bps], bps, hermite(g_ring, r + ip, t, c) * g, dith);
+                for (int c = 0; c < ch; c++)   // TPDF-Dither (+-1 LSB) gegen Quantisierungs-Verzerrung bei leisen Stellen
+                    putSample(&outb[i * fb + c * bps], bps, hermite(g_ring, r + ip, t, c, RMASK, ch) * g, dith);
             }
             unsigned used = (unsigned)pos;
             frac = pos - used;
@@ -266,8 +270,32 @@ void usbAudioStop() {
 bool usbAudioActive() { return g_active; }
 int usbAudioStatus() { return g_active ? g_status : 0; }
 
+// Mehrkanal: frames x g_ch Werte (Kanal 0-1 = Master); Testton nur auf dem Master
+void usbAudioPushMulti(const float* buf, int frames) {
+    if (!g_active || g_ch <= 2) return;
+    const int ch = g_ch;
+    unsigned w = g_w;
+    if ((w - g_r) + (unsigned)frames > RING - 1) return;
+    bool tone = g_toneUntil && (int)(g_toneUntil - SDL_GetTicks()) > 0;
+    float gain = g_gain, pk = 0.f;
+    const int sr = g_srcRate;
+    for (int i = 0; i < frames; i++) {
+        float* d = &g_ring[((w + i) & RMASK) * ch];
+        const float* s0 = buf + (size_t)i * ch;
+        for (int c = 0; c < ch; c++) d[c] = s0[c] * gain;
+        if (tone) { d[0] = d[1] = 0.5f * sinf((float)g_tonePh * (6.2831853f * 1000.f / sr)); g_tonePh = (g_tonePh + 1) % (unsigned)sr; }
+        float a = fmaxf(fabsf(d[0]), fabsf(d[1]));
+        if (a > pk) pk = a;
+    }
+    int ipk = (int)(fminf(pk, 1.f) * 32767.f);
+    if (ipk > g_peak) g_peak = ipk;
+    g_lastN = frames;
+    __atomic_store_n(&g_w, w + (unsigned)frames, __ATOMIC_RELEASE);
+    g_tPush = SDL_GetPerformanceCounter();
+}
+
 void usbAudioPush(const float* st, int frames) {   // nur aus dem Audio-Callback
-    if (!g_active) return;
+    if (!g_active || g_ch != 2) return;
     unsigned w = g_w;
     if ((w - g_r) + (unsigned)frames > RING - 1) return;   // voll: neue Daten verwerfen
     bool tone = g_toneUntil && (int)(g_toneUntil - SDL_GetTicks()) > 0;
@@ -436,6 +464,9 @@ void pcRecDone() { g_recState = 0; g_recLen = 0; }
 
 #else
 void usbAudioSetGain(float) {}
+void usbAudioSetChannels(int) {}
+int usbAudioChannels() { return 2; }
+void usbAudioPushMulti(const float*, int) {}
 bool pcInStart() { return false; }
 void pcInStop() {}
 bool pcInActive() { return false; }
