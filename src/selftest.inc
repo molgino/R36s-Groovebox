@@ -369,7 +369,7 @@ static void uiScenarios() {
             UCHECK(frames >= want && frames <= want + 8 * eng.sr + 2048, "WAV hat %ld Frames (Song %ld + Ausklang)", frames, want);
             FILE* f = fopen(expPath, "rb"); float pk = 0;
             uint8_t wh[44] = {0};
-            if (f) { static uint8_t buf[44100 * 6]; fread(wh, 1, 44, f); size_t n = fread(buf, 3, 44100 * 2, f); for (size_t i = 0; i < n; i++) pk = fmaxf(pk, fabsf(get24(buf + i * 3) / 8388608.f)); fclose(f); }
+            if (f) { static uint8_t buf[44100 * 6]; size_t n = fread(wh, 1, 44, f) == 44 ? fread(buf, 3, 44100 * 2, f) : 0; for (size_t i = 0; i < n; i++) pk = fmaxf(pk, fabsf(get24(buf + i * 3) / 8388608.f)); fclose(f); }
             UCHECK(wh[34] == 24 && wh[22] == 2, "Export nicht 24 Bit Stereo (%d Bit, %d Kanaele)", wh[34], wh[22]);
             UCHECK(pk > 0.05f, "Export ist still (Spitze %.3f)", pk);
             remove(expPath);

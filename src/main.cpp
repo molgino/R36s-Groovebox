@@ -2715,7 +2715,7 @@ static void drawSplash(float t) {
         sd = splashRnd(sd);
         int w = 18 + sd % 34, h = 30 + (sd >> 8) % 130;
         if (x + w > 214 && x < 426) h = 14 + h / 5;   // in der Mitte niedriger, die Sonne bleibt sichtbar
-        Col bc = {14 + (int)(sd >> 20) % 8, 6, 30};
+        Col bc = {(Uint8)(14 + (int)(sd >> 20) % 8), 6, 30};
         fill(x, HOR - h, w, h, bc);
         if ((sd >> 3) % 4 == 0) fill(x + w / 2, HOR - h - 14, 2, 14, bc);   // Antenne
         if ((sd >> 3) % 4 == 0 && fmodf(t * 1.3f + x, 2.f) < 1.f) fill(x + w / 2 - 1, HOR - h - 16, 4, 3, C_ACC);
