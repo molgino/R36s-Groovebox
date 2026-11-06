@@ -17,3 +17,7 @@ void remoteSnapshot(const uint32_t* argb, int pitchPx, int w, int h);   // aus d
 size_t remoteEncode(unsigned since, uint8_t** out, size_t* cap);
 // Web-Thread: Anfrage "GET /ws" mit Upgrade -> Handshake, eigener Thread uebernimmt fd (true = fd nicht schliessen)
 bool remoteWsAccept(int fd, const char* headers);
+// Touch auf dem Bild (Koordinaten 640x480): 't' Finger auf, 'm' bewegt, 'e' Finger weg, 'c' alle weg (Verbindung zu)
+enum { REMOTE_TOUCH_IDS = 10 };
+struct RemoteTouch { char type; int id, x, y; };
+bool remoteTouchPop(RemoteTouch& e);   // Hauptthread

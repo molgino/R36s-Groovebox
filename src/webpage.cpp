@@ -311,12 +311,19 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padd
  #scr{grid-column:2;grid-row:1;height:100%;width:100%}
  .mid{flex-direction:row}
 }
-@media (max-height:420px){header{display:none}}
+@media (max-height:420px){header{padding:2px 8px}h1{font-size:12px}#stat{font-size:10px}.hb{padding:2px 8px}}
+#cvw{position:relative;flex:none;touch-action:none}
+.rip{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid var(--cy);pointer-events:none;animation:rip .45s ease-out forwards}
+.rip.hold{border-color:var(--acc);animation:none;opacity:.8}
+@keyframes rip{from{transform:scale(.4);opacity:1}to{transform:scale(1.6);opacity:0}}
+body.nopad #ctl{display:none}
+body.nopad #stage{grid-template-columns:1fr !important}
+body.nopad #scr{grid-column:1 !important}
 </style></head><body><div id="app">
 <header><span id="dot"></span><h1>SYNTH CITY</h1><span id="stat">…</span><span class="sp"></span>
-<button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
+<button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
 <div id="stage">
- <div id="scr"><canvas id="cv" width="640" height="480" tabindex="0"></canvas>
+ <div id="scr"><div id="cvw"><canvas id="cv" width="640" height="480" tabindex="0"></canvas></div>
   <div class="mid" id="midL"><div class="row"><div class="btn" data-b="SELECT">SELECT</div><div class="btn" data-b="START">START</div></div></div></div>
  <div id="ctl">
   <div class="side lside"><div class="shd"><div class="btn" data-b="L2">L2</div><div class="btn" data-b="L1">L1</div></div>
@@ -331,7 +338,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padd
 <kbd>←↑→↓</kbd> Steuerkreuz &nbsp; <kbd>Z</kbd>/<kbd>Leertaste</kbd> A &nbsp; <kbd>X</kbd>/<kbd>⌫</kbd> B &nbsp; <kbd>S</kbd> X &nbsp; <kbd>A</kbd> Y<br>
 <kbd>Q</kbd> L1 &nbsp; <kbd>W</kbd> R1 &nbsp; <kbd>1</kbd> L2 &nbsp; <kbd>2</kbd> R2 &nbsp; <kbd>Shift</kbd>/<kbd>Tab</kbd> SELECT &nbsp; <kbd>Enter</kbd> START (halten = FILL)<br>
 <kbd>T F G H</kbd> linker Stick &nbsp; <kbd>I J K L</kbd> rechter Stick &nbsp; <kbd>F11</kbd> Vollbild<br>
-<b style="color:#fff">Touch</b>: mehrere Finger gleichzeitig, über das Steuerkreuz und die Tasten wischen geht auch.<br>
+<b style="color:#fff">Touch aufs Bild</b>: Spur, Seite, Reiter, Kachel oder Step antippen. Auf einer Kachel ziehen (hoch/rechts = mehr) ändert den Wert. Step antippen = Trig an/aus, Step halten + mit zweitem Finger Kachel ziehen = P-Lock. Kachel nochmal antippen = Auswahlliste (Sample, LFO-Ziel, Engine). „Tasten“ blendet das Gamepad aus.<br><b style="color:#fff">Touch-Tasten</b>: mehrere Finger gleichzeitig, Wischen über das Steuerkreuz geht auch.<br>
 <b style="color:#fff">Gamepad</b>: am PC/Handy angeschlossenes Gamepad wird automatisch erkannt.<br>
 <span style="color:var(--dim)">Tippen zum Schließen</span></div></div>
 <script>
@@ -352,7 +359,7 @@ function draw(){if(dirty){cx.putImageData(img,0,0);dirty=false;}pollPad();reques
 requestAnimationFrame(draw);
 // Bild immer ganz sichtbar und so gross wie moeglich (4:3), SELECT/START darunter
 function fit(){const sc=$('scr'),r=sc.getBoundingClientRect(),mh=$('midL').offsetHeight+10;let w=r.width,h=r.height-mh;
- if(w<=0||h<=0)return;if(w/h>4/3)w=h*4/3;else h=w*3/4;cv.style.width=Math.floor(w)+'px';cv.style.height=Math.floor(h)+'px';}
+ if(w<=0||h<=0)return;if(w/h>4/3)w=h*4/3;else h=w*3/4;w=Math.floor(w);h=Math.floor(h);cv.style.width=w+'px';cv.style.height=h+'px';$('cvw').style.width=w+'px';$('cvw').style.height=h+'px';}
 addEventListener('resize',fit);if(window.ResizeObserver)new ResizeObserver(fit).observe($('scr'));setTimeout(fit,0);
 // ---- Verbindung: WebSocket (Bildstrom + Tasten), sonst Abfrage
 let ws=null,wsFails=0,pingT=0;
@@ -415,6 +422,20 @@ ctlArea.forEach(area=>{
 });
 document.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('touchmove',e=>{if(e.touches.length>1||e.target.closest('#ctl,#midL'))e.preventDefault();},{passive:false});
+// ---- Touch direkt auf dem Bild: Kacheln, Steps, Spuren, Reiter ... (die Groovebox wertet die Stelle aus)
+const tIds=new Map(),tPend=new Map(),rips=new Map();
+function tId(pid){if(tIds.has(pid))return tIds.get(pid);for(let i=0;i<10;i++){if(![...tIds.values()].includes(i)){tIds.set(pid,i);return i;}}return -1;}
+function tPos(e){const r=cv.getBoundingClientRect();return[Math.max(0,Math.min(W-1,Math.round((e.clientX-r.left)/r.width*W))),Math.max(0,Math.min(H-1,Math.round((e.clientY-r.top)/r.height*H)))];}
+function tSend(m){if(ws&&ws.readyState===1)ws.send(m);}
+function ripple(e,hold){const r=$('cvw').getBoundingClientRect(),d=document.createElement('div');d.className='rip'+(hold?' hold':'');d.style.left=(e.clientX-r.left)+'px';d.style.top=(e.clientY-r.top)+'px';$('cvw').appendChild(d);if(!hold)setTimeout(()=>d.remove(),460);return d;}
+cv.addEventListener('pointerdown',e=>{e.preventDefault();const id=tId(e.pointerId);if(id<0)return;try{cv.setPointerCapture(e.pointerId);}catch(_){}
+ const[x,y]=tPos(e);tSend('t '+id+' '+x+' '+y);ripple(e,false);rips.set(e.pointerId,ripple(e,true));vib();});
+cv.addEventListener('pointermove',e=>{if(!tIds.has(e.pointerId))return;e.preventDefault();tPend.set(e.pointerId,tPos(e));const r=rips.get(e.pointerId);
+ if(r){const b=$('cvw').getBoundingClientRect();r.style.left=(e.clientX-b.left)+'px';r.style.top=(e.clientY-b.top)+'px';}});
+function tEnd(e){if(!tIds.has(e.pointerId))return;const id=tIds.get(e.pointerId),[x,y]=tPos(e);tPend.delete(e.pointerId);tSend('e '+id+' '+x+' '+y);tIds.delete(e.pointerId);
+ const r=rips.get(e.pointerId);if(r){r.remove();rips.delete(e.pointerId);}}
+cv.addEventListener('pointerup',tEnd);cv.addEventListener('pointercancel',tEnd);
+setInterval(()=>{for(const[pid,p]of tPend){const id=tIds.get(pid);if(id!==undefined)tSend('m '+id+' '+p[0]+' '+p[1]);}tPend.clear();},16);   // Bewegung hoechstens ~60x/s
 // ---- Tastatur
 const km={ArrowUp:['UP',1],ArrowDown:['DOWN',1],ArrowLeft:['LEFT',1],ArrowRight:['RIGHT',1],KeyZ:['A',1],KeyY:['A',1],Space:['A',1],KeyX:['B',1],Backspace:['B',1],Escape:['B',1],
  KeyS:['X',1],KeyA:['Y',1],KeyQ:['L1',1],KeyW:['R1',1],Digit1:['L2',1],Digit2:['R2',1],ShiftLeft:['SELECT',1],ShiftRight:['SELECT',1],Tab:['SELECT',1],
@@ -432,6 +453,8 @@ function pollPad(){const gps=navigator.getGamepads?navigator.getGamepads():[];
   [['LX',0,1],['LY',1,-1],['RX',2,1],['RY',3,-1]].forEach(([n,ai,sg])=>{const a=gp.axes[ai]||0,v=a>0.5?sg:(a<-0.5?-sg:0),k='g'+gp.index+n,o=gpState[k]||0;
    if(v!==o){if(o)release(n,o);if(v)press(n,v);if(v)gpState[k]=v;else delete gpState[k];}});}}
 // ---- Kopfzeile
+$('bPad').onclick=()=>{document.body.classList.toggle('nopad');try{localStorage.nopad=document.body.classList.contains('nopad')?1:'';}catch(e){}setTimeout(fit,30);};
+try{if(localStorage.nopad)document.body.classList.add('nopad');}catch(e){}
 $('bHelp').onclick=()=>$('help').classList.add('show');$('help').onclick=()=>$('help').classList.remove('show');
 $('bSt').onclick=()=>{document.body.classList.toggle('sticks');try{localStorage.sticks=document.body.classList.contains('sticks')?1:'';}catch(e){}};
 try{if(localStorage.sticks)document.body.classList.add('sticks');}catch(e){}

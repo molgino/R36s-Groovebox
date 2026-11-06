@@ -116,6 +116,29 @@ size_t remoteEncode(unsigned since, uint8_t** out, size_t* cap) {
     return n;
 }
 
+// ---------------------------------------------------------------- Touch-Warteschlange (Web-Thread -> Hauptthread)
+static RemoteTouch g_tq[256];
+static unsigned g_tqHead = 0, g_tqTail = 0;
+static SDL_mutex* g_tqMx = nullptr;
+static void touchPush(char type, int id, int x, int y) {
+    if (!g_tqMx) return;
+    SDL_LockMutex(g_tqMx);
+    if (g_tqHead - g_tqTail < 256) {
+        // aufeinanderfolgende Bewegungen desselben Fingers zusammenfassen
+        if (type == 'm' && g_tqHead != g_tqTail) { RemoteTouch& l = g_tq[(g_tqHead - 1) & 255]; if (l.type == 'm' && l.id == id) { l.x = x; l.y = y; SDL_UnlockMutex(g_tqMx); return; } }
+        g_tq[g_tqHead++ & 255] = RemoteTouch{type, id, x, y};
+    }
+    SDL_UnlockMutex(g_tqMx);
+}
+bool remoteTouchPop(RemoteTouch& e) {
+    if (!g_tqMx || g_tqHead == g_tqTail) return false;
+    SDL_LockMutex(g_tqMx);
+    bool ok = g_tqHead != g_tqTail;
+    if (ok) e = g_tq[g_tqTail++ & 255];
+    SDL_UnlockMutex(g_tqMx);
+    return ok;
+}
+
 // ---------------------------------------------------------------- WebSocket (/ws): Bilder als Strom, Tasten zurueck
 // Ein Thread je Zuschauer (max. 3): sendet ein neues Bild, sobald das vorige raus ist (passt sich der Leitung an),
 // liest dazwischen Tasten ("d A" / "u A" / "a LX -1") und Pings ("p <zahl>" -> "P <zahl>").
@@ -224,7 +247,11 @@ static int wsThread(void* arg) {
                     else if (msg[0] == 'u' && sscanf(msg + 2, "%15s", b) == 1) remoteInput(b, 0);
                     else if (msg[0] == 'a' && sscanf(msg + 2, "%15s %d", b, &v) == 2) remoteInput(b, v);
                     else if (msg[0] == 'p') { msg[0] = 'P'; wsSend(fd, 1, msg, len); }
-                    else if (msg[0] == 'f') needFull = true;   // Seite war im Hintergrund: volles Bild
+                    else if (msg[0] == 'f') needFull = true;
+                    else if ((msg[0] == 't' || msg[0] == 'm' || msg[0] == 'e') && msg[1] == ' ') {   // Touch: "t id x y"
+                        int id, x, y;
+                        if (sscanf(msg + 2, "%d %d %d", &id, &x, &y) == 3) touchPush(msg[0], id, x, y);
+                    }   // Seite war im Hintergrund: volles Bild
                 }
                 memmove(in, in + tot, inN - tot); inN -= tot;
             }
@@ -236,6 +263,7 @@ static int wsThread(void* arg) {
         else if (SDL_GetTicks() - lastSend > 5000) { lastSend = SDL_GetTicks(); if (!wsSend(fd, 9, "k", 1)) break; }   // Lebenszeichen
     }
     for (int b = 0; b < BT_COUNT; b++) remoteDown[b] = false;   // Verbindung weg: nichts bleibt gedrueckt
+    touchPush('c', 0, 0, 0);
     for (int a = 0; a < 4; a++) remoteAxis[a] = 0.f;
     free(buf); free(cl);
     close(fd);
@@ -270,6 +298,7 @@ bool remoteWsAccept(int fd, const char* headers) {
     struct timeval rt = {0, 0}; setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rt, sizeof rt);
     WsArg* a = (WsArg*)malloc(sizeof(WsArg));
     if (!a) return false;
+    if (!g_tqMx) g_tqMx = SDL_CreateMutex();
     a->fd = fd;
     __sync_fetch_and_add(&g_wsClients, 1);
     pthread_attr_t at; pthread_attr_init(&at);
