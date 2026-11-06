@@ -523,6 +523,37 @@ static float batOcvPct(float v) {   // Ruhespannung (V) -> Ladezustand (%), typi
     for (int i = 1; i < N; i++) if (v < T[i][0]) return T[i - 1][1] + (v - T[i - 1][0]) / (T[i][0] - T[i - 1][0]) * (T[i][1] - T[i - 1][1]);
     return 100.f;
 }
+// Ladebuchse (separater DC-Port): Pin dc-det = GPIO0_B3 (Bank gpio0, Leitung 11). Der Akku-Treiber wertet ihn nicht aus,
+// darum hier direkt lesen. Polaritaet unbekannt -> lernen: bei deutlichem Entladestrom ist der Pegel "nicht eingesteckt".
+#include <linux/gpio.h>
+#include <errno.h>
+#include <sys/ioctl.h>
+static int dcFd = -2, dcRaw = -1, dcIdle = -1;   // dcIdle: Pegel ohne Netzteil (-1 = noch unbekannt, Annahme aktiv-low)
+static int readDcDet() {
+    if (dcFd == -2) {
+        dcFd = -1;
+        for (int c = 0; c < 8 && dcFd < 0; c++) {
+            char p[32]; snprintf(p, sizeof p, "/dev/gpiochip%d", c);
+            int fd = open(p, O_RDONLY | O_CLOEXEC);
+            if (fd < 0) continue;
+            struct gpiochip_info ci; memset(&ci, 0, sizeof ci);
+            bool bank0 = ioctl(fd, GPIO_GET_CHIPINFO_IOCTL, &ci) == 0 && (!strcmp(ci.label, "gpio0") || strstr(ci.label, "ff040000"));
+            if (bank0) {
+                struct gpiohandle_request rq; memset(&rq, 0, sizeof rq);
+                rq.lineoffsets[0] = 11; rq.lines = 1; rq.flags = GPIOHANDLE_REQUEST_INPUT;
+                snprintf(rq.consumer_label, sizeof rq.consumer_label, "groovebox-dcdet");
+                if (ioctl(fd, GPIO_GET_LINEHANDLE_IOCTL, &rq) == 0) dcFd = rq.fd;
+                else printf("Akku: dc-det (GPIO0_B3) nicht lesbar (%s)\n", strerror(errno));
+            }
+            close(fd);
+        }
+    }
+    if (dcFd < 0) return -1;
+    struct gpiohandle_data hd; memset(&hd, 0, sizeof hd);
+    if (ioctl(dcFd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &hd) != 0) return -1;
+    return hd.values[0];
+}
+
 static void readBattery() {
     if (chgN < 0) {   // einmal: Akku und Lade-Eingaenge suchen
         chgN = 0;
@@ -557,7 +588,15 @@ static void readBattery() {
     for (int i = 0; i < chgN; i++) if (readSysInt(chgPath[i], "online", v) && v > 0) online = true;
     batFull = !strncmp(batStatus, "Full", 4);
     batChg = !strncmp(batStatus, "Charging", 8) || batFull;
-    batPlug = batChg || online;
+    dcRaw = getenv("GB_POWER_SUPPLY") ? -1 : readDcDet();
+    if (dcRaw >= 0) {   // Polaritaet lernen: deutlicher Entlade- bzw. Ladestrom zeigt den Pegel
+        if (batMa < -150) dcIdle = dcRaw;
+        else if (batMa > 150) dcIdle = !dcRaw;
+    }
+    bool dcIn = dcRaw >= 0 && (dcIdle >= 0 ? dcRaw != dcIdle : dcRaw == 0);
+    // eingesteckt: Treiber meldet Laden/voll, ein Lade-Eingang ist online, der dc-det-Pin, oder es fliesst Strom in den Akku
+    // ("Not charging" = Treiber laedt nicht selbst, aber es kommt kein Entladestrom -> externes Laden ueber die DC-Buchse)
+    batPlug = batChg || online || dcIn || batMa > 50 || !strncmp(batStatus, "Not charging", 12);
     if (batMv > 2500 && batMv < 4600) {   // Spannungs-Schaetzung
         float ia = fabsf((float)batMa) / 1000.f;
         if (ia > 3.f) ia = 0.f;   // unplausibel (Einheit/Treiber) -> ohne Ausgleich
@@ -580,7 +619,8 @@ static void readBattery() {
     Uint32 now = SDL_GetTicks();
     if (!logAt || now - logAt > 60000) {   // Diagnose im Log (zum Vergleichen mit dem Treiberwert)
         logAt = now;
-        printf("Akku: %d %% (Treiber %d %%), %d mV, %d mA, Status %s, Netz %s\n", batPct, batDrv, batMv, batMa, batStatus[0] ? batStatus : "?", batPlug ? "an" : "aus");
+        printf("Akku: %d %% (Treiber %d %%), %d mV, %d mA, Status %s, Netz %s, dc-det %d (ohne Netzteil %d), Lade-Eingang %s\n", batPct, batDrv, batMv, batMa,
+               batStatus[0] ? batStatus : "?", batPlug ? "an" : "aus", dcRaw, dcIdle, online ? "online" : "-");
     }
 }
 
@@ -3730,7 +3770,7 @@ static void setLabel(int i, char* l, int ln, char* v, int vn) {
         break;
     case SI_BAT: snprintf(l, ln, TR("Akku", "Battery"));
         if (batPct < 0) snprintf(v, vn, TR("kein Akku gefunden", "no battery found"));
-        else snprintf(v, vn, "%d%%%s  %.2fV  %dmA  %s %d%%", batPct, batPlug ? (batFull ? TR(" VOLL", " FULL") : TR(" LÄDT", " CHG")) : "", batMv / 1000.f, batMa, TR("Treiber", "driver"), batDrv);
+        else snprintf(v, vn, "%d%%%s %.2fV %dmA DC%d %s%d%%", batPct, batPlug ? (batFull ? TR(" VOLL", " FULL") : TR(" LÄDT", " CHG")) : "", batMv / 1000.f, batMa, dcRaw, TR("Chip ", "chip "), batDrv);
         break;
     case SI_QUIT: snprintf(l, ln, TR("Groovebox beenden", "Quit groovebox")); break;
     case SI_DRIVE: snprintf(l, ln, TR("USB-Laufwerk (Samples vom PC)", "USB drive (samples from PC)")); if (!isGrooveboxOS()) snprintf(v, vn, TR("nur Groovebox-OS", "Groovebox OS only")); break;

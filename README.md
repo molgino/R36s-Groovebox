@@ -573,7 +573,7 @@ Die Groovebox startet dafür kurz neu. Startet die neue Version dreimal nicht, w
 
 **Lautstärke:** Die Lautstärketasten am R36S regeln im Groovebox-OS Lautsprecher und Kopfhörer (Anzeige auf dem Display, wird gespeichert).
 
-**Akku-Anzeige:** Oben rechts. Der Prozentwert wird aus der Akkuspannung berechnet (mit Ausgleich der Last und geglättet über 1–2 Minuten) – der eingebaute Zähler des Akku-Chips ist beim R36S meist nicht kalibriert und springt oder hängt bei 100 %. Beim Laden (Netzteil am Lade-Port) erscheint ein **gelber Blitz**, das Symbol wird grün und füllt sich. SET → SYSTEM → **Akku** zeigt Spannung, Strom und zum Vergleich den Wert des Akku-Chips; im Log steht jede Minute eine Zeile „Akku: …“.
+**Akku-Anzeige:** Oben rechts. Der Prozentwert wird aus der Akkuspannung berechnet (mit Ausgleich der Last und geglättet über 1–2 Minuten) – der eingebaute Zähler des Akku-Chips ist beim R36S meist nicht kalibriert und springt oder hängt bei 100 %. Beim Laden (Netzteil an der separaten Ladebuchse) erscheint ein **gelber Blitz** – erkannt über den Lade-Pin der Buchse und den Akkustrom, das Symbol wird grün und füllt sich. SET → SYSTEM → **Akku** zeigt Spannung, Strom und zum Vergleich den Wert des Akku-Chips; im Log steht jede Minute eine Zeile „Akku: …“.
 
 **Power-Taste:** kurz drücken schaltet das Display aus und wieder an (die Musik läuft weiter, spart Akku), **lang drücken (1,5 s)** speichert das Projekt und fährt den R36S sauber herunter.
 
