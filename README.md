@@ -16,7 +16,7 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 
 ## Oberfläche: Signalweg
 
-**Animationen:** Leere Flächen zeigen das echte Audiosignal: Oszilloskop, Spektrum und Takt-Ringe in freien Kacheln, eine Piano-Roll auf TRIG, die Oszillatoren auf der OSC-Seite, fließende Partikel zu den Effekt-Bussen auf SENDS, und je Effekt-Bus eine eigene Animation (Delay-Echos, Tonband-Spulen, Hall-Ringe, schwingende Feder, Chorus-Stimmen). Auch Einstellungen, Song, LIVE und Projekt haben passende Bilder.
+**Animationen:** Leere Flächen zeigen das echte Audiosignal: Oszilloskop, Spektrum und Takt-Ringe in freien Kacheln, eine Piano-Roll auf TRIG, die Oszillatoren auf der OSC-Seite, fließende Partikel zu den Effekt-Bussen auf SENDS, und je Effekt-Bus eine eigene Animation (Delay-Echos, Tonband-Spulen, Hall-Ringe, schwingende Feder, Chorus-Stimmen). Auch Einstellungen, Song, LIVE und Projekt haben passende Bilder. Jede Regler-Kachel zeigt oben Name und Wert und darunter ein bewegtes Bild des Werts (Hüllkurve, Welle, Oktav-Treppe, Akkord, Arp-Folge, Lautsprecher, Hall-Ringe …).
 
 Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke **QUELLE → FILTER → AMP → INSERT** (zusammengehörige Seiten untereinander: QUELLE/QUELLE 2, FILTER 1/FILTER 2), darunter die Reihe **SEQ**: TRIG · SEQ · ARP · LFO1–3. **L2/R2** gehen alle Spurseiten der Reihe nach durch (TRIG → SEQ → ARP → QUELLE → QUELLE 2 → FILTER 1 → FILTER 2 → AMP → INSERT → LFO 1–3, im Kreis), direkt springen über die Seitenkarte (SELECT). **L1/R1** wählen den Regler. Der gewählte Block zeigt Grafik, 8 Regler und eine Erklärung des gewählten Reglers, unten liegen die 16 Steps der Spur.
 

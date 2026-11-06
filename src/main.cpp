@@ -1530,6 +1530,7 @@ const float* wavetableFrame(int t, int f);
 static bool nameIs(const char* n, const char* const* list) { for (; *list; list++) if (!strcmp(n, *list)) return true; return false; }
 
 // Kurve aus Funktionswerten v(t) in [0,1] in ein Rechteck zeichnen
+static float symScroll() { return fmodf(animTime * 0.35f, 1.f); }   // Laufschrift fuer periodische Wert-Symbole
 template <typename Fn> static void symCurve(int x, int y, int w, int h, Col c, Fn f, bool fillUnder = true) {
     int py = y + h - (int)(f(0.f) * h);
     for (int i = 1; i <= w; i++) {
@@ -1540,6 +1541,16 @@ template <typename Fn> static void symCurve(int x, int y, int w, int h, Col c, F
         if (fillUnder) fill(x + i, ny, 1, y + h - ny, c, 45);
         line(x + i - 1, py, x + i, ny, c, 2);
         py = ny;
+    }
+    if (w > 8) {   // Leuchtpunkt laeuft die Kurve entlang (je Kachel versetzt), mit kurzem Schweif
+        int dx = (int)(fmodf(animTime * 0.45f + x * 0.0137f + y * 0.0071f, 1.f) * w);
+        for (int k = 10; k >= 0; k--) {
+            int i = dx - k; if (i < 0) continue;
+            float v = f((float)i / w); v = v < 0 ? 0 : (v > 1 ? 1 : v);
+            int yy = y + h - (int)(v * h);
+            if (k) fill(x + i, yy - 1, 1, 3, mix(c, C_PLAY, (10 - k) / 14.f));
+            else { disc(x + i, yy, 3, mix(c, C_PLAY, 0.7f)); fill(x + i, yy, 1, 1, C_PLAY); }
+        }
     }
 }
 static float symWave(int w, float p) {   // 0 SAW 1 SQR 2 TRI 3 SIN (wie Oszillator) -> 0..1
@@ -1560,7 +1571,7 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     static const char* ATK[] = {"ATK", "F.ATK", 0};
     static const char* SUS[] = {"SUS", "F.SUS", 0};
     static const char* PITCH[] = {"TUNE", "PTCH", "FINE", "DETN", "RAT1", "RAT2", "RAT3", "RAT4", "RATE", "SPD", 0};
-    static const char* LEVEL[] = {"VOL", "GAIN", "LVL2", "LVL3", "LVL4", 0};
+    static const char* LEVEL[] = {"VOL", "GAIN", "LVL", "LVL1", "LVL2", "LVL3", "LVL4", "O.LVL", 0};
     static const char* NOISE[] = {"NOIS", "GRIT", "SNAP", "CLCK", "METL", "SPRY", "P.SPR", 0};
     static const char* DRIVE[] = {"DRIV", "DRIVE", "BODY", 0};
     static const char* GLIDE[] = {"GLID", "SWEP", "S.TIM", 0};
@@ -1572,8 +1583,8 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
 
     if (d.kind == K_MACH) { drawIcon(val, cx - h / 2, y, h, c); return; }
     if (d.kind == K_WAVE || (d.kind == K_LWAV)) {
-        if (d.kind == K_WAVE) symCurve(x, y + 4, w, h - 8, c, [&](float t) { return symWave(val, t * 2.f); }, false);
-        else symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * lfoWaveUi(val, t * 2.f); }, false);
+        if (d.kind == K_WAVE) symCurve(x, y + 4, w, h - 8, c, [&](float t) { return symWave(val, t * 2.f + symScroll()); }, false);
+        else symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * lfoWaveUi(val, t * 2.f + symScroll()); }, false);
         return;
     }
     if (!strcmp(n, "NOTE")) {   // Klaviatur, Taste der Note hervorgehoben
@@ -1583,13 +1594,45 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         for (int i = 0; i < 5; i++) rrect(x + bp[i] * kw + kw * 2 / 3, y + 4, kw * 2 / 3, (h - 6) * 3 / 5, 2, bk[i] == pc ? c : C_BG);
         return;
     }
-    if (!strcmp(n, "VEL")) { for (int i = 0; i < w; i += 4) { int hh = (int)((float)i / w * h); fill(x + i, y + h - hh, 3, hh, i < fr * w ? c : C_OFF2); } return; }
+    if (d.kind == K_OCT || d.kind == K_SUBO || (!strcmp(n, "OCT") && d.kind == K_CNT)) {   // Treppe, ein Punkt springt bis zur Oktave
+        int nst = d.max + 1, cur = val; if (nst < 2) nst = 2;
+        int sw2 = w / nst;
+        for (int i = 0; i < nst; i++) { int hh = 4 + i * (h - 8) / (nst - 1); rrect(x + i * sw2, y + h - hh, sw2 - 2, hh, 2, i == cur ? c : (i < cur ? cd : C_OFF2)); }
+        int hop = (int)(animTime * 3.f) % (cur + 1); float fy = fmodf(animTime * 3.f, 1.f);
+        int hh = 4 + hop * (h - 8) / (nst - 1);
+        disc(x + hop * sw2 + sw2 / 2 - 1, y + h - hh - 4 - (int)(sinf(fy * 3.14159f) * 5.f), 2, C_PLAY);
+        return;
+    }
+    if (d.kind == K_RATIO) { float r = FM_RATIOS[val % FM_NRAT]; float cyc = r < 0.5f ? 0.5f : (r > 8.f ? 8.f : r); symCurve(x, y + 2, w, h - 4, c, [&](float t) { return 0.5f + 0.45f * sinf((t * cyc + symScroll()) * 6.2831853f); }, false); return; }
+    if (!strcmp(n, "XMOD")) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { float p = (t * 2.f + symScroll()) * 6.2831853f; return 0.5f + 0.45f * sinf(p + fr * 3.f * sinf(p * 2.f)); }, false); return; }
+    if (!strcmp(n, "RING")) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { float p = (t + symScroll()) * 6.2831853f; return 0.5f + 0.45f * sinf(p * 6.f) * (1.f - fr + fr * sinf(p)); }, false); return; }
+    if (!strcmp(n, "GATE")) { symCurve(x, y + 4, w, h - 8, c, [&](float t) { float p = t * 4.f + symScroll() * 2.f; p -= floorf(p); return p < fr ? 0.9f : 0.05f; }); return; }
+    if (!strcmp(n, "ACCT")) { for (int i = 0; i < 8; i++) { bool ac = ((i * 5 + 3) % 8) < fr * 8.f; int hh = ac ? h - 2 : h / 2; bool hot = i == (int)(animTime * 6.f) % 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, hot ? C_PLAY : (ac ? c : cd)); } return; }
+    if (!strcmp(n, "F.KRV") || !strcmp(n, "A.KRV")) { float k = exp2f((val - 64) / 32.f); symCurve(x, y + 2, w, h - 4, c, [&](float t) { return powf(1.f - t, k); }); return; }
+    if (d.kind == K_ARPM) {   // Tonfolge des Arp-Modus, Licht laeuft mit
+        static const int pat[6][8] = {{0,0,0,0,0,0,0,0}, {0,1,2,3,0,1,2,3}, {3,2,1,0,3,2,1,0}, {0,1,2,3,2,1,0,1}, {2,0,3,1,3,0,2,1}, {3,3,3,3,3,3,3,3}};
+        int m = val % 6, hot = (int)(animTime * 6.f) % 8;
+        for (int i = 0; i < 8; i++) {
+            int lv = pat[m][i], bx = x + i * w / 8;
+            if (m == 5) { for (int j = 0; j < 3; j++) fill(bx, y + h - 4 - j * (h - 6) / 3, w / 8 - 3, 3, i == hot ? C_PLAY : c); continue; }
+            fill(bx, y + h - 4 - lv * (h - 6) / 3, w / 8 - 3, 4, m == 0 ? C_OFF2 : (i == hot ? C_PLAY : c));
+        }
+        return;
+    }
+    if (d.kind == K_ACHD) {   // Akkord: Notenpunkte uebereinander, Arp-Licht laeuft durch
+        int nn = 2 + val % 3, hot = (int)(animTime * 6.f) % nn;
+        for (int i = 0; i < 5; i++) fill(x + 4, y + 3 + i * (h - 6) / 4, w - 8, 1, C_OFF2);
+        for (int i = 0; i < nn; i++) { int py = y + h - 5 - i * (h - 10) / (nn - 1 > 0 ? nn - 1 : 1), px = cx + (i - nn / 2) * 12; fill(px + 4, py - 12, 1, 12, c); disc(px, py, 4, i == hot ? C_PLAY : c); }
+        return;
+    }
+    if (!strcmp(n, "VEL")) { for (int i = 0; i < w; i += 4) { int hh = (int)((float)i / w * h); fill(x + i, y + h - hh, 3, hh, i < fr * w ? (fabsf(i / (float)w - fmodf(animTime * 0.7f, 1.f)) < 0.06f ? C_PLAY : c) : C_OFF2); } return; }
     if (d.kind == K_LEN) {   // Notenlaenge als Balken ueber einem Step-Raster
         for (int i = 0; i < 4; i++) fill(x + i * w / 4, y + h - 6, 1, 6, C_DIM);
         float s2 = lenSteps(val);
         int bw = s2 < 0 ? w : (int)fminf(w, s2 * w / 4.f);
         rrect(x, cy - 6, bw < 4 ? 4 : bw, 12, 5, c);
         if (s2 < 0) text(x + w - 16, cy - 8, ">", C_BG);
+        { int px = x + (int)(fmodf(animTime * 0.5f, 1.f) * w); fill(px, cy - 9, 2, 18, px < x + bw ? C_PLAY : C_DIM); }
         return;
     }
     if (!strcmp(n, "PROB") || (!strcmp(n, "DENS") && d.kind == K_PCT)) {   // Torte
@@ -1597,9 +1640,10 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         disc(cx, cy, r, C_OFF2);
         float a1 = fr * 6.2831853f;
         for (float a = 0; a < a1; a += 0.04f) line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), c);
+        { float a = fmodf(animTime * 2.f, 6.2831853f); bool in = a < a1; disc(cx + (int)((r + 3) * sinf(a)), cy - (int)((r + 3) * cosf(a)), 2, in ? C_PLAY : C_DIM); }
         return;
     }
-    if (d.kind == K_RTRG) { int nn = RTRG_DIV[val % 7]; if (!nn) nn = 1; for (int i = 0; i < nn; i++) { int hh = h - i * h / (nn + 2); fill(x + i * w / nn, y + h - hh, 2, hh, val ? c : C_DIM); } return; }
+    if (d.kind == K_RTRG) { int nn = RTRG_DIV[val % 7]; if (!nn) nn = 1; for (int i = 0; i < nn; i++) { int hh = h - i * h / (nn + 2); fill(x + i * w / nn, y + h - hh, 2, hh, val ? (i == (int)(animTime * 8.f) % nn ? C_PLAY : c) : C_DIM); } return; }
     if (d.kind == K_MTIM) {
         fill(x, cy, w, 1, C_DIM); fill(cx, y + 2, 1, h - 4, C_TEXT);
         int mx = cx + (val - 23) * (w / 2) / 23;
@@ -1618,40 +1662,43 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     if (nameIs(n, DEC)) { float k = 1.f + (1.f - fr) * 12.f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return expf(-t * k); }); return; }
     if (nameIs(n, ATK)) { float a = 0.05f + fr * 0.9f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < a ? t / a : 1.f; }); return; }
     if (nameIs(n, SUS)) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < 0.15f ? t / 0.15f : (t < 0.35f ? 1.f - (1.f - fr) * (t - 0.15f) / 0.2f : fr); }); return; }
-    if (nameIs(n, PITCH)) { float cyc = 1.f + fr * 5.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * sinf(t * cyc * 6.2831853f); }, false); return; }
+    if (nameIs(n, PITCH)) { float cyc = 1.f + fr * 5.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * sinf((t * cyc + symScroll()) * 6.2831853f); }, false); return; }
     if (nameIs(n, LEVEL)) {   // Lautsprecher mit Schallwellen
-        fill(x + 4, cy - 5, 7, 10, c);
-        for (int i = 0; i < 5; i++) line(x + 11, cy - 5 - i, x + 11, cy + 5 + i, c), fill(x + 11 + i, cy - 5 - i * 2, 2, 10 + i * 4, c);
+        int sp = h / 5;
+        fill(x + 4, cy - sp, 7, 2 * sp, c);
+        for (int i = 0; i < 5; i++) fill(x + 11 + i, cy - sp - i * sp / 3, 2, 2 * sp + i * sp * 2 / 3, c);
         int waves = (int)(fr * 4.f + 0.5f);
-        for (int k = 0; k < waves; k++) { int r = 10 + k * 7; for (int dy = -r * 2 / 3; dy <= r * 2 / 3; dy++) { int dx = (int)sqrtf((float)(r * r - dy * dy)); fill(x + 14 + dx, cy + dy, 2, 1, k == waves - 1 ? c : cd); } }
+        float mv = fmodf(animTime * 1.5f, 1.f);
+        for (int k = 0; k < waves; k++) { int r = sp + 6 + (int)((k + mv) * (sp + 2)), ry = r * 2 / 3 < h / 2 - 1 ? r * 2 / 3 : h / 2 - 1;
+            for (int dy = -ry; dy <= ry; dy++) { int dx = (int)sqrtf((float)(r * r - dy * dy)); fill(x + 14 + dx, cy + dy, 2, 1, dimC(c, 1.f - (k + mv) / 4.f)); } }
         return;
     }
-    if (nameIs(n, NOISE)) { Rng rr; rr.s = 1234; for (int i = 0; i < w; i += 2) { int a = (int)(rr.next() * fr * h / 2); fill(x + i, cy - (a > 0 ? a : 0), 2, abs(a) + 1, c); } return; }
-    if (nameIs(n, DRIVE)) { float g = 1.f + fr * 8.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = sinf(t * 2.f * 6.2831853f) * g; return 0.5f + 0.5f * (sv > 1 ? 1 : (sv < -1 ? -1 : sv)); }, false); return; }
-    if (!strcmp(n, "CRSH")) { int st = 2 + (int)((1.f - fr) * 14.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = 0.5f + 0.5f * sinf(t * 6.2831853f); return floorf(sv * st) / st; }, false); return; }
-    if (!strcmp(n, "SRR")) { int st = 32 - (int)(fr * 28.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float q = floorf(t * st) / st; return 0.5f + 0.5f * sinf(q * 6.2831853f); }, false); return; }
+    if (nameIs(n, NOISE)) { Rng rr; rr.s = 1234 + (int)(animTime * 14.f); for (int i = 0; i < w; i += 2) { int a = (int)(rr.next() * fr * h / 2); fill(x + i, cy - (a > 0 ? a : 0), 2, abs(a) + 1, c); } return; }
+    if (nameIs(n, DRIVE)) { float g = 1.f + fr * 8.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = sinf((t * 2.f + symScroll()) * 6.2831853f) * g; return 0.5f + 0.5f * (sv > 1 ? 1 : (sv < -1 ? -1 : sv)); }, false); return; }
+    if (!strcmp(n, "CRSH")) { int st = 2 + (int)((1.f - fr) * 14.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = 0.5f + 0.5f * sinf((t + symScroll()) * 6.2831853f); return floorf(sv * st) / st; }, false); return; }
+    if (!strcmp(n, "SRR")) { int st = 32 - (int)(fr * 28.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float q = floorf((t + symScroll()) * st) / st; return 0.5f + 0.5f * sinf(q * 6.2831853f); }, false); return; }
     if (nameIs(n, GLIDE)) { float sl = 0.05f + fr * 0.9f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return t < sl ? 0.15f + 0.7f * t / sl : 0.85f; }, false); return; }
     if (nameIs(n, BRIGHT)) {   // Sonne: Strahlen = Helligkeit
         disc(cx, cy, h / 6, c);
         int rays = 3 + (int)(fr * 9.f);
-        for (int i = 0; i < rays; i++) { float a = i * 6.2831853f / rays; line(cx + (int)(h / 4 * cosf(a)), cy + (int)(h / 4 * sinf(a)), cx + (int)(h / 2.2f * cosf(a)), cy + (int)(h / 2.2f * sinf(a)), c); }
+        for (int i = 0; i < rays; i++) { float a = i * 6.2831853f / rays + animTime * 0.6f; line(cx + (int)(h / 4 * cosf(a)), cy + (int)(h / 4 * sinf(a)), cx + (int)(h / 2.2f * cosf(a)), cy + (int)(h / 2.2f * sinf(a)), c); }
         return;
     }
     if (nameIs(n, BIPARROW) || d.kind == K_BIP) {   // Pfeil nach oben/unten bzw. Ausschlag um die Mitte
         float v = (val - 64) / 64.f;
         fill(x, cy, w, 1, C_DIM);
-        int len = (int)(fabsf(v) * (h / 2 - 2));
+        int len = (int)(fabsf(v) * (h / 2 - 2) * (0.85f + 0.15f * sinf(animTime * 3.f)));
         if (len) { fill(cx - 3, v > 0 ? cy - len : cy, 7, len, c); for (int i = 0; i < 6; i++) fill(cx - 6 + i, v > 0 ? cy - len - 6 + i : cy + len + 5 - i, 13 - 2 * i, 1, c); }
         else disc(cx, cy, 3, c);
         return;
     }
-    if (!strcmp(n, "PAN")) { fill(x + 10, cy, w - 20, 2, C_DIM); text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM); disc(x + 10 + (int)(fr * (w - 20)), cy, 6, c); return; }
-    if (nameIs(n, WIDTH)) { int sp = (int)(fr * (w / 2 - 8)); disc(cx - sp, cy, 6, c); disc(cx + sp, cy, 6, c); fill(cx - sp, cy, 2 * sp, 1, cd); return; }
-    if (!strcmp(n, "DLY")) { int nn = 1 + (int)(fr * 5.f); for (int i = 0; i < nn; i++) { int hh = (int)(h * powf(0.7f, (float)i)); fill(x + i * w / 6, y + h - hh, w / 10, hh, i ? cd : c); } return; }
-    if (nameIs(n, ROOM)) { int nn = 1 + (int)(fr * 4.f); for (int i = 0; i < nn; i++) ring(cx, cy, 6 + i * (h / 2 - 6) / 4, 1, i == nn - 1 ? c : cd); return; }
-    if (nameIs(n, MIXS)) { int r = h / 3; disc(cx - r / 2, cy, (int)(r * (1.f - fr * 0.6f)), cd); disc(cx + r / 2, cy, (int)(r * (0.4f + fr * 0.6f)), c); return; }
-    if (!strcmp(n, "PW")) { float pw = 0.5f + (val - 64) / 140.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float p = t * 2.f; p -= floorf(p); return p < pw ? 1.f : 0.f; }, false); return; }
-    if (!strcmp(n, "SUB")) { symCurve(x, y + 4, w, h - 8, cd, [&](float t) { return 0.5f + 0.4f * sinf(t * 4.f * 6.2831853f); }, false); symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * fr * sinf(t * 2.f * 6.2831853f); }, false); return; }
+    if (!strcmp(n, "PAN")) { fill(x + 10, cy, w - 20, 2, C_DIM); text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM); { int px = x + 10 + (int)(fr * (w - 20)); float mv = fmodf(animTime, 1.f); ring(px, cy, 6 + (int)(mv * 8), 1, dimC(c, 1.f - mv)); disc(px, cy, 5, c); } return; }
+    if (nameIs(n, WIDTH)) { int sp = (int)(fr * (w / 2 - 8) * (0.85f + 0.15f * sinf(animTime * 2.5f))); disc(cx - sp, cy, 6, c); disc(cx + sp, cy, 6, c); fill(cx - sp, cy, 2 * sp, 1, cd); return; }
+    if (!strcmp(n, "DLY")) { int nn = 1 + (int)(fr * 5.f); for (int i = 0; i < nn; i++) { int hh = (int)(h * powf(0.7f, (float)i)); fill(x + i * w / 6, y + h - hh, w / 10, hh, i == (int)fmodf(animTime * 3.f, (float)nn) ? C_PLAY : (i ? cd : c)); } return; }
+    if (nameIs(n, ROOM)) { int nn = 1 + (int)(fr * 4.f); float mv = fmodf(animTime * 0.6f, 1.f); for (int i = 0; i < nn; i++) { float rr2 = (i + mv) / nn; ring(cx, cy, 3 + (int)(rr2 * (h / 2 - 3) * (0.4f + 0.6f * fr)), 1, dimC(c, 1.f - rr2 * 0.8f)); } disc(cx, cy, 2, c); return; }
+    if (nameIs(n, MIXS)) { int r = h / 3; float br = 1.f + 0.08f * sinf(animTime * 3.f); disc(cx - r / 2, cy, (int)(r * (1.f - fr * 0.6f) * br), cd); disc(cx + r / 2, cy, (int)(r * (0.4f + fr * 0.6f) * (2.f - br)), c); return; }
+    if (!strcmp(n, "PW")) { float pw = 0.5f + (val - 64) / 140.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float p = t * 2.f + symScroll(); p -= floorf(p); return p < pw ? 1.f : 0.f; }, false); return; }
+    if (!strcmp(n, "SUB")) { symCurve(x, y + 4, w, h - 8, cd, [&](float t) { return 0.5f + 0.4f * sinf((t * 4.f + symScroll() * 2.f) * 6.2831853f); }, false); symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * fr * sinf((t * 2.f + symScroll()) * 6.2831853f); }, false); return; }
     if (!strcmp(n, "FREQ")) { float fc = 0.08f + fr * 0.88f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < fc ? 0.8f : 0.8f * expf(-(t - fc) * 12.f); }); return; }
     if (!strcmp(n, "RESO")) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { float pk = expf(-(t - 0.55f) * (t - 0.55f) * 400.f) * fr * 0.45f; return (t < 0.55f ? 0.55f : 0.55f * expf(-(t - 0.55f) * 10.f)) + pk; }); return; }
     if (d.kind == K_FTYPE) {   // Kurvenbild des Filtertyps (wie die grosse Grafik, feste Werte)
@@ -1670,9 +1717,9 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         return;
     }
     if (!strcmp(n, "KEYT")) { symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + (t - 0.5f) * fr; }, false); for (int i = 0; i < 7; i++) fill(x + i * w / 7, y + h - 4, w / 7 - 1, 4, C_TEXT); return; }
-    if (!strcmp(n, "PHASE")) { int r = h / 2 - 2; ring(cx, cy, r, 1, cd); float a = fr * 6.2831853f; line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), c, 2); return; }
+    if (!strcmp(n, "PHASE")) { int r = h / 2 - 2; ring(cx, cy, r, 1, cd); float a = fr * 6.2831853f; line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), cd, 1); a += animTime * 2.f; line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), c, 2); return; }
     if (!strcmp(n, "FADE")) { float v = (val - 64) / 64.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return v < 0 ? fminf(1.f, t / (-v + 0.01f)) * 0.9f : (v > 0 ? fmaxf(0.f, 1.f - t / (1.01f - v)) * 0.9f : 0.9f); }); return; }
-    if (d.kind == K_LDEST) { ring(x + w - h / 2, cy, h / 3, 2, c); disc(x + w - h / 2, cy, 3, c); line(x, cy, x + w - h / 2 - h / 3 - 2, cy, val ? c : C_DIM, 2); return; }
+    if (d.kind == K_LDEST) { ring(x + w - h / 2, cy, h / 3, 2, c); disc(x + w - h / 2, cy, 3, c); line(x, cy, x + w - h / 2 - h / 3 - 2, cy, val ? c : C_DIM, 2); if (val) for (int i = 0; i < 3; i++) disc(x + (int)(fmodf(animTime * 0.8f + i / 3.f, 1.f) * (w - h / 2 - h / 3 - 2)), cy, 2, C_PLAY); return; }
     if (d.kind == K_LSYNC || d.kind == K_DTIM || !strcmp(n, "D.TIME")) {   // Notensymbol
         disc(x + w / 3, y + h - 8, 6, c); fill(x + w / 3 + 5, y + 4, 2, h - 12, c);
         if (d.kind == K_LSYNC && val == 0) { ring(x + w * 2 / 3, cy, 8, 1, cd); }
@@ -1687,9 +1734,11 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         int len = curP().len[track] < 1 ? 1 : curP().len[track], k = pv(P_PULS), rot = pv(P_EROT), r = h / 2 - 3;
         int nn = len > 32 ? 32 : len;
         for (int i = 0; i < nn; i++) { float a = i * 6.2831853f / nn; int px = cx + (int)(r * sinf(a)), py = cy - (int)(r * cosf(a)); bool hit = k > 0 && euclidHitUi(i * len / nn, k, len, rot); if (hit) disc(px, py, 3, c); else fill(px, py, 1, 1, C_DIM); }
+        { int i = eng.playing && eng.playedStep[track] >= 0 ? eng.playedStep[track] % len * nn / len : (int)(animTime * 4.f) % nn; float a = i * 6.2831853f / nn; ring(cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), 5, 1, C_PLAY); }
         return;
     }
     if (!strcmp(n, "CHNG")) {   // Wuerfel
+        cx += (int)(sinf(animTime * 5.f) * 2.f * fr);
         rrect(cx - h / 3, cy - h / 3, h * 2 / 3, h * 2 / 3, 5, C_TEXT);
         int pips = 1 + (int)(fr * 5.f), s3 = h / 6;
         static const int px[6][6][2] = {{{0,0}},{{-1,-1},{1,1}},{{-1,-1},{0,0},{1,1}},{{-1,-1},{1,-1},{-1,1},{1,1}},{{-1,-1},{1,-1},{0,0},{-1,1},{1,1}},{{-1,-1},{1,-1},{-1,0},{1,0},{-1,1},{1,1}}};
@@ -1697,11 +1746,11 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         return;
     }
     if (d.kind == K_RANGE) { int st2 = 1 + val / 6; for (int i = 0; i < 8; i++) { int hh = (int)((i * 37 % 8) / 8.f * h * fminf(1.f, st2 / 8.f)) + 2; fill(x + i * w / 8, y + h - hh, w / 8 - 2, hh, val ? c : C_DIM); } return; }
-    if (d.kind == K_SMPL) { for (int i = 0; i < w; i += 3) { float a = fabsf(sinf(i * 0.37f + val)) * expf(-i / (float)w * 1.5f); int hh = (int)(a * h / 2); fill(x + i, cy - hh, 2, hh * 2 + 1, c); } return; }
+    if (d.kind == K_SMPL) { for (int i = 0; i < w; i += 3) { float a = fabsf(sinf(i * 0.37f + val)) * expf(-i / (float)w * 1.5f); int hh = (int)(a * h / 2); fill(x + i, cy - hh, 2, hh * 2 + 1, c); } fill(x + (int)(fmodf(animTime * 0.4f, 1.f) * w), y, 1, h, C_PLAY); return; }
     if (d.kind == K_OFFON) { if (!strcmp(n, "LOOP") || !strcmp(n, "REV")) { text(cx - 16, cy - 16, !strcmp(n, "REV") ? (val ? "<<" : ">>") : (val ? "()" : "->"), val ? c : C_DIM, 2); return; }
-        rrect(cx - 18, cy - 9, 36, 18, 9, val ? c : C_OFF2); disc(val ? cx + 9 : cx - 9, cy, 7, C_TEXT); return; }
+        rrect(cx - 18, cy - 9, 36, 18, 9, val ? mix(c, C_PLAY, 0.15f + 0.15f * sinf(animTime * 3.f)) : C_OFF2); disc(val ? cx + 9 : cx - 9, cy, 7, C_TEXT); return; }
     if (d.kind == K_ALGO) {   // Mini-Routing
-        for (int k = 0; k < 4; k++) { int bx = x + FM_LAYOUT[val & 7][k][0] * w / 4, by = y + FM_LAYOUT[val & 7][k][1] * h / 3; rrect(bx, by + 2, w / 5, h / 4, 2, FM_CARRIERS[val & 7] >> k & 1 ? c : cd); }
+        for (int k = 0; k < 4; k++) { int bx = x + FM_LAYOUT[val & 7][k][0] * w / 4, by = y + FM_LAYOUT[val & 7][k][1] * h / 3; rrect(bx, by + 2, w / 5, h / 4, 2, FM_CARRIERS[val & 7] >> k & 1 ? mix(c, C_PLAY, 0.3f + 0.3f * sinf(animTime * 4.f + k)) : cd); }
         return;
     }
     if (d.kind == K_WTAB || !strcmp(n, "POS")) {
@@ -1732,10 +1781,12 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     if (d.kind == K_CRAT) { float r2 = val >= 8 ? 100.f : CMP_RATIOS[val]; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < 0.5f ? t : 0.5f + (t - 0.5f) / r2; }, false); return; }
     if (d.kind == K_SCSRC) { if (val) drawIcon(curP().machine[(val - 1) % NTRACKS], cx - h / 2, y, h, c); else text(cx - 24, cy - 8, TR("SUMME", "MASTER"), c); return; }
     if (d.kind == K_GR) { int gh = clampi((int)(grDisp / 24.f * h), 0, h); rrect(cx - 8, y, 16, h, 4, C_OFF); if (gh) rrect(cx - 8, y, 16, gh, 4, C_TRIG); return; }
-    if (d.kind == K_FBK) { int nn = 1 + (int)(fr * 4.f); for (int i = 0; i < nn; i++) ring(cx, cy, 4 + i * (h / 2 - 4) / 4, 1, val > 106 && i == nn - 1 ? C_TRIG : c); return; }
+    if (d.kind == K_FBK) { int nn = 1 + (int)(fr * 4.f); float mv = fmodf(animTime * 0.8f, 1.f); for (int i = 0; i < nn; i++) { float rr2 = (i + mv) / 4.f; ring(cx, cy, 3 + (int)(rr2 * (h / 2 - 3)), 1, val > 106 && i == nn - 1 ? C_TRIG : dimC(c, 1.f - rr2 * 0.7f)); } return; }
     if (d.kind == K_MS) { fill(x, cy, (int)(fr * w / 2), 1, C_DIM); symCurve(x + (int)(fr * w / 2), y + 2, w - (int)(fr * w / 2), h - 4, c, [&](float t) { return expf(-t * 5.f); }); return; }
     // Standard: segmentierter Pegel
-    for (int i = 0; i < 8; i++) { int hh = 6 + i * (h - 6) / 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, (i + 0.5f) / 8.f <= fr ? c : C_OFF2); }
+    int lit = (int)(fr * 8.f + 0.5f);
+    int pk = lit > 0 ? lit - 1 - (int)((0.5f + 0.5f * sinf(animTime * 4.f + x * 0.05f)) * (lit > 2 ? 1.6f : 0.f)) : -1;
+    for (int i = 0; i < 8; i++) { int hh = 6 + i * (h - 6) / 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, i <= pk ? c : (i < lit ? cd : C_OFF2)); }
 }
 
 // ---------------------------------------------------------------- Kacheln statt Drehregler
@@ -1752,20 +1803,21 @@ static void tile(int x, int y, int k, const ParamDef& d, int val, int baseVal, b
         rrect(x + 4, y + 2, 2, 88, 1, fc); rrect(x + 154, y + 2, 2, 88, 1, fc);
     }
     if (d.kind == K_NONE) { filler(x + 6, y + 6, 148, 80, tc, k + page); return; }   // leeres Feld: Animation statt Leere
-    char nm[24];
-    snprintf(nm, sizeof nm, "%.18s", label[0] ? label : d.name);
-    text(x + 14, y + 6, nm, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
     knobText(d, val, b, sizeof b, k);
     Col vc = locked ? C_LOCK : (sel ? mix(tc, C_PLAY, justEdited ? 0.5f : 0.f) : C_TEXT);
     float target = knobFrac(d, val);
     knobAnim[k] += (target - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
-    // Wert-Symbol links, Zahl rechts
+    // Kopfzeile: Name links, Zahl (klein) rechts; darunter das animierte Wert-Symbol ueber die ganze Breite
+    int vw = textW(b); if (vw > 100) { b[100 / FONT_W] = 0; vw = textW(b); }
+    char nm[24];
+    int room = (136 - vw - 8) / FONT_W; if (room < 3) room = 3;
+    snprintf(nm, sizeof nm, "%.*s", room > 18 ? 18 : room, label[0] ? label : d.name);
+    text(x + 14, y + 6, nm, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
+    rrect(x + 146 - vw - 6, y + 6, vw + 10, 18, 5, sel ? dimC(locked ? C_LOCK : tc, 0.25f) : C_BG);
+    text(x + 146 - vw - 1, y + 7, b, vc);
     Col sc2 = locked ? C_LOCK : (sel ? tc : dimC(tc, 0.75f));
-    int sw = 78, sh = 50;
-    paramSymbol(d, val, knobAnim[k], x + 14, y + 28, sw, sh, mix(sc2, C_PLAY, justEdited ? 0.4f : 0.f));
-    int scl = textW(b, 2) <= 52 ? 2 : 1;
-    text(x + 150 - textW(b, scl), y + (scl == 2 ? 44 : 52), b, vc, scl);
-    if (locked) { text(x + 150 - textW("LOCK"), y + 6, "LOCK", C_LOCK); }
+    paramSymbol(d, val, knobAnim[k], x + 16, y + 30, 128, 50, mix(sc2, C_PLAY, justEdited ? 0.4f : 0.f));
+    if (locked) text(x + 14, y + 70, "LOCK", C_LOCK);
 }
 
 // ---------------------------------------------------------------- Grafiken der Engines
@@ -2562,16 +2614,24 @@ static void miniTile(int k, int x, int y, int w, int h, Col tc) {
     }
     if (!ok || d.kind == K_NONE) { filler(x + 2, y + 2, w - 4, h - 4, dimC(tc, 0.8f), k + page); return; }
     if (d.kind == K_ACT) { textC(x + w / 2, y + h / 2 - 8, d.name, sel ? C_ACC : C_TEXT); return; }
-    char nm[24];
-    snprintf(nm, sizeof nm, "%.*s", (w - 12) / FONT_W, label[0] ? label : d.name);
-    text(x + 7, y + 3, nm, sel ? (locked ? C_LOCK : tc) : C_DIM);
+    // Kopfzeile: Name links, Zahl (klein) rechts; darunter animiertes Wert-Symbol, unten duenner Balken
     knobText(d, val, b, sizeof b, k);
-    int sc = textW(b, 2) <= w - 14 ? 2 : 1;
-    text(x + w - 7 - textW(b, sc), y + (sc == 2 ? 15 : 21), b, locked ? C_LOCK : C_TEXT, sc);
+    int vw = textW(b); if (vw > w - 40) { b[(w - 40) / FONT_W] = 0; vw = textW(b); }
+    char nm[24];
+    int room = (w - 14 - vw - 6) / FONT_W; if (room < 2) room = 2;
+    snprintf(nm, sizeof nm, "%.*s", room > 20 ? 20 : room, label[0] ? label : d.name);
+    text(x + 7, y + 3, nm, sel ? (locked ? C_LOCK : tc) : C_DIM);
+    text(x + w - 7 - vw, y + 3, b, locked ? C_LOCK : (sel ? C_PLAY : C_TEXT));
     knobAnim[k] += (knobFrac(d, val) - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
+    int sy = y + 21, sh = h - 33;
+    if (sh >= 14) {
+        Col sc2 = locked ? C_LOCK : (sel ? tc : dimC(tc, 0.75f));
+        int sw = w - 18; if (sw > sh * 4) sw = sh * 4;
+        paramSymbol(d, val, knobAnim[k], x + (w - sw) / 2, sy, sw, sh, sc2);
+    }
     int bw = (int)((w - 14) * knobAnim[k]);
-    fill(x + 7, y + h - 7, w - 14, 3, C_OFF2);
-    if (bw > 0) fill(x + 7, y + h - 7, bw, 3, locked ? C_LOCK : (sel ? tc : dimC(tc, 0.7f)));
+    fill(x + 7, y + h - 7, w - 14, 2, C_OFF2);
+    if (bw > 0) fill(x + 7, y + h - 7, bw, 2, locked ? C_LOCK : (sel ? tc : dimC(tc, 0.7f)));
 }
 static void drawSigB() {
     const Pattern& P = curP();
