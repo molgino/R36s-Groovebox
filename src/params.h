@@ -9,14 +9,18 @@
 extern int g_lang;
 #define TR(de, en) (g_lang ? (en) : (de))
 
-enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 12, NPARAMS = NPAGES * 8, NLFO = 3 };
+enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 16, NPARAMS = NPAGES * 8, NLFO = 3, NBUS = 3 };
+enum { OLD_NPARAMS = 96 };   // bis Projektformat v12: 12 Seiten
 // Oberflaechen-Seiten (Reihenfolge = Navigation). Spurseiten zuerst.
-enum UiPage { PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_SONG, PG_MST, PG_SYS, PG_LIVE, NUI_PAGES };
+// neue Seiten nur hinten anfuegen (Nummern dienen auch als Screenshot-Seiten)
+enum UiPage { PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_SONG, PG_MST, PG_SYS, PG_LIVE,
+              PG_SRC3, PG_SRC4, PG_SRC5, PG_SEND, PG_FXB, PG_FXC, NUI_PAGES };
 enum { PG_LFO = PG_LFO1 };
 enum { PAGE_INS = PG_INS, PAGE_FX = PG_FX, PAGE_CMP = PG_CMP, PAGE_MST = PG_MST, PAGE_SYS = PG_SYS, PAGE_MIX = PG_MIX, PAGE_PRJ = PG_PRJ,
        FIRST_GLOBAL_PAGE = PG_MIX };
-static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1, -1};   // Spurseite -> Speicherseite
-static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 1};
+static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1, -1, 12, 13, 14, 15, -1, -1};   // Spurseite -> Speicherseite
+static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 1, 1};
+inline int busOfPage(int p) { return p == PG_FX ? 0 : (p == PG_FXB ? 1 : (p == PG_FXC ? 2 : -1)); }
 static const char* const GROUP_NAMES_DE[3] = {"SPUR", "LIVE, MIX & FX", "PROJEKT"};
 static const char* const GROUP_NAMES_EN[3] = {"TRACK", "LIVE, MIX & FX", "PROJECT"};
 #define GROUP_NAMES (g_lang ? GROUP_NAMES_EN : GROUP_NAMES_DE)
@@ -34,11 +38,14 @@ static const char* const MACHINE_LONG_EN[M_COUNT] = {"Bass drum", "Snare", "Hi-h
 static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M_TOM, M_RIM, M_SHKR, M_SYNTH, M_FM, M_WTBL, M_SAMPLE, M_CHOP, M_GRAN};
 inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
 inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
-static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX", "CMP", "PRJ", "SNG", "MST", "SET", "LIVE"};
+static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX A", "CMP", "PRJ", "SNG", "MST", "SET", "LIVE",
+                                                  "SR3", "SR4", "SR5", "SND", "FX B", "FX C"};
 static const char* const PAGE_LONG_DE[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 + KURVEN", "VERSTÄRKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
-                                                    "MIXER", "EFFEKTE", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN", "LIVE"};
+                                                    "MIXER", "EFFEKT-BUS A", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN", "LIVE",
+                                                    "KLANG 3", "KLANG 4", "KLANG 5", "SENDS", "EFFEKT-BUS B", "EFFEKT-BUS C"};
 static const char* const PAGE_LONG_EN[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "SOUND", "SOUND 2", "FILTER", "FILTER 2 + CURVES", "AMPLIFIER", "LFO 1", "LFO 2", "LFO 3", "INSERT FX",
-                                                    "MIXER", "EFFECTS", "COMPRESSOR", "PROJECT", "SONG", "MASTER", "SETTINGS", "LIVE"};
+                                                    "MIXER", "EFFECT BUS A", "COMPRESSOR", "PROJECT", "SONG", "MASTER", "SETTINGS", "LIVE",
+                                                    "SOUND 3", "SOUND 4", "SOUND 5", "SENDS", "EFFECT BUS B", "EFFECT BUS C"};
 #define PAGE_LONG (g_lang ? PAGE_LONG_EN : PAGE_LONG_DE)
 
 // Filter-1-Typen (Werte nur hinten anfuegen: 0..2 = alte LP/BP/HP)
@@ -52,7 +59,7 @@ enum Kind {
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
     K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK, K_DIR, K_TLEN, K_TSPD, K_RANGE, K_MTIM, K_WTAB, K_SLICE,
     K_SCALE, K_ROOT, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR,
-    K_ARPM, K_ACHD, K_ARAT
+    K_ARPM, K_ACHD, K_ARAT, K_OCT, K_SUBO, K_FXT, K_WDRAW
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -62,15 +69,22 @@ enum {
     P_NOTE = 0, P_VEL, P_LEN, P_PROB, P_RTRG, P_MTIM, P_T6, P_COND, P_T7 = P_COND, P_RFAD = P_MTIM,
     P_S0 = 8, P_S1, P_S2, P_S3, P_S4, P_S5, P_S6, P_S7,
     P_FREQ = 16, P_RESO, P_FTYP, P_FENV, P_FATK, P_FDEC, P_FSUS, P_FREL,
-    P_AATK = 24, P_ADEC, P_ASUS, P_AREL, P_VOL, P_PAN, P_DLY, P_REV,
+    P_AATK = 24, P_ADEC, P_ASUS, P_AREL, P_VOL, P_PAN, P_A6, P_A7,   // P_A6/P_A7 = bis v12 DLY/REV (jetzt auf der SEND-Seite)
     P_L1 = 32,                                                   // LFO1 (Seite 4)
     P_ITYP = 40, P_IP1, P_IP2, P_IP3, P_IMIX, P_CRSH, P_SRR, P_DRIV,
     P_X0 = 48, P_X1, P_X2, P_X3, P_X4, P_X5, P_X6, P_X7,      // SRC2 (maschinenabhaengig)
     P_L2 = 56, P_L3 = 64,                                        // LFO2, LFO3
     P_DIR = 72, P_QLEN, P_QSPD, P_PULS, P_EROT, P_DENS, P_CHNG, P_RANGE,  // SEQ: Richtung, Laenge, Tempo, Euklid, Generator
     P_BASE = 80, P_WDTH, P_KEYT, P_VELF, P_FCRV, P_ACRV,                                   // FLT2: Base-Width-Filter, Key-/Velocity-Tracking
-    P_AMOD = 88, P_ACHD, P_AOCT, P_ARAT, P_AGAT, P_AACC                    // ARP: Modus, Akkord, Oktaven, Tempo, Gate, Akzent
+    P_AMOD = 88, P_ACHD, P_AOCT, P_ARAT, P_AGAT, P_AACC,                   // ARP: Modus, Akkord, Oktaven, Tempo, Gate, Akzent
+    P_Y0 = 96, P_Z0 = 104, P_W0 = 112,                                     // ab v13: Klangseiten 3-5 (FM: Operator 2-4)
+    P_DLY = 120, P_REV, P_SNDC,                                            // ab v13: Sends an Effekt-Bus A/B/C
+    OLD_P_DLY = 30, OLD_P_REV = 31                                         // bis v12
 };
+// FM: Operator k liegt auf einer eigenen Seite (OP1 = SRC2, OP2-4 = SRC3-5): RATIO FINE DETN LEVEL ATK DEC SUS REL
+static const int FM_OPB[4] = {P_X0, P_Y0, P_Z0, P_W0};
+enum { OP_RAT = 0, OP_FINE, OP_DETN, OP_LVL, OP_ATK, OP_DEC, OP_SUS, OP_REL };
+inline int fmOpOf(int idx) { for (int k = 0; k < 4; k++) if (idx >= FM_OPB[k] && idx < FM_OPB[k] + 8) return k; return -1; }
 // Master-Seite
 enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV, MS_SCALE, MS_ROOT };
 // LFO: Versatz innerhalb einer LFO-Seite
@@ -106,7 +120,7 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     {"F.ATK", K_NUM, 0, 127}, {"F.DEC", K_NUM, 60, 127}, {"F.SUS", K_NUM, 0, 127}, {"F.REL", K_NUM, 60, 127},
     // AMP
     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 80, 127}, {"SUS", K_NUM, 127, 127}, {"REL", K_NUM, 50, 127},
-    {"VOL", K_NUM, 100, 127}, {"PAN", K_BIP, 64, 127}, {"DLY", K_NUM, 0, 127}, {"REV", K_NUM, 0, 127},
+    {"VOL", K_NUM, 100, 127}, {"PAN", K_BIP, 64, 127}, PDEF_NONE, PDEF_NONE,
     // LFO / FX
     // LFO1
     {"RATE", K_NUM, 64, 127}, {"SYNC", K_LSYNC, 0, 11}, {"DEST", K_LDEST, 0, NPARAMS}, {"DEPTH", K_BIP, 64, 127},
@@ -130,6 +144,12 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     // ARP: spielt waehrend der Trig-Laenge die Akkordtoene ueber OCT Oktaven im Tempo RATE
     {"MODE", K_ARPM, 0, 5}, {"CHRD", K_ACHD, 2, 9}, {"OCT", K_CNT, 0, 3}, {"RATE", K_ARAT, 2, 5},
     {"GATE", K_PCT, 60, 100}, {"ACCT", K_PCT, 0, 100}, PDEF_NONE, PDEF_NONE,
+    // SRC3-5 (maschinenabhaengig: FM-Operatoren 2-4)
+    PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
+    PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
+    PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
+    // SEND: Anteil an Effekt-Bus A/B/C (bis v12: DLY/REV auf der AMP-Seite)
+    {"SND.A", K_NUM, 0, 127}, {"SND.B", K_NUM, 0, 127}, {"SND.C", K_NUM, 0, 127}, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
 };
 // Arpeggiator: Akkord-Intervalle (Halbtoene), Tempo in Steps
 static const char* const ARP_MODES_DE[6] = {"AUS", "UP", "DOWN", "UPDN", "RAND", "AKKD"};   // AKKD = Akkordtoene gleichzeitig
@@ -199,8 +219,8 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
     {{"WAV1", K_WAVE, 0, 3}, {"WAV2", K_WAVE, 0, 3}, {"DETN", K_BIP, 72, 127}, {"MIX", K_NUM, 64, 127},
      {"SUB", K_NUM, 0, 127}, {"NOIS", K_NUM, 0, 127}, {"PW", K_NUM, 64, 127}, {"GLID", K_NUM, 0, 127}},
     // FM (4 Operatoren): Algorithmus, Feedback (OP4), Frequenzverhaeltnisse
-    {{"ALGO", K_ALGO, 0, 7}, {"FBK", K_NUM, 0, 127}, {"RAT1", K_RATIO, 3, 15}, {"RAT2", K_RATIO, 5, 15},
-     {"RAT3", K_RATIO, 3, 15}, {"RAT4", K_RATIO, 3, 15}, {"FINE", K_BIP, 64, 127}, {"NOIS", K_NUM, 0, 127}},
+    {{"ALGO", K_ALGO, 0, 7}, {"FBK", K_NUM, 0, 127}, {"VELO", K_NUM, 64, 127}, {"P.ENV", K_BIP, 64, 127},
+     {"P.DEC", K_NUM, 40, 127}, {"NOIS", K_NUM, 0, 127}, PDEF_NONE, PDEF_NONE},
     // SAMPLE (END < STRT = rueckwaerts)
     {{"SMPL", K_SMPL, 0, 249}, {"TUNE", K_SEMI, 24, 48}, {"FINE", K_BIP, 64, 127}, {"STRT", K_NUM, 0, 127},
      {"END", K_NUM, 127, 127}, {"LOOP", K_OFFON, 0, 1}, {"GAIN", K_NUM, 64, 127}, PDEF_NONE},
@@ -214,7 +234,7 @@ static const ParamDef SRC_DEFS[M_COUNT][8] = {
     {{"TONE", K_NUM, 90, 127}, {"DCAY", K_NUM, 40, 127}, {"ATK", K_NUM, 30, 127}, {"GRIT", K_NUM, 40, 127},
      PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     // WAVETABLE
-    {{"TABL", K_WTAB, 0, 3}, {"POS", K_NUM, 0, 127}, {"WARP", K_BIP, 64, 127}, {"DETN", K_NUM, 0, 127},
+    {{"TABL", K_WTAB, 0, 4}, {"POS", K_NUM, 0, 127}, {"WARP", K_BIP, 64, 127}, {"DETN", K_NUM, 0, 127},
      {"SUB", K_NUM, 0, 127}, {"NOIS", K_NUM, 0, 127}, {"P.ENV", K_BIP, 64, 127}, {"GLID", K_NUM, 0, 127}},
     // CHOP (Sample in gleiche Scheiben, SLIC 0 = AUTO: Step-Nummer waehlt die Scheibe)
     {{"SMPL", K_SMPL, 0, 249}, {"SLCS", K_NUM, 15, 63}, {"SLIC", K_SLICE, 0, 64}, {"TUNE", K_SEMI, 24, 48},
@@ -228,24 +248,59 @@ static const ParamDef MST_DEFS[8] = {
     {"BPM", K_BPM, 0, 0}, {"SWNG", K_SWNG, 0, 30}, {"VOL", K_NUM, 100, 127}, {"DRIVE", K_NUM, 0, 127},
     {"SCALE", K_SCALE, 0, 120}, {"ROOT", K_ROOT, 0, 11}, PDEF_NONE, PDEF_NONE,
 };
-// zweite Klangseite: nur FM nutzt sie bisher (Pegel = Mod-Index bzw. Ausgangspegel, Decay je Operator)
+// zweite Klangseite: SYNTH (Oktaven, Pegel je Oszillator, Sync, Kreuzmodulation), WTBL (Oktave, Pegel, eigene Wavetable), FM: Operator 1 (FM_OP_DEFS)
 static const ParamDef SRC2_DEFS[M_COUNT][8] = {
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
-    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
-    {{"LVL2", K_NUM, 50, 127}, {"LVL3", K_NUM, 0, 127}, {"LVL4", K_NUM, 0, 127}, {"DEC1", K_DECAY, 127, 127},
-     {"DEC2", K_DECAY, 50, 127}, {"DEC3", K_DECAY, 50, 127}, {"DEC4", K_DECAY, 50, 127}, {"VELO", K_NUM, 64, 127}},
-    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
-    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
-    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    // SYNTH
+    {{"OCT1", K_OCT, 3, 6}, {"OCT2", K_OCT, 3, 6}, {"LVL1", K_NUM, 127, 127}, {"LVL2", K_NUM, 127, 127},
+     {"SUB.O", K_SUBO, 0, 1}, {"SYNC", K_OFFON, 0, 1}, {"XMOD", K_NUM, 0, 127}, {"RING", K_NUM, 0, 127}},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},   // FM: siehe FM_OP_DEFS
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
+    // WTBL (TABL = USER: Wavetable aus dem Sample UWAV, je 2048 bzw. 256 Werte ein Frame)
+    {{"OCT", K_OCT, 3, 6}, {"LVL", K_NUM, 127, 127}, {"SUB.O", K_SUBO, 0, 1}, {"UWAV", K_SMPL, 0, 249},
+     {"DRAW", K_WDRAW, 0, 0}, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
     {PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE},
 };
-inline bool machineHasSrc2(int m) { return m == M_FM; }
+// FM-Operatoren 1-4: Ratio (Tabelle FM_RATIOS), FINE = +-0,5 Ratio, DETN = +-50 Cent, Pegel, eigene Huellkurve
+static const ParamDef FM_OP_DEFS[4][8] = {
+    {{"RATIO", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 127, 127},
+     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 70, 127}, {"SUS", K_NUM, 110, 127}, {"REL", K_NUM, 55, 127}},
+    {{"RATIO", K_RATIO, 7, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 55, 127},
+     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 60, 127}, {"SUS", K_NUM, 40, 127}, {"REL", K_NUM, 50, 127}},
+    {{"RATIO", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 0, 127},
+     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 55, 127}, {"SUS", K_NUM, 30, 127}, {"REL", K_NUM, 50, 127}},
+    {{"RATIO", K_RATIO, 3, 27}, {"FINE", K_BIP, 64, 127}, {"DETN", K_BIP, 64, 127}, {"LEVEL", K_NUM, 0, 127},
+     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 50, 127}, {"SUS", K_NUM, 20, 127}, {"REL", K_NUM, 50, 127}}};
+inline bool machineHasSrc2(int m) { return m == M_FM || m == M_SYNTH || m == M_WTBL; }
+inline bool machineHasSrc35(int m) { return m == M_FM; }   // Klangseiten 3-5 (FM: Operator 2-4)
+
+// Effekt-Busse A/B/C: TYPE, 5 Regler je nach Typ, FWD (Anteil an den naechsten Bus), LVL (Rueckweg)
+enum BusType { BF_OFF, BF_DELAY, BF_TAPE, BF_REVERB, BF_SPRING, BF_CHORUS, BF_COUNT };
+static const char* const BUS_TYPE_NAMES[BF_COUNT] = {"OFF", "DELAY", "TAPE", "REVERB", "SPRING", "CHORUS"};
+enum { BX_TYPE = 0, BX_P1, BX_P2, BX_P3, BX_P4, BX_P5, BX_FWD, BX_LVL };
+static const ParamDef BUS_DEFS[BF_COUNT][8] = {
+    {{"TYPE", K_FXT, 0, BF_COUNT - 1}, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, {"FWD", K_NUM, 0, 127}, {"LVL", K_NUM, 100, 127}},
+    {{"TYPE", K_FXT, 0, BF_COUNT - 1}, {"TIME", K_DTIM, 9, 14}, {"FBK", K_FBK, 50, 127}, {"TONE", K_NUM, 80, 127}, {"PING", K_NUM, 127, 127},
+     {"LOCUT", K_NUM, 10, 127}, {"FWD", K_NUM, 0, 127}, {"LVL", K_NUM, 100, 127}},
+    {{"TYPE", K_FXT, 0, BF_COUNT - 1}, {"TIME", K_DTIM, 7, 14}, {"FBK", K_FBK, 55, 127}, {"WOW", K_NUM, 40, 127}, {"SAT", K_NUM, 50, 127},
+     {"AGE", K_NUM, 50, 127}, {"FWD", K_NUM, 0, 127}, {"LVL", K_NUM, 100, 127}},
+    {{"TYPE", K_FXT, 0, BF_COUNT - 1}, {"SIZE", K_NUM, 80, 127}, {"DAMP", K_NUM, 60, 127}, {"PRE", K_MS, 0, 127}, {"WIDE", K_NUM, 100, 127},
+     {"MOD", K_NUM, 40, 127}, {"FWD", K_NUM, 0, 127}, {"LVL", K_NUM, 100, 127}},
+    {{"TYPE", K_FXT, 0, BF_COUNT - 1}, {"DECAY", K_NUM, 70, 127}, {"TONE", K_NUM, 70, 127}, {"DRIP", K_NUM, 70, 127}, {"WIDE", K_NUM, 90, 127},
+     {"LOCUT", K_NUM, 30, 127}, {"FWD", K_NUM, 0, 127}, {"LVL", K_NUM, 100, 127}},
+    {{"TYPE", K_FXT, 0, BF_COUNT - 1}, {"RATE", K_NUM, 40, 127}, {"DEPTH", K_NUM, 60, 127}, {"VOICE", K_CNT, 2, 2}, {"WIDE", K_NUM, 110, 127},
+     {"FBK", K_NUM, 0, 127}, {"FWD", K_NUM, 0, 127}, {"LVL", K_NUM, 110, 127}}};
+inline const ParamDef& busDef(int bus, int type, int k) {
+    if (k == BX_FWD && bus >= NBUS - 1) return PDEF_NONE;   // letzter Bus: kein Weiterleiten
+    return BUS_DEFS[(type % BF_COUNT + BF_COUNT) % BF_COUNT][k & 7];
+}
 
 // FM-Algorithmen (DX-artig). Bitmaske der Modulatoren je Operator (Bit k = OPk+1) und der Traeger.
 static const uint8_t FM_MODS[8][4] = {
@@ -283,12 +338,16 @@ static const ParamDef SYS_DEFS[8] = {
 };
 static const int BUF_SIZES[4] = {128, 256, 512, 1024};
 
-static const float FM_RATIOS[16] = {0.25f, 0.5f, 0.75f, 1, 1.5f, 2, 2.5f, 3, 3.5f, 4, 5, 6, 7, 8, 9, 11};
+static const float FM_RATIOS_OLD[16] = {0.25f, 0.5f, 0.75f, 1, 1.5f, 2, 2.5f, 3, 3.5f, 4, 5, 6, 7, 8, 9, 11};   // bis v12
+enum { FM_NRAT = 28 };
+static const float FM_RATIOS[FM_NRAT] = {0.25f, 0.5f, 0.75f, 1, 1.25f, 1.5f, 1.75f, 2, 2.5f, 3, 3.5f, 4, 4.5f, 5, 5.5f, 6, 6.5f, 7, 7.5f, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 static const float DLY_STEPS[15] = {0.25f, 0.5f, 2.f / 3, 0.75f, 1, 4.f / 3, 1.5f, 2, 8.f / 3, 3, 4, 16.f / 3, 6, 8, 16};
 static const int RTRG_DIV[7] = {0, 2, 3, 4, 6, 8, 16};
 
 inline const ParamDef& paramDef(int machine, int idx) {
+    if (idx < 0 || idx >= NPARAMS) return PDEF_NONE;
     if (idx >= P_S0 && idx <= P_S7) return SRC_DEFS[machine][idx - P_S0];
+    if (machine == M_FM) { int op = fmOpOf(idx); if (op >= 0) return FM_OP_DEFS[op][idx - FM_OPB[op]]; }
     if (idx >= P_X0 && idx <= P_X7) return SRC2_DEFS[machine][idx - P_X0];
     return COMMON_DEFS[idx];
 }
@@ -332,7 +391,7 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
     case K_ARAT: snprintf(buf, n, "%s", ARP_RATES[v % 6]); break;
     case K_RANGE: if (v) snprintf(buf, n, "+%d", v); else snprintf(buf, n, "%s", TR("AUS", "OFF")); break;
     case K_MTIM: if (v == 23) snprintf(buf, n, "0"); else snprintf(buf, n, "%+d/24", v - 23); break;
-    case K_WTAB: { const char* wt[4] = {"BASIC", "PWM", TR("VOKAL", "VOWEL"), TR("OBERT", "HARM")}; snprintf(buf, n, "%s", wt[v & 3]); } break;
+    case K_WTAB: { const char* wt[5] = {"BASIC", "PWM", TR("VOKAL", "VOWEL"), TR("OBERT", "HARM"), "USER"}; snprintf(buf, n, "%s", wt[v % 5]); } break;
     case K_SLICE: if (v) snprintf(buf, n, "%d", v); else snprintf(buf, n, "AUTO"); break;
     case K_FBK: snprintf(buf, n, "%d%%", v * 120 / 127); break;
     case K_COND:
@@ -342,7 +401,11 @@ inline void fmtParam(const ParamDef& d, int v, char* buf, int n) {
         break;
     case K_TRG: snprintf(buf, n, "%s", v ? "NOTE" : "FREE"); break;
     case K_RTRG: if (v) snprintf(buf, n, "x%d", RTRG_DIV[v]); else snprintf(buf, n, "OFF"); break;
-    case K_RATIO: snprintf(buf, n, "%.2f", FM_RATIOS[v & 15]); break;
+    case K_RATIO: snprintf(buf, n, "%.2f", FM_RATIOS[v < FM_NRAT ? v : FM_NRAT - 1]); break;
+    case K_OCT: snprintf(buf, n, "%+d", v - 3); break;
+    case K_SUBO: snprintf(buf, n, "%s", v ? "-2" : "-1"); break;
+    case K_FXT: snprintf(buf, n, "%s", BUS_TYPE_NAMES[v % BF_COUNT]); break;
+    case K_WDRAW: snprintf(buf, n, ">>"); break;
     case K_DTIM: snprintf(buf, n, "%s", dtim[v % 15]); break;
     case K_SWNG: snprintf(buf, n, "%d%%", 50 + v); break;
     case K_CNT: snprintf(buf, n, "%d", v + 1); break;

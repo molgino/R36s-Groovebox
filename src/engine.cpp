@@ -62,6 +62,21 @@ static inline float wtRead(int t, float pos, float ph) {
     float va = a[i0] + (a[i0 + 1] - a[i0]) * fx, vb = b[i0] + (b[i0 + 1] - b[i0]) * fx;
     return va + (vb - va) * ff;
 }
+// eigene Wavetable aus einem Sample: Frames zu 2048 Werten (Standard vieler Wavetable-Synths), sonst 256, sonst ein Zyklus
+static inline int wtUserFrame(const Sample* sm) {
+    if (sm->len >= 2048 && sm->len % 2048 == 0) return 2048;
+    if (sm->len >= 256 && sm->len % 256 == 0) return 256;
+    return sm->len;
+}
+static inline float wtReadUser(const Sample* sm, float pos, float ph) {
+    int F = wtUserFrame(sm), nf = sm->len / F;
+    float fp = pos * (nf - 1); int f0 = (int)fp; if (f0 > nf - 2) f0 = nf > 1 ? nf - 2 : 0; float ff = nf > 1 ? fp - f0 : 0.f;
+    float x = ph * F; int i0 = (int)x; float fx = x - i0; if (i0 >= F) i0 = F - 1;
+    int i1 = i0 + 1 >= F ? 0 : i0 + 1;
+    const float* a = sm->data + (long)f0 * F; const float* b = nf > 1 ? a + F : a;
+    float va = a[i0] + (a[i1] - a[i0]) * fx, vb = b[i0] + (b[i1] - b[i0]) * fx;
+    return va + (vb - va) * ff;
+}
 const float* wavetableFrame(int t, int f) { return WT[t & 3][f < 0 ? 0 : (f >= WT_FR ? WT_FR - 1 : f)]; }
 static inline float sin01(float ph) {
     ph -= (float)(int)ph;          // schneller als floorf (Phase meist in [0,1))
@@ -111,6 +126,7 @@ static inline float fastTanh(float x) {
 static inline float fastExpE(float x) { return fastExp2(x * 1.4426950f); }
 static inline float envT(int v) { return 0.0005f * fastExp2(v * (15.f / 127.f)); }
 static inline float decayCo(float t, float sr) { return fastExpE(-6.9f / (t * sr)); }
+static inline float envTime(int v) { return 0.0005f * fastExp2(v * (15.f / 127.f)); }   // Huellkurvenzeit wie AMP/FILTER (0,5 ms .. 16 s)
 static inline float blep(float t, float dt) {
     if (t < dt) { t /= dt; return t + t - t * t - 1.f; }
     if (t > 1.f - dt) { t = (t - 1.f) / dt; return t * t + t + t + 1.f; }
@@ -196,8 +212,9 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     case M_HAT: denv = 1; break;
     case M_CLAP: clapLeft = P(P_S3) + 1; clapTimer = 0; clapTail = false; burst = 0; denv = 0; break;
     case M_FM:
-        for (int k = 0; k < 4; k++) { fmEnv[k] = 1.f; if (!wasActive) fmPh[k] = 0; }
+        for (int k = 0; k < 4; k++) { fmSt[k] = 1; if (!wasActive) { fmPh[k] = 0; fmEnv[k] = 0.f; } }   // Attack ab aktuellem Pegel
         if (!wasActive) fmFbPrev = 0;
+        fmPenv = 1.f;
         break;
     case M_SAMPLE: case M_CHOP: aenv.v = 0; break;
     case M_TOM: ph1 = 0; penv = 1; denv = 1; nenv = 1; aenv.v = 0; break;
@@ -329,20 +346,27 @@ void Voice::update(int n, float sr, float bpm) {
         bco = decayCo(0.012f, sr);
         break;
     case M_FM: {
-        pitchHz = 440.f * fastExp2((nn - 69.f) / 12.f);
+        // Pitch-Huellkurve (P.ENV +-24 Halbtoene, P.DEC Abklingzeit), blockweise
+        float pamt = (P(P_S3) - 64) / 64.f * 24.f;
+        if (n > 0) fmPenv *= fastExpE(-6.9f * n / (envTime(P(P_S4)) * sr));
+        pitchHz = 440.f * fastExp2((nn - 69.f + pamt * fmPenv) / 12.f);
         fmAlgo = P(P_S0) & 7;
         fmFbAmt = P(P_S1) / 127.f * 0.5f;
-        float fine = (P(P_S6) - 64) / 64.f;   // leichte Verstimmung OP2-4 (+/- 1/4 Halbton, gespreizt)
-        float velS = P(P_X7) / 127.f;
+        float velS = P(P_S2) / 127.f;
         float vg = 1.f - velS + velS * vel;
         for (int k = 0; k < 4; k++) {
-            float r = FM_RATIOS[P(P_S2 + k) & 15] * (k ? fastExp2(fine * 0.25f * k / 12.f) : 1.f);
-            fmInc[k] = pitchHz * r / sr;
-            float lv = k ? P(P_X0 + k - 1) / 127.f : 1.f;
+            int b = FM_OPB[k];
+            float r = FM_RATIOS[P(b + OP_RAT) % FM_NRAT] + (P(b + OP_FINE) - 64) / 64.f * 0.5f;   // FINE: +-0,5 (unharmonisch)
+            if (r < 0.0625f) r = 0.0625f;
+            float det = fastExp2((P(b + OP_DETN) - 64) / 64.f * (50.f / 1200.f));                // DETN: +-50 Cent
+            fmInc[k] = pitchHz * r * det / sr;
+            float lv = P(b + OP_LVL) / 127.f;
             fmMod[k] = lv * 2.2f * vg;     // als Modulator: Index in Perioden
             fmCar[k] = lv;                 // als Traeger: Ausgangspegel
-            int dv = P(P_X3 + k);
-            fmDco[k] = dv >= 127 ? 1.f : decayCo(0.01f * fastExp2(dv * (9.f / 127.f)), sr);
+            fmAtk[k] = 1.f / (envTime(P(b + OP_ATK)) * sr);
+            fmDco[k] = decayCo(envTime(P(b + OP_DEC)), sr);
+            fmSus[k] = P(b + OP_SUS) / 127.f;
+            fmRco[k] = decayCo(envTime(P(b + OP_REL)), sr);
         }
         int nc = 0; for (int k = 0; k < 4; k++) if (FM_CARRIERS[fmAlgo] >> k & 1) nc++;
         float norm = 1.f / sqrtf((float)(nc ? nc : 1));
@@ -368,7 +392,9 @@ void Voice::update(int n, float sr, float bpm) {
         break;
     case M_WTBL:
         pitchHz = 440.f * fastExp2((nn - 69.f) / 12.f);
-        wtTab = P(P_S0) & 3;
+        wtTab = P(P_S0) % 5;
+        wtUser = nullptr;
+        if (wtTab == 4) { const Sample* us = sampleGet(P(P_X3)); if (us && us->data && us->len >= 16) wtUser = us; else wtTab = 0; }   // USER: Sample UWAV
         wtPos = P(P_S1) / 127.f;
         wtWarp = (P(P_S2) - 64) / 64.f;
         wtDet = fastExp2(P(P_S3) / 127.f * 0.4f / 12.f);
@@ -412,8 +438,9 @@ void Voice::update(int n, float sr, float bpm) {
     float a = (pan + 1.f) * 0.78539816f;
     gainL = vol * cosf(a) * 1.41421356f;
     gainR = vol * sinf(a) * 1.41421356f;
-    sendD = vol * P(P_DLY) / 127.f;
-    sendR = vol * P(P_REV) / 127.f;
+    snd[0] = vol * P(P_DLY) / 127.f;
+    snd[1] = vol * P(P_REV) / 127.f;
+    snd[2] = vol * P(P_SNDC) / 127.f;
     drive = P(P_DRIV) / 127.f;
     float cr = (float)P(P_CRSH);
     crushQ = cr > 0.5f ? fastExp2(15.f - cr / 127.f * 13.f) : 0.f;
@@ -506,7 +533,7 @@ inline float Voice::filter1(float x) {
     }
 }
 
-void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
+void Voice::render(float* L, float* R, float (*S)[32], int n, float sr) {
     if (!active) return;
     static const float HAT_R[6] = {1.f, 1.4836f, 1.8016f, 2.5478f, 2.6321f, 3.8996f};
     const float inv = 1.f / sr;
@@ -555,6 +582,15 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
     float fmNoise = P(P_S7) / 127.f;
     int w1 = P(P_S0) & 3, w2 = P(P_S1) & 3;
     float dt = pitchHz * inv * (machine == M_SYNTH ? fastExp2(drift1 * 0.25f / 1200.f) : 1.f);
+    // zweite Klangseite: Oktave und Pegel je Oszillator, Sub-Oktave, Sync, Kreuz- und Ringmodulation
+    float o1m = 1.f, o2m = 1.f, lv1 = 1.f, lv2 = 1.f, subDiv = 0.5f, xmod = 0.f, ring = 0.f; bool sync = false;
+    if (machine == M_SYNTH) {
+        o1m = fastExp2((float)(P(P_X0) - 3)); o2m = fastExp2((float)(P(P_X1) - 3));
+        lv1 = P(P_X2) / 127.f; lv2 = P(P_X3) / 127.f; subDiv = P(P_X4) ? 0.25f : 0.5f;
+        sync = P(P_X5) != 0; xmod = P(P_X6) / 127.f; ring = P(P_X7) / 127.f;
+    } else if (machine == M_WTBL) {
+        o1m = fastExp2((float)(P(P_X0) - 3)); lv1 = P(P_X1) / 127.f; subDiv = P(P_X2) ? 0.25f : 0.5f;
+    }
     float bmax = 0.f;
 
     for (int i = 0; i < n; i++) {
@@ -619,12 +655,17 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             s = bp * env * 1.9f;
         } break;
         case M_SYNTH: {
-            float dt2 = dt * detune;
-            float o1 = osc(w1, ph1, dt, pw), o2 = osc(w2, ph2, dt2, pw);
-            ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
+            float dt1 = dt * o1m, dt2 = dt * detune * o2m;
+            float o2 = osc(w2, ph2, dt2, pw);
+            float p1 = ph1;
+            if (xmod > 0.f) { p1 += o2 * xmod * 0.5f; p1 -= (float)(int)p1; if (p1 < 0.f) p1 += 1.f; }   // OSC2 moduliert OSC1 (FM)
+            float o1 = osc(w1, p1, dt1, pw);
             ph2 += dt2; if (ph2 >= 1.f) ph2 -= 1.f;
-            phs += dt * 0.5f; if (phs >= 1.f) phs -= 1.f;
-            s = o1 * (1.f - mix) + o2 * mix;
+            ph1 += dt1;
+            if (ph1 >= 1.f) { ph1 -= 1.f; if (sync) ph2 = ph1 * (dt2 / dt1); }   // Hard-Sync: OSC2 startet mit OSC1 neu
+            phs += dt1 * subDiv; if (phs >= 1.f) phs -= 1.f;
+            s = o1 * (1.f - mix) * lv1 + o2 * mix * lv2;
+            if (ring > 0.f) s += o1 * o2 * ring * 0.8f;
             s += sub * (phs < 0.5f ? 0.8f : -0.8f);
             s += noise * rng.next();
             s = fastTanh(s * 0.9f) * 0.95f;      // warme Saettigung vor dem Filter, lauter als vorher
@@ -641,7 +682,11 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
                 o[k] = sin01(fmPh[k] + m);
                 if (k == 3) fmFbPrev = o[3];
                 if (car >> k & 1) out += o[k] * fmCar[k] * fmEnv[k];
-                fmEnv[k] *= fmDco[k];
+                float e = fmEnv[k];   // Operator-Huellkurve: Attack linear, Decay/Release exponentiell
+                if (fmSt[k] == 1) { e += fmAtk[k]; if (e >= 1.f) { e = 1.f; fmSt[k] = 2; } }
+                else if (fmSt[k] == 2) e = fmSus[k] + (e - fmSus[k]) * fmDco[k];
+                else e *= fmRco[k];
+                fmEnv[k] = e;
             }
             s = out * 0.7f + fmNoise * rng.next() * 0.3f;
         } break;
@@ -676,11 +721,13 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
             float p1 = ph1, p2 = ph2;
             if (wtWarp > 0.01f) { p1 = fastPow01(p1, 1.f + wtWarp * 3.f); p2 = fastPow01(p2, 1.f + wtWarp * 3.f); }
             else if (wtWarp < -0.01f) { p1 = 1.f - fastPow01(1.f - p1, 1.f - wtWarp * 3.f); p2 = 1.f - fastPow01(1.f - p2, 1.f - wtWarp * 3.f); }
-            s = wtRead(wtTab, pos, p1);
-            if (wtDet > 1.0001f) s = (s + wtRead(wtTab, pos, p2)) * 0.6f;
-            ph1 += dt; if (ph1 >= 1.f) ph1 -= 1.f;
-            ph2 += dt * wtDet; if (ph2 >= 1.f) ph2 -= 1.f;
-            phs += dt * 0.5f; if (phs >= 1.f) phs -= 1.f;
+            s = wtUser ? wtReadUser(wtUser, pos, p1) : wtRead(wtTab, pos, p1);
+            if (wtDet > 1.0001f) s = (s + (wtUser ? wtReadUser(wtUser, pos, p2) : wtRead(wtTab, pos, p2))) * 0.6f;
+            s *= lv1;
+            float dtw = dt * o1m;
+            ph1 += dtw; if (ph1 >= 1.f) ph1 -= 1.f;
+            ph2 += dtw * wtDet; if (ph2 >= 1.f) ph2 -= 1.f;
+            phs += dtw * subDiv; if (phs >= 1.f) phs -= 1.f;
             s += sub * 0.6f * sin01(phs);
             s += noise * 0.4f * rng.next();
             s *= 0.55f;
@@ -814,8 +861,9 @@ void Voice::render(float* L, float* R, float* dS, float* rS, int n, float sr) {
         L[i] += sl * gainL;
         R[i] += sr2 * gainR;
         float sm = (sl + sr2) * 0.5f;
-        dS[i] += sm * sendD;
-        rS[i] += sm * sendR;
+        S[0][i] += sm * snd[0];
+        S[1][i] += sm * snd[1];
+        S[2][i] += sm * snd[2];
     }
 
     float pk = bmax * (gainL > gainR ? gainL : gainR);
@@ -906,8 +954,8 @@ void* Engine::wkMain(void* arg) {
             int n = E->wkNs;
             Voice& v = *E->wkList[idx].v;
             v.update(n, (float)E->sr, E->proj.bpm);
-            if (E->wkList[idx].key) v.render(E->wKL, E->wKR, E->wD, E->wRV, n, (float)E->sr);
-            else v.render(E->wL, E->wR, E->wD, E->wRV, n, (float)E->sr);
+            if (E->wkList[idx].key) v.render(E->wKL, E->wKR, E->wS, n, (float)E->sr);
+            else v.render(E->wL, E->wR, E->wS, n, (float)E->sr);
             __atomic_add_fetch(&E->wkDone, 1, __ATOMIC_RELEASE);
         }
     }
@@ -941,18 +989,7 @@ void Engine::init(int sampleRate) {
 
 void Engine::initFx(int sampleRate) {
     sr = sampleRate;
-    free(dlyL); free(dlyR);
-    dlyLen = sr * 9 + 16;   // bis 16 Steps bei 30 BPM
-    dlyL = (float*)calloc(dlyLen, sizeof(float));
-    dlyR = (float*)calloc(dlyLen, sizeof(float));
-    dlyPos = 0;
-    free(preBuf);
-    preLen = sr / 4 + 2;
-    preBuf = (float*)calloc(preLen, sizeof(float));
-    prePos = 0;
-    for (int k = 0; k < 8; k++) { free(rev.cl[k].b); free(rev.cr[k].b); rev.cl[k] = Comb(); rev.cr[k] = Comb(); }
-    for (int k = 0; k < 4; k++) { free(rev.al[k].b); free(rev.ar[k].b); rev.al[k] = Allpass(); rev.ar[k] = Allpass(); }
-    rev.init(sr);
+    for (int b = 0; b < NBUS; b++) bus[b].init(sr);   // Effekt-Busse A/B/C
     memset(limXL, 0, sizeof limXL); memset(limXR, 0, sizeof limXR);   // Limiter: leerer Vorausschau-Puffer
     dcXL = dcXR = dcYL = dcYR = 0.f;
     limReady = false; limPos = 0; limRel = 1.f;
@@ -1096,7 +1133,7 @@ void Engine::defaultProject(bool demo) {
     proj.bpm = 120;
     for (int i = 0; i < 8; i++) proj.mst[i] = MST_DEFS[i].def;
     for (int i = 0; i < 8; i++) proj.cmp[i] = CMP_DEFS[i].def;
-    for (int i = 0; i < 8; i++) proj.fx[i] = FX_DEFS[i].def;
+    for (int b = 0; b < NBUS; b++) setBusType(proj, b, b == 0 ? BF_DELAY : (b == 1 ? BF_REVERB : BF_CHORUS));
     for (int i = 0; i < NPATTERNS; i++) initPattern(proj.pat[i]);
     if (!demo) return;   // neues Projekt: leere Init-Patterns
     // Demo-Beat in Pattern 1
@@ -1254,6 +1291,13 @@ void Engine::applyRow(int pos) {
     for (int t = 0; t < NTRACKS; t++) if (r.pat[t] != SONG_EMPTY) { trkPat[t] = (uint8_t)(r.pat[t] % NPATTERNS); if (first < 0) first = trkPat[t]; }
     if (first >= 0) for (int t = 0; t < NTRACKS; t++) if (r.pat[t] == SONG_EMPTY) trkPat[t] = (uint8_t)first;   // leere Spur: Klang egal (stumm)
     if (first >= 0) curPat = first;
+}
+
+void Engine::setBusType(Project& J, int b, int type) {
+    if (b < 0 || b >= NBUS) return;
+    type = (type % BF_COUNT + BF_COUNT) % BF_COUNT;
+    J.bus[b][BX_TYPE] = (uint8_t)type;
+    for (int k = 1; k < 8; k++) J.bus[b][k] = busDef(b, type, k).def;
 }
 
 void Engine::rowFromPattern(Project& J, Project::SongRow& r, int pat) {
@@ -1533,7 +1577,7 @@ void Engine::render(float* out, int frames) {
 }
 
 void Engine::processBlock(float* out, int n) {
-    float L[32] = {0}, R[32] = {0}, D[32] = {0}, RV[32] = {0}, KL[32] = {0}, KR[32] = {0};   // = BLK in render()
+    float L[32] = {0}, R[32] = {0}, S[NBUS][32] = {{0}}, KL[32] = {0}, KR[32] = {0};   // = BLK in render(); S = Sends an Bus A/B/C
     int key = (int)proj.cmp[CM_SRC] - 1;   // -1 = intern (Summe), sonst Sidechain-Spur
     // klingende Stimmen sammeln; bei spuerbarer Last rechnet ein zweiter Kern mit (beide holen sich Stimmen ab,
     // der Audio-Thread wartet nie auf einen schlafenden Helfer, hoechstens auf dessen laufende Stimme)
@@ -1549,7 +1593,7 @@ void Engine::processBlock(float* out, int n) {
         for (int i = 0; i < nAct; i++) {
             Voice& vc = *act[i].v;
             vc.update(n, (float)sr, proj.bpm);
-            if (act[i].key) vc.render(KL, KR, D, RV, n, (float)sr); else vc.render(L, R, D, RV, n, (float)sr);
+            if (act[i].key) vc.render(KL, KR, S, n, (float)sr); else vc.render(L, R, S, n, (float)sr);
         }
     } else {
         if (!wkPrioSet) {   // Helfer bekommt die Prioritaet des Audio-Threads
@@ -1557,7 +1601,7 @@ void Engine::processBlock(float* out, int n) {
             int pol; struct sched_param sp;
             if (pthread_getschedparam(pthread_self(), &pol, &sp) == 0) pthread_setschedparam(wkThread, pol, &sp);
         }
-        for (int i = 0; i < n; i++) wL[i] = wR[i] = wD[i] = wRV[i] = wKL[i] = wKR[i] = 0.f;
+        for (int i = 0; i < n; i++) { wL[i] = wR[i] = wKL[i] = wKR[i] = 0.f; for (int b = 0; b < NBUS; b++) wS[b][i] = 0.f; }
         __atomic_store_n(&wkN, nAct, __ATOMIC_RELAXED); wkNs = n;
         __atomic_store_n(&wkDone, 0, __ATOMIC_RELAXED);
         int seq = wkGoSeq + 1;
@@ -1569,14 +1613,14 @@ void Engine::processBlock(float* out, int n) {
         while (wkClaimOne(tag, idx)) {
             Voice& vc = *act[idx].v;
             vc.update(n, (float)sr, proj.bpm);
-            if (act[idx].key) vc.render(KL, KR, D, RV, n, (float)sr); else vc.render(L, R, D, RV, n, (float)sr);
+            if (act[idx].key) vc.render(KL, KR, S, n, (float)sr); else vc.render(L, R, S, n, (float)sr);
             mineN++;
         }
         __atomic_store_n(&wkClaim, (tag << 16) | 0xFFFF, __ATOMIC_RELEASE);   // Block schliessen
         int helper = nAct - mineN;
         if (helper > 0) {
             while (__atomic_load_n(&wkDone, __ATOMIC_ACQUIRE) < helper) { __asm__ __volatile__("" ::: "memory"); }
-            for (int i = 0; i < n; i++) { L[i] += wL[i]; R[i] += wR[i]; D[i] += wD[i]; RV[i] += wRV[i]; KL[i] += wKL[i]; KR[i] += wKR[i]; }
+            for (int i = 0; i < n; i++) { L[i] += wL[i]; R[i] += wR[i]; KL[i] += wKL[i]; KR[i] += wKR[i]; for (int b = 0; b < NBUS; b++) S[b][i] += wS[b][i]; }
             wkBlocks++;
         }
     }
@@ -1589,17 +1633,15 @@ void Engine::processBlock(float* out, int n) {
     float cMix = proj.cmp[CM_MIX] / 127.f;
     bool cOn = proj.cmp[CM_THR] < 127 || proj.cmp[CM_GAIN] > 0;
     float grMax = 0;
-    float dTarget = (float)(DLY_STEPS[proj.fx[FX_DTIM] % 15] * stepSamples());
-    if (dTarget > dlyLen - 4) dTarget = (float)(dlyLen - 4);
-    if (dTarget < 2) dTarget = 2;
-    if (dSm < 1) dSm = dTarget;
-    float fb = proj.fx[FX_DFBK] / 127.f * 1.2f;               // > 100 % moeglich: Saettigung haelt die Schleife stabil
-    float hpco = 1.f - expf(-6.2831853f * 90.f / sr);         // Hochpass in der Schleife gegen Bass-Aufschaukeln
-    float dtone = 0.05f + proj.fx[FX_DTON] / 127.f * 0.95f;
-    float dwid = proj.fx[FX_DWID] / 127.f, rwid = proj.fx[FX_RWID] / 127.f;
-    float rsize = proj.fx[FX_RSIZ] / 127.f, rdamp = proj.fx[FX_RDMP] / 127.f;
-    int pre = (int)(fxPreMs(proj.fx[FX_RPRE]) * sr / 1000.f);
-    if (pre > preLen - 1) pre = preLen - 1;
+    // Effekt-Busse: A, dann B, dann C (FWD schickt den Ausgang eines Busses zusaetzlich in den naechsten)
+    float BL[NBUS][32], BR[NBUS][32];
+    {
+        double ss = stepSamples();
+        for (int b = 0; b < NBUS; b++) {
+            if (b > 0) { float fw = proj.bus[b - 1][BX_FWD] / 127.f; if (fw > 0.f) for (int i = 0; i < n; i++) S[b][i] += (BL[b - 1][i] + BR[b - 1][i]) * 0.5f * fw; }
+            bus[b].process(S[b], BL[b], BR[b], n, proj.bus[b], ss);
+        }
+    }
     float mv = proj.mst[MS_VOL] / 100.f; mv *= mv;
     float mdrv = proj.mst[MS_DRIV] / 127.f;
     float outG = 0.6f * mv * (1.f + 3.f * mdrv), outC = 1.f - 0.25f * mdrv;
@@ -1616,45 +1658,8 @@ void Engine::processBlock(float* out, int n) {
     else if (djMode == 2) { float fc = 20.f * exp2f(djSm * 9.f); djL.set(fc, 0.35f, sr); djR.set(fc, 0.35f, sr); }
 
     float pl = peakL * 0.97f, pr = peakR * 0.97f;
-    // Leerlauf: Delay/Reverb rechnen erst wieder, wenn etwas hineingeht (spart viel CPU bei trockenen Spuren)
-    bool dIn = false, rIn = false;
-    for (int i = 0; i < n; i++) { if (D[i] != 0.f) dIn = true; if (RV[i] != 0.f) rIn = true; }
-    bool dRun = dIn || dQuiet < dlyLen + n;
-    bool rRun = rIn || dRun || rQuiet < 44100 * 2 + preLen;
-    float dMax = 0.f, rMax = 0.f;
     for (int i = 0; i < n; i++) {
-        float wdL = 0.f, wdR = 0.f, rl = 0.f, rr = 0.f;
-        if (dRun) {
-        dSm += (dTarget - dSm) * 0.0004f;                     // Zeitwechsel gleitet wie beim Bandecho
-        float rp = dlyPos - dSm; if (rp < 0) rp += dlyLen;
-        int i0 = (int)rp, i1 = i0 + 1 >= dlyLen ? 0 : i0 + 1;
-        float fr = rp - i0;
-        dlpL += (dlyL[i0] + (dlyL[i1] - dlyL[i0]) * fr - dlpL) * dtone;
-        dlpR += (dlyR[i0] + (dlyR[i1] - dlyR[i0]) * fr - dlpR) * dtone;
-        dhpL += (dlpL - dhpL) * hpco; dhpR += (dlpR - dhpR) * hpco;
-        float fL = dlpL - dhpL, fR = dlpR - dhpR;
-        dlyL[dlyPos] = fastTanh(D[i] + fR * fb);               // Ping-Pong mit weicher Saettigung
-        dlyR[dlyPos] = fastTanh(fL * fb);
-        if (++dlyPos >= dlyLen) dlyPos = 0;
-        // Delay-Stereobreite: 0 = mono, 127 = volles Ping-Pong
-        float dm = (dlpL + dlpR) * 0.5f;
-        wdL = dm + (dlpL - dm) * dwid; wdR = dm + (dlpR - dm) * dwid;
-        float da = fabsf(dlpL) + fabsf(dlpR); if (da > dMax) dMax = da;
-        }
-        if (rRun) {
-        // Reverb mit Predelay
-        float rin = RV[i] + (dRun ? (dlpL + dlpR) * 0.15f : 0.f);
-        if (pre > 0) {
-            int rp2 = prePos - pre; if (rp2 < 0) rp2 += preLen;
-            preBuf[prePos] = rin; rin = preBuf[rp2];
-            if (++prePos >= preLen) prePos = 0;
-        }
-        rev.process(rin, rsize, rdamp, rl, rr);
-        float rm = (rl + rr) * 0.5f;
-        rl = rm + (rl - rm) * rwid; rr = rm + (rr - rm) * rwid;
-        float ra = fabsf(rl) + fabsf(rr); if (ra > rMax) rMax = ra;
-        }
-        float oL = L[i] + wdL + rl, oR = R[i] + wdR + rr;
+        float oL = L[i] + BL[0][i] + BL[1][i] + BL[2][i], oR = R[i] + BR[0][i] + BR[1][i] + BR[2][i];
         if (cOn) {
             float det = key >= 0 ? fmaxf(fabsf(KL[i]), fabsf(KR[i])) : fmaxf(fabsf(oL), fabsf(oR));
             cEnv += (det - cEnv) * (det > cEnv ? cAtk : cRel);
@@ -1706,10 +1711,6 @@ void Engine::processBlock(float* out, int n) {
     peakL = pl; peakR = pr;
     { float gr = limMin < 1.f ? -6.0206f * log2f(limMin) : 0.f; if (gr > limGr) limGr = gr; }
     if (grMax > grPeak) grPeak = grMax;
-    // verklungen = kein Eingang und Ausgang unter -100 dB; erst nach einer vollen Pufferlaenge Stille abschalten
-    if (dIn || dMax > 1e-5f) dQuiet = 0; else if (dQuiet < (1 << 30)) dQuiet += n;
-    if (rIn || rMax > 1e-5f || (dRun && dMax > 1e-5f)) rQuiet = 0; else if (rQuiet < (1 << 30)) rQuiet += n;
-    if (!dRun) { dlpL = dlpR = dhpL = dhpR = 0.f; }
 }
 
 bool Engine::save(const char* path) {
@@ -1746,6 +1747,67 @@ static void remapLegacy(const uint8_t* o, int oldNp, uint8_t* out, bool lock, in
     if (oldNp > 48) for (int i = 48; i < 56; i++) out[i] = o[i];
 }
 
+// ---- Umstellung auf v13 (16 Seiten): Sends auf die SEND-Seite, FM mit 4 Operatorseiten, SYNTH/WTBL mit eigener 2. Seite
+static int ratIdxFor(float r) {   // naechstgelegener Eintrag der neuen Ratio-Tabelle
+    int best = 3; float bd = 1e9f;
+    for (int i = 0; i < FM_NRAT; i++) { float d = fabsf(FM_RATIOS[i] - r); if (d < bd) { bd = d; best = i; } }
+    return best;
+}
+static int envFromOldFmDec(int dv) {   // alte FM-Abklingzeit 0,01 s * 2^(dv*9/127) -> Wert der neuen Huellkurve (envTime)
+    float t = 0.01f * exp2f(dv * (9.f / 127.f));
+    int v = (int)lrintf(127.f / 15.f * log2f(t / 0.0005f));
+    return v < 0 ? 0 : (v > 126 ? 126 : v);
+}
+// neuer Index eines Parameters aus dem Layout bis v12 (-1 = entfaellt)
+int Engine::mapOldParam(int m, int i) {
+    if (i == OLD_P_DLY) return P_DLY;
+    if (i == OLD_P_REV) return P_REV;
+    if (m == M_FM) {
+        if (i >= P_S2 && i <= P_S5) return FM_OPB[i - P_S2] + OP_RAT;
+        if (i == P_S6) return FM_OPB[1] + OP_DETN;
+        if (i == P_S7) return P_S5;                          // NOIS
+        if (i >= P_X0 && i <= P_X2) return FM_OPB[i - P_X0 + 1] + OP_LVL;
+        if (i >= P_X3 && i <= P_X6) return FM_OPB[i - P_X3] + OP_DEC;
+        if (i == P_X7) return P_S2;                          // VELO
+    }
+    if ((m == M_SYNTH || m == M_WTBL) && i >= P_X0 && i <= P_X7) return -1;   // bisher unbenutzt
+    return i < OLD_NPARAMS ? i : -1;
+}
+// eine Spur: o = alte 96 Werte (bzw. Locks), out = 128 neue
+void Engine::migrateTrack13(int m, const uint8_t* o, uint8_t* out, bool lock) {
+    for (int i = 0; i < NPARAMS; i++) out[i] = lock ? NO_LOCK : paramDef(m, i).def;
+    for (int i = 0; i < OLD_NPARAMS; i++) {
+        if (lock && o[i] == NO_LOCK) continue;
+        int j = mapOldParam(m, i);
+        if (j >= 0) out[j] = o[i];
+    }
+    if (m == M_FM) {
+        auto has = [&](int i) { return !lock || o[i] != NO_LOCK; };
+        for (int k = 0; k < 4; k++) {
+            int b = FM_OPB[k];
+            if (has(P_S2 + k)) out[b + OP_RAT] = (uint8_t)ratIdxFor(FM_RATIOS_OLD[o[P_S2 + k] & 15]);
+            if (has(P_S6)) {   // FINE verstimmte OP2-4 gestaffelt um bis zu 1/4 Halbton
+                float cents = (o[P_S6] - 64) / 64.f * 25.f * k;
+                out[b + OP_DETN] = (uint8_t)(k ? (cents > 50 ? 127 : (cents < -50 ? 0 : 64 + (int)lrintf(cents * 64.f / 50.f))) : 64);
+                if (out[b + OP_DETN] > 127) out[b + OP_DETN] = 127;
+            }
+            if (!lock) { out[b + OP_FINE] = 64; out[b + OP_ATK] = 0; out[b + OP_LVL] = k ? o[P_X0 + k - 1] : 127; }
+            if (has(P_X3 + k)) {
+                int dv = o[P_X3 + k];
+                if (dv >= 127) { out[b + OP_SUS] = 127; if (!lock) { out[b + OP_DEC] = 70; out[b + OP_REL] = 127; } else out[b + OP_DEC] = NO_LOCK; }
+                else { int e = envFromOldFmDec(dv); out[b + OP_DEC] = (uint8_t)e; out[b + OP_SUS] = 0; if (!lock) out[b + OP_REL] = (uint8_t)e; }
+            }
+        }
+        if (!lock) { out[P_S3] = 64; out[P_S6] = 0; out[P_S7] = 0; }
+    }
+    for (int k = 0; k < NLFO; k++) {   // LFO-Ziele (Wert = Parameter + 1) mitziehen
+        int di = LFO_BASE[k] + LF_DEST, d = out[di];
+        if (d == NO_LOCK || d == 0) continue;
+        int j = mapOldParam(m, d - 1);
+        out[di] = (uint8_t)(j >= 0 ? j + 1 : 0);
+    }
+}
+
 bool Engine::load(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return false;
@@ -1759,24 +1821,23 @@ bool Engine::load(const char* path) {
     uint32_t ver = 0;
     if (ok) memcpy(&ver, buf + 4, 4);
     ok = ok && memcmp(buf, "GBX1", 4) == 0;
+    uint8_t oldFx[8]; for (int i = 0; i < 8; i++) oldFx[i] = FX_DEFS[i].def;   // bis v12: Delay/Reverb
+    Project::SongRow oldRows[64]; uint8_t oldMute[NPATTERNS]; bool haveRows = false;
+    struct OldSong { uint8_t pat, rep; } oldSong[64]; memset(oldSong, 0, sizeof oldSong);
     // alte Formate: v1/v2 = 40 Parameter, v3 = 48, v4 = 56; immer 16 Steps; Pattern ab Offset 20
     long oldNp = ver <= 2 ? 40 : (ver == 3 ? 48 : 56);
     long oldPat = 16 + 8 * oldNp + NTRACKS * 16 * (1 + oldNp);
     long expect = 20 + NPATTERNS * oldPat + (ver >= 2 ? 16 : 0);
-    // v5..v7: 72 bzw. 80 Parameter, 128 Steps, speed-Feld
-    long nNp = ver == 5 ? 72 : (ver <= 7 ? 80 : 88);
-    long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nSize = 20 + NPATTERNS * nPat + 16;
+    // v5..v12: 72/80/88/96 Parameter, 128 Steps, speed-Feld
+    long nNp = ver == 5 ? 72 : (ver <= 7 ? 80 : (ver == 8 ? 88 : OLD_NPARAMS));
+    long nPat = 24 + 8 * nNp + NTRACKS * 128 * (1 + nNp), nBase = 20 + NPATTERNS * nPat;
+    long nSize = ver <= 8 ? nBase + 16 : projectDataSize(ver);
+    Project* np = nullptr;
     if (ok && ver == PROJECT_VERSION && size >= (long)sizeof(Project)) {   // dahinter evtl. Sample-Namensliste
         memcpy(&proj, buf, sizeof(Project));
-    } else if (ok && ver >= 9 && ver <= 11 && size >= (long)PROJECT_V11_SIZE) {   // v9-v11: gleiches Layout ohne Mutes/Clip-Song
-        memset(&proj, 0, sizeof(Project));
-        memcpy(&proj, buf, PROJECT_V11_SIZE);
-        proj.version = PROJECT_VERSION;
-    } else if (ok && ver >= 5 && ver <= 8 && size == nSize) {
-        Project* np = (Project*)malloc(sizeof(Project));
-        memset(np, 0, sizeof(Project));
+    } else if (ok && ver >= 5 && ver <= 12 && (ver <= 8 ? size == nSize : size >= nSize)) {
+        np = (Project*)calloc(1, sizeof(Project));
         memcpy(np, buf, 20);
-        np->version = PROJECT_VERSION;
         for (int pi = 0; pi < NPATTERNS; pi++) {
             const uint8_t* q = buf + 20 + pi * nPat;
             Pattern& P = np->pat[pi];
@@ -1794,16 +1855,13 @@ bool Engine::load(const char* path) {
                 }
             }
         }
-        memcpy(np->cmp, buf + 20 + NPATTERNS * nPat, 8);
-        memcpy(np->fx, buf + 20 + NPATTERNS * nPat + 8, 8);
-        memcpy(&proj, np, sizeof(Project));
-        free(np);
-        printf("Projekt von Version %u auf %d umgestellt\n", ver, PROJECT_VERSION);
+        memcpy(np->cmp, buf + nBase, 8);
+        memcpy(oldFx, buf + nBase + 8, 8);
+        if (ver >= 9) { memcpy(oldSong, buf + nBase + 16, 128); np->songLen = buf[nBase + 144]; }
+        if (ver == 12) { memcpy(oldMute, buf + nBase + 148, NPATTERNS); memcpy(oldRows, buf + nBase + 148 + NPATTERNS, sizeof oldRows); haveRows = true; }
     } else if (ok && ver >= 1 && ver <= 4 && size == expect) {
-        Project* np = (Project*)malloc(sizeof(Project));
-        memset(np, 0, sizeof(Project));
+        np = (Project*)calloc(1, sizeof(Project));
         memcpy(np->magic, "GBX1", 4);
-        np->version = PROJECT_VERSION;
         memcpy(&np->bpm, buf + 8, 2);
         memcpy(np->mst, buf + 10, 8);
         int scaleFromV3 = 0;
@@ -1832,29 +1890,45 @@ bool Engine::load(const char* path) {
         }
         if (ver >= 2) {
             memcpy(np->cmp, buf + 20 + NPATTERNS * oldPat, 8);
-            memcpy(np->fx, buf + 20 + NPATTERNS * oldPat + 8, 8);
+            memcpy(oldFx, buf + 20 + NPATTERNS * oldPat + 8, 8);
         } else {   // Version 1: Effekte lagen in mst
             uint8_t old[8];
             memcpy(old, np->mst, 8);   // BPM SWNG DTIM DFBK DTON RSIZ RDMP VOL
-            for (int i = 0; i < 8; i++) { np->cmp[i] = CMP_DEFS[i].def; np->fx[i] = FX_DEFS[i].def; np->mst[i] = MST_DEFS[i].def; }
-            np->fx[FX_DTIM] = old[2]; np->fx[FX_DFBK] = old[3]; np->fx[FX_DTON] = old[4];
-            np->fx[FX_RSIZ] = old[5]; np->fx[FX_RDMP] = old[6];
+            for (int i = 0; i < 8; i++) { np->cmp[i] = CMP_DEFS[i].def; np->mst[i] = MST_DEFS[i].def; }
+            oldFx[FX_DTIM] = old[2]; oldFx[FX_DFBK] = old[3]; oldFx[FX_DTON] = old[4];
+            oldFx[FX_RSIZ] = old[5]; oldFx[FX_RDMP] = old[6];
             np->mst[MS_SWNG] = old[1]; np->mst[MS_VOL] = old[7];
         }
         static const uint8_t dtMap[8] = {1, 4, 6, 7, 9, 10, 12, 13};   // alte Delay-Zeiten (8 Werte) -> neue Liste (15)
-        np->fx[FX_DTIM] = dtMap[np->fx[FX_DTIM] & 7];
-        np->fx[FX_DFBK] = (uint8_t)(np->fx[FX_DFBK] * 0.95f / 1.2f);   // gleiches Feedback wie vorher
+        oldFx[FX_DTIM] = dtMap[oldFx[FX_DTIM] & 7];
+        oldFx[FX_DFBK] = (uint8_t)(oldFx[FX_DFBK] * 0.95f / 1.2f);   // gleiches Feedback wie vorher
         if (ver <= 3) np->mst[MS_SCALE] = (uint8_t)scaleFromV3;
-        memcpy(&proj, np, sizeof(Project));
-        free(np);
-        printf("Projekt von Version %u auf %d umgestellt\n", ver, PROJECT_VERSION);
     } else {
         ok = false;
     }
-    if (ok && ver < 12) {   // bis v11: Song war eine Pattern-Kette -> Zeilen mit demselben Pattern auf allen Spuren
-        memset(proj.patMute, 0, sizeof proj.patMute);
-        if (proj.songLen > SONG_MAX) proj.songLen = 0;
-        for (int i = 0; i < SONG_MAX; i++) { rowFromPattern(proj, proj.row[i], proj.songOld[i].pat % NPATTERNS); proj.row[i].rep = proj.songOld[i].rep < 1 ? 1 : proj.songOld[i].rep; }
+    if (ok && np) {   // altes Layout (96 Parameter) -> v13
+        static uint8_t o[OLD_NPARAMS];
+        for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {
+            Pattern& P = np->pat[pi];
+            int m = P.machine[t] % M_COUNT;
+            memcpy(o, P.p[t], OLD_NPARAMS); migrateTrack13(m, o, P.p[t], false);
+            for (int st = 0; st < NSTEPS; st++) { memcpy(o, P.s[t][st].lock, OLD_NPARAMS); migrateTrack13(m, o, P.s[t][st].lock, true); }
+        }
+        // Effekte: Bus A = Delay, Bus B = Reverb (bisherige Werte), Bus C frei
+        for (int b = 0; b < NBUS; b++) setBusType(*np, b, b == 0 ? BF_DELAY : (b == 1 ? BF_REVERB : BF_OFF));
+        np->bus[0][BX_P1] = oldFx[FX_DTIM]; np->bus[0][BX_P2] = oldFx[FX_DFBK]; np->bus[0][BX_P3] = oldFx[FX_DTON]; np->bus[0][BX_P4] = oldFx[FX_DWID];
+        np->bus[0][BX_P5] = 0;
+        np->bus[1][BX_P1] = oldFx[FX_RSIZ]; np->bus[1][BX_P2] = oldFx[FX_RDMP]; np->bus[1][BX_P3] = oldFx[FX_RPRE]; np->bus[1][BX_P4] = oldFx[FX_RWID];
+        np->bus[1][BX_P5] = 0;
+        if (haveRows) { memcpy(np->patMute, oldMute, NPATTERNS); memcpy(np->row, oldRows, sizeof oldRows); }
+        else {   // bis v11: Song war eine Pattern-Kette -> Zeilen mit demselben Pattern auf allen Spuren
+            if (np->songLen > SONG_MAX) np->songLen = 0;
+            for (int i = 0; i < SONG_MAX; i++) { rowFromPattern(*np, np->row[i], oldSong[i].pat % NPATTERNS); np->row[i].rep = oldSong[i].rep < 1 ? 1 : oldSong[i].rep; }
+        }
+        np->version = PROJECT_VERSION;
+        memcpy(&proj, np, sizeof(Project));
+        free(np);
+        printf("Projekt von Version %u auf %d umgestellt\n", ver, PROJECT_VERSION);
     }
     if (ok && ver < 10) {   // bis v9: SYNTH/WTBL spielten den Tiefpass mit 24 dB -> Typ LP24
         for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {

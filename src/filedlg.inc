@@ -44,7 +44,7 @@ static bool savePresetFile(int t, const char* path) {
     snprintf(d, sizeof d, "%spresets/%s", basePath, MACHINE_NAMES[m]); mkdir(d, 0755);
     FILE* f = fopen(path, "wb");
     if (!f) return false;
-    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 2, 0};
+    uint8_t hdr[8] = {'G', 'B', 'P', '1', (uint8_t)m, (uint8_t)NPARAMS, 3, 0};   // Format 3 = 128 Parameter (v13)
     bool ok = fwrite(hdr, 8, 1, f) == 1 && fwrite(curP().p[t], NPARAMS, 1, f) == 1;
     int sl = curP().p[t][P_S0];
     if (ok) {   // Sample-Name dahinter (wie im Projekt), damit der Sound in jedem Projekt passt; Anzahl 0 = kein Sample

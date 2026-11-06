@@ -31,9 +31,17 @@ static const FSound FACTORY[] = {
                            {P_ASUS, 110}, {P_AREL, 90}, {P_REV, 85}, {P_AMOD, ARP_CHORD}, {P_ACHD, 6}, {P_LEN, 110}, {P_VOL, 70}}},
     {M_SYNTH, "COMB PLUCK", {{P_S0, 1}, {P_S5, 40}, {P_FTYP, FT_CMBP}, {P_FREQ, 75}, {P_RESO, 100}, {P_KEYT, 100}, {P_ADEC, 45},
                              {P_ASUS, 0}, {P_AREL, 40}, {P_DLY, 40}, {P_REV, 40}, {P_NOTE, 60}, {255, 0}}},
-    {M_FM, "GLASS BELL", {{P_S0, 1}, {P_S2, 3}, {P_S3, 10}, {P_X0, 70}, {P_ADEC, 80}, {P_ASUS, 0}, {P_AREL, 80}, {P_REV, 60}, {P_DLY, 30},
-                          {P_NOTE, 72}, {255, 0}}},
-    {M_FM, "FM BASS", {{P_S0, 0}, {P_S1, 40}, {P_S2, 3}, {P_S3, 3}, {P_X0, 90}, {P_ADEC, 50}, {P_ASUS, 40}, {P_AREL, 20}, {P_NOTE, 36}, {255, 0}}},
+    // FM: Operator k liegt ab FM_OPB[k] (OP1 = P_X0, OP2 = P_Y0, OP3 = P_Z0, OP4 = P_W0) + OP_RAT/OP_FINE/OP_DETN/OP_LVL/OP_ATK/OP_DEC/OP_SUS/OP_REL
+    {M_FM, "GLASS BELL", {{P_S0, 1}, {P_X0 + OP_DEC, 95}, {P_X0 + OP_SUS, 0}, {P_X0 + OP_REL, 85}, {P_Y0 + OP_RAT, 13}, {P_Y0 + OP_LVL, 70},
+                          {P_Y0 + OP_DEC, 80}, {P_Y0 + OP_SUS, 0}, {P_Z0 + OP_RAT, 10}, {P_Z0 + OP_FINE, 72}, {P_Z0 + OP_LVL, 30},
+                          {P_ASUS, 0}, {P_ADEC, 95}, {P_REV, 60}, {P_DLY, 30}, {P_NOTE, 72}}},
+    {M_FM, "FM BASS", {{P_S0, 0}, {P_S1, 40}, {P_Y0 + OP_RAT, 3}, {P_Y0 + OP_LVL, 90}, {P_Y0 + OP_DEC, 50}, {P_Y0 + OP_SUS, 30},
+                       {P_X0 + OP_SUS, 127}, {P_ADEC, 50}, {P_ASUS, 40}, {P_AREL, 20}, {P_NOTE, 36}, {255, 0}}},
+    {M_FM, "DX E-PIANO", {{P_S0, 3}, {P_X0 + OP_DEC, 85}, {P_X0 + OP_SUS, 25}, {P_Y0 + OP_LVL, 55}, {P_Y0 + OP_DEC, 70}, {P_Y0 + OP_SUS, 10},
+                          {P_Z0 + OP_LVL, 90}, {P_Z0 + OP_DEC, 80}, {P_Z0 + OP_SUS, 15}, {P_W0 + OP_RAT, 25}, {P_W0 + OP_LVL, 45},
+                          {P_W0 + OP_DEC, 40}, {P_W0 + OP_SUS, 0}, {P_REV, 40}, {P_NOTE, 60}, {255, 0}}},
+    {M_FM, "FM PLUCK", {{P_S0, 0}, {P_S1, 20}, {P_S3, 76}, {P_S4, 20}, {P_X0 + OP_DEC, 70}, {P_X0 + OP_SUS, 0}, {P_Y0 + OP_RAT, 9},
+                        {P_Y0 + OP_LVL, 80}, {P_Y0 + OP_DEC, 50}, {P_Y0 + OP_SUS, 0}, {P_DLY, 45}, {P_REV, 30}, {P_NOTE, 60}, {255, 0}}},
     {M_WTBL, "VOWEL PAD", {{P_S0, 2}, {P_S1, 50}, {P_S3, 40}, {P_FTYP, FT_VOWL}, {P_FREQ, 50}, {P_RESO, 70}, {P_AATK, 60}, {P_ASUS, 110},
                            {P_AREL, 80}, {P_REV, 70}, {P_LEN, 110}, {255, 0}}},
     {M_WTBL, "DIGITAL PLUCK", {{P_S0, 3}, {P_S1, 30}, {P_S6, 100}, {P_FTYP, FT_LP24}, {P_FREQ, 80}, {P_FENV, 90}, {P_ADEC, 40}, {P_ASUS, 0},
@@ -93,7 +101,7 @@ static inline void buildDemo(Engine& E) {
         P.p[4][P_L1 + LF_DEST] = P_FREQ + 1; P.p[4][P_L1 + LF_DEPTH] = 84; P.p[4][P_L1 + LF_SYNC] = 0; P.p[4][P_L1 + LF_RATE] = 22; P.p[4][P_L1 + LF_WAVE] = LW_TRI;
     }
     J.cmp[CM_SRC] = 1; J.cmp[CM_THR] = 70; J.cmp[CM_RAT] = 4;
-    J.fx[FX_DTIM] = 6; J.fx[FX_DFBK] = 55; J.fx[FX_RSIZ] = 95;
+    J.bus[0][BX_P1] = 6; J.bus[0][BX_P2] = 55; J.bus[1][BX_P1] = 95;   // Bus A = Delay, Bus B = Reverb
     static const uint8_t chain[4][2] = {{0, 2}, {1, 4}, {2, 2}, {3, 4}};
     J.songLen = 4;
     for (int i = 0; i < 4; i++) { Engine::rowFromPattern(J, J.row[i], chain[i][0]); J.row[i].rep = chain[i][1]; }

@@ -576,10 +576,22 @@ static void uiScenarios() {
                 char pp[700]; projectPath("PoolTest", pp, sizeof pp);
                 FILE* f = fopen(pp, "rb"); long n = 0; uint8_t* buf = nullptr;
                 if (f) { fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET); buf = (uint8_t*)malloc(n); if (fread(buf, 1, n, f) != (size_t)n) n = 0; fclose(f); }
-                if (buf && n > (long)sizeof(Project)) {
-                    uint32_t v11 = 11; memcpy(buf + 4, &v11, 4);
+                if (buf && n > (long)sizeof(Project)) {   // altes Layout (96 Parameter) nachbauen, Namensliste von der v13-Datei
+                    uint8_t* ob = (uint8_t*)calloc(1, PROJECT_V11_SIZE);
+                    memcpy(ob, buf, 20); uint32_t v11 = 11; memcpy(ob + 4, &v11, 4);
+                    for (int pi = 0; pi < NPATTERNS; pi++) {
+                        const Pattern& Q = eng.proj.pat[pi];
+                        uint8_t* q = ob + 20 + (long)pi * OLD_PAT_SIZE;
+                        memcpy(q, Q.machine, 8); memcpy(q + 8, Q.len, 8); memcpy(q + 16, Q.speed, 8);
+                        for (int t = 0; t < NTRACKS; t++) {
+                            int m = Q.machine[t] % M_COUNT;
+                            for (int i = 0; i < OLD_NPARAMS; i++) { int j = Engine::mapOldParam(m, i); q[24 + t * OLD_NPARAMS + i] = j >= 0 ? Q.p[t][j] : 0; }
+                            for (int st = 0; st < NSTEPS; st++) memset(q + 24 + 8 * OLD_NPARAMS + (t * NSTEPS + st) * (1 + OLD_NPARAMS) + 1, NO_LOCK, OLD_NPARAMS);
+                        }
+                    }
                     f = fopen(pp, "wb");
-                    fwrite(buf, 1, PROJECT_V11_SIZE, f); fwrite(buf + sizeof(Project), 1, n - sizeof(Project), f); fclose(f);
+                    fwrite(ob, 1, PROJECT_V11_SIZE, f); fwrite(buf + sizeof(Project), 1, n - sizeof(Project), f); fclose(f);
+                    free(ob);
                     poolSetSlot(s2, "");
                     doLoadProject("PoolTest");
                     int s4 = curP().p[7][P_S0];

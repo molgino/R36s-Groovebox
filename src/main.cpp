@@ -69,8 +69,9 @@ static Pattern mutUndo;            // Pattern vor der letzten Mutation
 static bool haveMutUndo = false;
 static int mutAmt = 1, mutPat = 0;
 static int mixRow = 0;
-static const uint8_t MIX_P[4] = {P_VOL, P_PAN, P_DLY, P_REV};
-static const char* const MIX_NAMES[4] = {"VOL", "PAN", "DLY", "REV"};
+enum { MIX_ROWS = 5 };
+static const uint8_t MIX_P[MIX_ROWS] = {P_VOL, P_PAN, P_DLY, P_REV, P_SNDC};
+static const char* const MIX_NAMES[MIX_ROWS] = {"VOL", "PAN", "S.A", "S.B", "S.C"};   // Sends an Effekt-Bus A/B/C
 static bool menuOpen = false; static int menuSel = 0;
 static bool confirmOpen = false; static char confirmText[80]; static int confirmAct = 0, confirmArg = 0;
 static Uint32 selDownAt = 0;
@@ -706,21 +707,23 @@ static void redoStep() {
 }
 
 // Seiten: Spurseiten haben eine Speicherseite (je 8 Parameter), globale nicht
-static bool trackPage(int p) { return p < FIRST_GLOBAL_PAGE; }
+static bool trackPage(int p) { return p >= 0 && p < NUI_PAGES && PG_STORE[p] >= 0; }
 static int sp() { return PG_STORE[page]; }
 static bool pageAvail(int p) {
     if (p == PG_SRC2) return machineHasSrc2(curP().machine[track]);
+    if (p == PG_SRC3 || p == PG_SRC4 || p == PG_SRC5) return machineHasSrc35(curP().machine[track]);
     if (p == PG_ARP) return !machineIsDrum(curP().machine[track]);   // Arpeggiator nur fuer Klangerzeuger mit Tonhoehe
     return true;
 }
 // Seitenringe fuer L2/R2: innerhalb der Gruppe (Spur / Live, Mix & FX / Projekt), Reihenfolge wie der Signalfluss
-static const int RING_TRK[] = {PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS, PG_LFO1, PG_LFO2, PG_LFO3};
-static const int RING_MIX[] = {PG_LIVE, PG_MIX, PG_FX, PG_CMP};
+static const int RING_TRK[] = {PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_SRC3, PG_SRC4, PG_SRC5, PG_FLT, PG_FLT2, PG_AMP, PG_INS, PG_SEND, PG_LFO1, PG_LFO2, PG_LFO3};
+enum { RING_TRK_N = sizeof RING_TRK / sizeof *RING_TRK };
+static const int RING_MIX[] = {PG_LIVE, PG_MIX, PG_FX, PG_FXB, PG_FXC, PG_CMP};
 static const int RING_PRJ[] = {PG_SONG, PG_PRJ, PG_MST, PG_SYS};
 static void pageRing(int p, const int*& r, int& n) {
-    for (int i = 0; i < 4; i++) if (RING_MIX[i] == p) { r = RING_MIX; n = 4; return; }
+    for (int i = 0; i < 6; i++) if (RING_MIX[i] == p) { r = RING_MIX; n = 6; return; }
     for (int i = 0; i < 4; i++) if (RING_PRJ[i] == p) { r = RING_PRJ; n = 4; return; }
-    r = RING_TRK; n = 12;
+    r = RING_TRK; n = RING_TRK_N;
 }
 static void gotoPage(int dir) {
     const int* r; int n; pageRing(page, r, n);
@@ -894,9 +897,11 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
     } else if (page == PG_MIX) {
         d = PDEF_NONE;
         val = 0;
-    } else if (page == PAGE_FX) {
-        d = FX_DEFS[k];
-        val = eng.proj.fx[k];
+    } else if (busOfPage(page) >= 0) {   // Effekt-Bus: Regler je nach Effekt-Typ
+        const uint8_t* bp = eng.proj.bus[busOfPage(page)];
+        d = busDef(busOfPage(page), bp[BX_TYPE], k);
+        val = bp[k];
+        if (k == BX_FWD && d.kind != K_NONE) snprintf(label, ln, TR("> BUS %c", "> BUS %c"), 'A' + busOfPage(page) + 1);
     } else if (page == PAGE_CMP) {
         d = CMP_DEFS[k];
         val = k == CM_GR ? 0 : eng.proj.cmp[k];
@@ -1267,13 +1272,13 @@ static void fmGraph(int gx, int gy, int gw, int gh, int algo, const int* rat, co
     for (int k = 0; k < 4; k++) {
         bool car = FM_CARRIERS[algo] >> k & 1;
         float glow = (vo && vo->active && vo->machine == M_FM) ? vo->fmEnv[k] : 0.f;
-        float lv = k == 0 ? 1.f : lvl[k] / 127.f;
+        float lv = lvl[k] / 127.f;
         Col bc = car ? mix(dimC(c, 0.35f + 0.65f * lv), C_PLAY, glow * 0.4f) : mix(C_SEL, c, glow * 0.6f);
         if (k == selOp) { float p = 0.5f + 0.5f * sinf(animTime * 7.f); rrect(bx[k] - 3, by[k] - 3, bw + 6, bh + 6, 6, c, (Uint8)(60 + 60 * p)); }
         rrect(bx[k], by[k], bw, bh, 4, bc);
         if (!car) { rrect(bx[k] + 1, by[k] + 1, bw - 2, bh - 2, 3, C_PANEL); fill(bx[k] + 2, by[k] + bh - 3, (int)((bw - 4) * lv), 2, c); }
         char b[24];
-        snprintf(b, sizeof b, "OP%d x%.2g", k + 1, FM_RATIOS[rat[k] & 15]);
+        snprintf(b, sizeof b, "OP%d x%.2g", k + 1, FM_RATIOS[rat[k] % FM_NRAT]);
         text(bx[k] + 6, by[k], b, car ? C_BG : C_TEXT);
         if (car) { int x1 = bx[k] + bw; fill(x1, by[k] + bh / 2, ox - x1, 1, dimC(c, 0.5f)); }
         if (k == 3) { rrect(bx[3] + bw - 14, by[3] - 4, 12, 6, 3, dimC(c, 0.6f)); }   // Feedback-Schleife
@@ -1905,6 +1910,7 @@ static void paramChip(int k, int x, int y, Col tc) {
 }
 
 // welche Reihe (0/1) der aktuellen Seite als Grafik erscheint
+static int fmOpPage(int p) { return p == PG_SRC2 ? 0 : (p == PG_SRC3 ? 1 : (p == PG_SRC4 ? 2 : (p == PG_SRC5 ? 3 : -1))); }
 static int graphKind(int row) {
     if (page == PG_AMP && row == 0) return 1;             // AMP: Huellkurve
     if (page == PG_FLT) return row == 0 ? 2 : 1;          // FLT: Filter + Huellkurve
@@ -1919,7 +1925,7 @@ static int graphKind(int row) {
         if (m == M_CHOP) return 10;
         if (m == M_GRAN) return 11;
     }
-    if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_FM) return 6;
+    if (curP().machine[track] == M_FM && fmOpPage(page) >= 0) return row == 1 ? 14 : 0;   // FM-Operator: eigene Huellkurve
     if (page == PG_SEQ && row == 0) return 7;
     if (page == PG_ARP && row == 0) return 13;
     if (page == PG_FLT2 && row == 0) return 12;
@@ -1959,8 +1965,8 @@ static void drawMixer(int ox) {
         snprintf(b, sizeof b, "%d", vol);
         text(x + 54, fy + fh - 14, b, rs ? C_PLAY : C_DIM);
         // Panorama + Sends
-        int rowY[3] = {y + 138, y + 154, y + 170};
-        for (int r = 1; r < 4; r++) {
+        int rowY[MIX_ROWS - 1] = {y + 134, y + 148, y + 162, y + 176};
+        for (int r = 1; r < MIX_ROWS; r++) {
             int yy = rowY[r - 1], v = P.p[t][MIX_P[r]];
             bool on = sel && mixRow == r;
             text(x + 8, yy - 5, MIX_NAMES[r], on ? C_PLAY : C_DIM);
@@ -1986,7 +1992,7 @@ static const int MAP_ROWS[5][6] = {
     {PG_TRG, PG_SEQ, PG_ARP, -1, -1, -1},
     {PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS},
     {PG_LFO1, PG_LFO2, PG_LFO3, -1, -1, -1},
-    {PG_LIVE, PG_MIX, PG_FX, PG_CMP, -1, -1},
+    {PG_LIVE, PG_MIX, PG_FX, PG_FXB, PG_FXC, PG_CMP},
     {PG_SONG, PG_PRJ, PG_MST, PG_SYS, -1, -1}};
 static const char* const PAGE_DESC_DE[NUI_PAGES] = {
     "Werte des Steps: Note, Anschlag, Länge, Wahrscheinlichkeit, Bedingung, Engine",
@@ -2002,13 +2008,19 @@ static const char* const PAGE_DESC_DE[NUI_PAGES] = {
     "LFO 3: moduliert einen Regler der Spur",
     "Insert-Effekt der Spur: Verzerrer, Bitcrusher, Chorus ...",
     "Mixer: Lautstärke, Panorama, Sends, Mute und Solo aller Spuren",
-    "Delay und Reverb (für alle Spuren)",
+    "Effekt-Bus A: Effekt frei wählbar (Delay, Tape, Reverb, Spring, Chorus)",
     "Kompressor auf der Summe mit Sidechain",
     "Projekte laden/speichern, Sounds der Spur laden/speichern",
     "Song als Clip-Matrix: Pattern je Spur, Mutes, Export als WAV",
     "Tempo, Swing, Tonskala, Lautstärke und Summen-Klang",
     "Einstellungen: Pattern, Audio, MIDI, USB/PC, Samples, System",
-    "Performance: Mutes auf den Tasten, FILL, WAV-Aufnahme, DJ-Filter"};
+    "Performance: Mutes auf den Tasten, FILL, WAV-Aufnahme, DJ-Filter",
+    "Weitere Klang-Regler der Engine (FM: Operator 2)",
+    "Weitere Klang-Regler der Engine (FM: Operator 3)",
+    "Weitere Klang-Regler der Engine (FM: Operator 4)",
+    "Anteil der Spur an den Effekt-Bussen A, B und C",
+    "Effekt-Bus B: Effekt frei wählbar (Delay, Tape, Reverb, Spring, Chorus)",
+    "Effekt-Bus C: Effekt frei wählbar (Delay, Tape, Reverb, Spring, Chorus)"};
 static const char* const PAGE_DESC_EN[NUI_PAGES] = {
     "Step values: note, velocity, length, probability, condition, engine",
     "Direction, length, tempo factor, Euclid and random generator",
@@ -2023,13 +2035,19 @@ static const char* const PAGE_DESC_EN[NUI_PAGES] = {
     "LFO 3: modulates a control of the track",
     "Insert effect of the track: drive, bitcrusher, chorus ...",
     "Mixer: level, pan, sends, mute and solo of all tracks",
-    "Delay and reverb (for all tracks)",
+    "Effect bus A: any effect (delay, tape, reverb, spring, chorus)",
     "Compressor on the master with sidechain",
     "Load/save projects, load/save sounds of the track",
     "Song as clip matrix: pattern per track, mutes, WAV export",
     "Tempo, swing, scale, volume and master sound",
     "Settings: pattern, audio, MIDI, USB/PC, samples, system",
-    "Performance: mutes on the buttons, FILL, WAV recording, DJ filter"};
+    "Performance: mutes on the buttons, FILL, WAV recording, DJ filter",
+    "More sound controls of the engine (FM: operator 2)",
+    "More sound controls of the engine (FM: operator 3)",
+    "More sound controls of the engine (FM: operator 4)",
+    "Share of the track sent to effect buses A, B and C",
+    "Effect bus B: any effect (delay, tape, reverb, spring, chorus)",
+    "Effect bus C: any effect (delay, tape, reverb, spring, chorus)"};
 #define PAGE_DESC (g_lang ? PAGE_DESC_EN : PAGE_DESC_DE)
 static void mapPos(int p, int& r, int& c) { r = c = 0; for (int i = 0; i < 5; i++) for (int k = 0; k < 6; k++) if (MAP_ROWS[i][k] == p) { r = i; c = k; } }
 static int mapCols(int r) { int n = 0; while (n < 6 && MAP_ROWS[r][n] >= 0) n++; return n; }
@@ -2044,7 +2062,7 @@ static void mapSummary(int p, char* b, int n) {
     switch (p) {
     case PG_LIVE: snprintf(b, n, TR("MUTES  FILL  REC", "MUTES  FILL  REC")); break;
     case PG_MIX: snprintf(b, n, TR("8 KANÄLE", "8 CHANNELS")); break;
-    case PG_FX: snprintf(b, n, "DELAY  REVERB"); break;
+    case PG_FX: case PG_FXB: case PG_FXC: snprintf(b, n, "%s", BUS_TYPE_NAMES[eng.proj.bus[busOfPage(p)][BX_TYPE] % BF_COUNT]); break;
     case PG_CMP: snprintf(b, n, "SIDECHAIN"); break;
     case PG_SONG: snprintf(b, n, TR("%d ZEILEN%s", "%d ROWS%s"), eng.proj.songLen, eng.songOn ? TR("  AN", "  ON") : ""); break;
     case PG_PRJ: snprintf(b, n, "%.15s", cfg.project); break;
@@ -2131,11 +2149,25 @@ static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
         oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), pv(P_S4), selRel, tc);
         break;
     case 6: {
-        int rat[4] = {pv(P_S2), pv(P_S3), pv(P_S4), pv(P_S5)}, lvl[4] = {127, pv(P_X0), pv(P_X1), pv(P_X2)};
-        int selOp = -1;
-        if (page == PG_SRC) selOp = selRel == 0 ? 4 : (selRel == 1 ? 3 : (selRel >= 2 ? selRel - 2 : -1));
-        else selOp = selRel >= 0 && selRel < 3 ? selRel + 1 : (selRel == 3 ? 0 : -1);
-        fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, selOp, &v, tc);
+        int rat[4], lvl[4];
+        for (int k = 0; k < 4; k++) { rat[k] = pv(FM_OPB[k] + OP_RAT); lvl[k] = pv(FM_OPB[k] + OP_LVL); }
+        int op = fmOpPage(page);
+        fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, op >= 0 ? op : (selRel == 0 ? 4 : -1), &v, tc);
+    } break;
+    case 14: {   // FM-Operator: Huellkurve + Kurzinfo
+        int op = fmOpPage(page), b = FM_OPB[op < 0 ? 0 : op];
+        envShapeK = 1.f;
+        envGraph(gx, gy, gw, gh, pv(b + OP_ATK), pv(b + OP_DEC), pv(b + OP_SUS), pv(b + OP_REL), selRel, nullptr, tc);
+        int algo = pv(P_S0) & 7;
+        bool car = FM_CARRIERS[algo] >> op & 1;
+        char ib[64];
+        float r = FM_RATIOS[pv(b + OP_RAT) % FM_NRAT] + (pv(b + OP_FINE) - 64) / 64.f * 0.5f;
+        int cents = (int)lrintf((pv(b + OP_DETN) - 64) / 64.f * 50.f);
+        int tgt = 0; for (int k = 0; k < 4; k++) if (FM_MODS[algo][k] >> op & 1) tgt |= 1 << k;
+        if (car) snprintf(ib, sizeof ib, TR("OP%d  x%.3g  %+d CENT  TRÄGER (HÖRBAR)", "OP%d  x%.3g  %+d CENT  CARRIER (AUDIBLE)"), op + 1, r, cents);
+        else snprintf(ib, sizeof ib, TR("OP%d  x%.3g  %+d CENT  MODULIERT OP%d", "OP%d  x%.3g  %+d CENT  MODULATES OP%d"), op + 1, r, cents, tgt ? __builtin_ctz(tgt) + 1 : 0);
+        text(gx + 8, gy + 4, ib, car ? tc : C_TEXT);
+        if (v.active && v.machine == M_FM && op >= 0) { int lh = (int)((gh - 8) * v.fmEnv[op]); fill(gx + gw - 8, gy + gh - 4 - lh, 4, lh, tc); }
     } break;
     case 7: seqGraph(gx, gy, gw, gh, selRel, tc); break;
     case 13: arpGraph(gx, gy, gw, gh, tc); break;
@@ -2837,8 +2869,18 @@ static void editValue(int delta) {
         saveSettings();
         return;
     }
-    if (page == PAGE_FX) {
-        eng.proj.fx[slot] = (uint8_t)clampi(eng.proj.fx[slot] + delta, 0, FX_DEFS[slot].max);
+    if (busOfPage(page) >= 0) {
+        int b = busOfPage(page);
+        uint8_t* bp = eng.proj.bus[b];
+        const ParamDef& bd = busDef(b, bp[BX_TYPE], slot);
+        if (bd.kind == K_NONE) return;
+        lockA();
+        if (slot == BX_TYPE) {   // Typ wechseln: Regler auf dessen Grundwerte, Sends/Weiterleitung bleiben
+            uint8_t fwd = bp[BX_FWD], lvl = bp[BX_LVL];
+            Engine::setBusType(eng.proj, b, clampi(bp[BX_TYPE] + (delta > 0 ? 1 : -1), 0, BF_COUNT - 1));
+            bp[BX_FWD] = fwd; bp[BX_LVL] = lvl;
+        } else bp[slot] = (uint8_t)clampi(bp[slot] + delta, 0, bd.max);
+        unlockA();
         return;
     }
     if (page == PAGE_CMP) {
@@ -2919,7 +2961,7 @@ static int curMax() {
     if (page == PAGE_MST) return slot == MS_BPM ? 270 : MST_DEFS[slot].max;
     if (page == PAGE_SYS) return 1;
     if (page == PAGE_CMP) return CMP_DEFS[slot].max;
-    if (page == PAGE_FX) return FX_DEFS[slot].max;
+    if (busOfPage(page) >= 0) return busDef(busOfPage(page), eng.proj.bus[busOfPage(page)][BX_TYPE], slot).max;
     if (!trackPage(page)) return 127;
     return paramDef(curP().machine[track], sp() * 8 + slot).max;
 }
@@ -2970,7 +3012,11 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
     lockA();
     Pattern& P = curP();
     Engine::initTrack(P, t, hdr[4]);
-    memcpy(P.p[t], prm, np);
+    if (hdr[6] < 3) {   // bis Format 2: 96 Parameter im alten Layout -> v13 (Sends, FM-Operatoren, SYNTH/WTBL-Seite 2)
+        uint8_t o[OLD_NPARAMS];
+        for (int i = 0; i < OLD_NPARAMS; i++) o[i] = i < np ? prm[i] : P.p[t][i];
+        Engine::migrateTrack13(hdr[4], o, P.p[t], false);
+    } else memcpy(P.p[t], prm, np);
     if (hdr[6] == 0 && (hdr[4] == M_SYNTH || hdr[4] == M_WTBL) && P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;   // alte Presets
     if (hdr[6] < 2) { P.p[t][P_FCRV] = 64; P.p[t][P_ACRV] = 64; }
     if (slot >= 0) P.p[t][P_S0] = (uint8_t)slot;
@@ -4091,14 +4137,14 @@ static void handleInput(Uint32 now, float dt) {
             }
         }
         bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
-        bool knobPg = page == PG_FX || page == PG_CMP || page == PG_MST;   // globale Reglerseiten: Steuerkreuz waehlt den Regler
+        bool knobPg = busOfPage(page) >= 0 || page == PG_CMP || page == PG_MST;   // globale Reglerseiten: Steuerkreuz waehlt den Regler
         if (!aHeld) {
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             int dx = (I.repeat(BT_RIGHT, now, 250, 70) ? 1 : 0) - (I.repeat(BT_LEFT, now, 250, 70) ? 1 : 0);
             int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0);
             if (mixP) {   // Mixer: links/rechts = Kanal, hoch/runter = Zeile
                 if (dx) track = (track + NTRACKS + dx) % NTRACKS;
-                if (dy) mixRow = clampi(mixRow + dy, 0, 3);
+                if (dy) mixRow = clampi(mixRow + dy, 0, MIX_ROWS - 1);
             } else if (knobPg) {
                 if (dx) slot = (slot + 8 + dx) % 8;
                 if (dy) slot = (slot + 4) % 8;
@@ -4142,7 +4188,7 @@ static void handleInput(Uint32 now, float dt) {
         }
         // Linker Stick: auf Regler zeigen (Mixer: hoch/runter = Zeile, links/rechts = Kanal)
         if (mixP) {
-            int f = flick(I.ly, flLY, flLYt, now); if (f) mixRow = clampi(mixRow - f, 0, 3);
+            int f = flick(I.ly, flLY, flLYt, now); if (f) mixRow = clampi(mixRow - f, 0, MIX_ROWS - 1);
             int g = flick(I.lx, flLX, flLXt, now); if (g) track = (track + NTRACKS + g) % NTRACKS;
         } else {   // Linker Stick: pro Antippen genau eine Kachel weiter (halten = wiederholen)
             int fx = flick(I.lx, flLX, flLXt, now), fy = flick(I.ly, flLY, flLYt, now);
@@ -4153,7 +4199,7 @@ static void handleInput(Uint32 now, float dt) {
         flRX = 0;
         {   // L1/R1: Regler waehlen (auch im Lock-Modus), Mixer: Zeile
             int dl = (I.repeat(BT_R1, now, 300, 110) ? 1 : 0) - (I.repeat(BT_L1, now, 300, 110) ? 1 : 0);
-            if (dl && mixP) mixRow = (mixRow + 4 + dl) % 4;
+            if (dl && mixP) mixRow = (mixRow + MIX_ROWS + dl) % MIX_ROWS;
             else if (dl) {
                 int s2 = slot;
                 for (int k = 0; k < 8; k++) {   // leere Felder ueberspringen
@@ -4507,8 +4553,8 @@ static bool readPoolTrailer(const char* path, char (*names)[96]) {
     if (!f) return false;
     bool ok = false;
     char mg[4]; uint16_t n = 0;
-    uint32_t ver = 0;   // v9-v11 sind kuerzer: Namensliste steht direkt nach PROJECT_V11_SIZE
-    long at = (fseek(f, 4, SEEK_SET) == 0 && fread(&ver, 4, 1, f) == 1 && ver < 12) ? (long)PROJECT_V11_SIZE : (long)sizeof(Project);
+    uint32_t ver = 0;   // Namensliste steht direkt hinter den Projektdaten (Groesse je nach Format)
+    long at = (fseek(f, 4, SEEK_SET) == 0 && fread(&ver, 4, 1, f) == 1) ? projectDataSize(ver) : (long)sizeof(Project);
     if (fseek(f, at, SEEK_SET) == 0 && fread(mg, 1, 4, f) == 4 && !memcmp(mg, "SPL1", 4) && fread(&n, 2, 1, f) == 1) {
         ok = true;
         for (int k = 0; k < n; k++) {

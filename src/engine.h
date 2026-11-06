@@ -2,6 +2,7 @@
 #pragma once
 #include "params.h"
 #include "samples.h"
+#include "fxbus.h"
 #include <stdint.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -23,20 +24,20 @@ struct Project {
     uint8_t mst[8];
     uint8_t pad[2];
     Pattern pat[NPATTERNS];
-    uint8_t cmp[8];          // ab Version 2: Kompressor
-    uint8_t fx[8];           // ab Version 2: Delay/Reverb (vorher in mst)
-    // Version 9-11: Song als Pattern-Kette (nur noch zum Umstellen alter Projekte)
-    struct SongEntry { uint8_t pat, rep; } songOld[64];
+    uint8_t cmp[8];          // Kompressor
+    uint8_t bus[NBUS][8];    // ab v13: Effekt-Busse A/B/C (Typ + Regler, siehe BUS_DEFS); vorher fx[8] = Delay/Reverb
     uint8_t songLen;         // Anzahl Song-Zeilen
     uint8_t pad2[3];
-    // ab Version 12: Mutes je Pattern (Bit je Spur) und Song als Clip-Matrix: je Zeile ein Pattern pro Spur
-    uint8_t patMute[NPATTERNS];
-    struct SongRow { uint8_t pat[NTRACKS]; uint8_t rep, mute, pad[2]; } row[64];   // pat = SONG_EMPTY: Spur schweigt
+    uint8_t patMute[NPATTERNS];   // Mutes je Pattern (Bit je Spur)
+    struct SongRow { uint8_t pat[NTRACKS]; uint8_t rep, mute, pad[2]; } row[64];   // Song als Clip-Matrix; pat = SONG_EMPTY: Spur schweigt
 };
-enum { PROJECT_VERSION = 12, SONG_MAX = 64, SONG_EMPTY = 255 };
-#include <stddef.h>
-enum { PROJECT_V11_SIZE = offsetof(Project, patMute) };   // Projekte v9-v11 enden hier (danach evtl. Sample-Namensliste)
+enum { PROJECT_VERSION = 13, SONG_MAX = 64, SONG_EMPTY = 255 };
+// Groessen der Formate v9-v12 (96 Parameter je Spur): danach steht ggf. die Sample-Namensliste
+enum { OLD_PAT_SIZE = 24 + 8 * OLD_NPARAMS + NTRACKS * NSTEPS * (1 + OLD_NPARAMS),
+       PROJECT_V11_SIZE = 20 + NPATTERNS * OLD_PAT_SIZE + 8 + 8 + 128 + 4,
+       PROJECT_V12_SIZE = PROJECT_V11_SIZE + NPATTERNS + 64 * 12 };
 static_assert(PROJECT_V11_SIZE == 1602088, "Layout v11 veraendert");
+inline long projectDataSize(uint32_t ver) { return ver >= 13 ? (long)sizeof(Project) : (ver == 12 ? (long)PROJECT_V12_SIZE : (long)PROJECT_V11_SIZE); }
 
 struct Rng {
     uint32_t s = 0x9E3779B9u;
@@ -90,12 +91,15 @@ struct Voice {
     float menv = 0, mco = 0;
     // FM mit 4 Operatoren
     float fmPh[4] = {0}, fmEnv[4] = {0}, fmDco[4] = {1, 1, 1, 1}, fmInc[4] = {0}, fmMod[4] = {0}, fmCar[4] = {0};
+    float fmAtk[4] = {1, 1, 1, 1}, fmSus[4] = {1, 1, 1, 1}, fmRco[4] = {1, 1, 1, 1}, fmPenv = 0;
+    int fmSt[4] = {0};   // Operator-Huellkurve: 0 aus, 1 Attack, 2 Decay/Sustain, 3 Release
     float fmFbAmt = 0, fmFbPrev = 0;
     int fmAlgo = 0;
     int scaleVal = 0;   // globale Tonskala (vom Engine gesetzt)
     // neue Engines
     float wtPos = 0, wtWarp = 0, wtDet = 1, wtPenv = 0, sAtkInc = 0, shkLvl = 0, shkGrit = 0, shkGain = 1;
     int shkStage = 0, wtTab = 0;
+    const Sample* wtUser = nullptr;   // WTBL: eigene Wavetable (TABL = USER)
     int chopStep = 0, chopFade = 64;
     struct Grain { bool on; double pos; float inc, age, len; } gr[12];
     float grTimer = 0, grInterval = 1000, grLen = 2000, grPosF = 0, grSpray = 0, grPitch = 1, grPSpr = 0;
@@ -122,7 +126,7 @@ struct Voice {
     double spos = 0; float sinc = 0, sGain = 1; int sStart = 0, sEnd = 0; bool sRev = false, sLoop = false, sDone = false;
     Rng rng;
     // pro Block berechnet
-    float pitchHz = 100, gainL = 0, gainR = 0, sendD = 0, sendR = 0, drive = 0, crushQ = 0;
+    float pitchHz = 100, gainL = 0, gainR = 0, snd[NBUS] = {0}, drive = 0, crushQ = 0;
     int srrN = 1, ftype = 0;
     float fBase = 127, fEnv = 0, reso = 0;
     float fCrvK = 1, aCrvK = 1;   // Huellkurvenform: Wert^k (k = 1 linear wie bisher)
@@ -151,10 +155,10 @@ struct Voice {
     void lfoUpdate(int n, float sr);
     void lfoTrigger();
     void noteOn(int machine, const uint8_t* base, const uint8_t* locks, float velScale, int gateSamples, float sr);
-    void noteOff() { aenv.off(); fenv.off(); }
+    void noteOff() { aenv.off(); fenv.off(); for (int k = 0; k < 4; k++) if (fmSt[k]) fmSt[k] = 3; }
     bool gated() const { return machine == M_SYNTH || machine == M_FM || machine == M_WTBL || machine == M_GRAN || (machine == M_SAMPLE && P(P_S5)); }
     void update(int n, float sr, float bpm);
-    void render(float* L, float* R, float* dS, float* rS, int n, float sr);
+    void render(float* L, float* R, float (*S)[32], int n, float sr);   // S = Sends an Bus A/B/C
     inline float filter1(float x);
 };
 
@@ -212,6 +216,7 @@ public:
     float dcXL = 0, dcXR = 0, dcYL = 0, dcYR = 0;   // DC-Sperre der Summe (Hochpass 3 Hz)
     float limRel = 1.f; int limPos = 0; bool limReady = false;
     volatile float limGr = 0;    // groesste Absenkung des Limiters in dB (Anzeige/Diagnose)
+    FxBus bus[NBUS];   // Effekt-Busse A/B/C
     Voice v[NTRACKS];
     Voice cv[NTRACKS][NCHORDV];   // Akkord-Zusatzstimmen (ARP-Modus AKKD)
 
@@ -230,6 +235,9 @@ public:
     volatile bool rowPending = false;          // Song: neue Zeile beim naechsten Pattern-Anfang uebernehmen
     void applyRow(int pos);                    // Pattern je Spur aus Zeile pos setzen
     static void rowFromPattern(Project& J, Project::SongRow& r, int pat);   // Zeile: alle Spuren pat, Mutes vom Pattern
+    static void setBusType(Project& J, int b, int type);   // Effekt-Bus: Typ setzen, Regler auf dessen Grundwerte
+    static int mapOldParam(int m, int i);                  // Parameterindex bis v12 -> v13 (-1 = entfaellt)
+    static void migrateTrack13(int m, const uint8_t* o, uint8_t* out, bool lock);   // 96 alte Werte/Locks -> 128
     void songStart(int pos);   // ab Eintrag pos (nur Engine-Zustand; Wiedergabe startet mit start())
 
     void init(int sampleRate);
@@ -255,11 +263,8 @@ private:
                  uint8_t notes[48]; uint8_t lk[NPARAMS]; Rng rng; } ar[NTRACKS];
     void arpFire(int t);
     void playNote(int t, const uint8_t* lk, float velScale, int gs, bool toMidi);
-    float* dlyL = nullptr; float* dlyR = nullptr; int dlyLen = 0, dlyPos = 0; float dlpL = 0, dlpR = 0;
-    Reverb rev;
     SVF djL, djR;
     float cEnv = 0;
-    float* preBuf = nullptr; int preLen = 0, prePos = 0;
     Rng rng;
     int curOff = 0;
     int midiNote[NTRACKS], midiGate[NTRACKS], liveNote[NTRACKS], skipStep[NTRACKS];
@@ -281,8 +286,6 @@ private:
     void schedule(int t, double at, int s, const uint8_t* lk);
     double stepStartT[NTRACKS] = {0}, stepLenT[NTRACKS] = {1};
     int tickCount = 0; double tickHist[25]; int tickHistN = 0;
-    float dSm = 0, dhpL = 0, dhpR = 0;
-    int dQuiet = 1 << 30, rQuiet = 1 << 30;   // Samples ohne Eingang und mit verklungenem Ausgang (dann Delay/Reverb ueberspringen)   // Delay: geglaettete Zeit, Hochpass in der Schleife
     void doTick();
     void stepTrack(int t);
     bool condOk(int t, int cond);
@@ -305,7 +308,7 @@ private:
     WkItem wkList[NTRACKS * (1 + NCHORDV)];
     int wkN = 0, wkNs = 0;
     bool wkClaimOne(uint32_t tag, int& idx);
-    float wL[32], wR[32], wD[32], wRV[32], wKL[32], wKR[32];
+    float wL[32], wR[32], wS[NBUS][32], wKL[32], wKR[32];
     static void* wkMain(void* arg);
 public:
     bool helperReady() const { return wkOn; }

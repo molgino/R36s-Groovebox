@@ -284,6 +284,43 @@ static void testDecay() {
     CHECK(pk < 1e-3f, "nach Stop + 6 s noch Pegel %.5f", pk);
 }
 
+// altes Projekt (Format v9-v12, 96 Parameter je Spur) Byte fuer Byte erzeugen
+struct OldProj {
+    uint8_t* b; uint32_t ver; long size;
+    explicit OldProj(uint32_t v) : ver(v) {
+        size = v == 12 ? PROJECT_V12_SIZE : PROJECT_V11_SIZE;
+        b = (uint8_t*)calloc(1, size);
+        memcpy(b, "GBX1", 4); memcpy(b + 4, &ver, 4); uint16_t bpm = 120; memcpy(b + 8, &bpm, 2);
+        for (int i = 0; i < 8; i++) b[10 + i] = MST_DEFS[i].def;
+        for (int pi = 0; pi < NPATTERNS; pi++) for (int t = 0; t < NTRACKS; t++) {
+            machine(pi, t, M_KICK); pat(pi)[8 + t] = 16; pat(pi)[16 + t] = SPEED_1X;
+            for (int st = 0; st < NSTEPS; st++) memset(lock(pi, t, st), NO_LOCK, OLD_NPARAMS);
+        }
+        for (int i = 0; i < 8; i++) { tail()[i] = CMP_DEFS[i].def; fx()[i] = FX_DEFS[i].def; }
+    }
+    ~OldProj() { free(b); }
+    uint8_t* pat(int pi) { return b + 20 + (long)pi * OLD_PAT_SIZE; }
+    void machine(int pi, int t, int m) {
+        pat(pi)[t] = (uint8_t)m;
+        for (int i = 0; i < OLD_NPARAMS; i++) { int j = Engine::mapOldParam(m, i); p(pi, t)[i] = 0; if (j >= 0 && m != M_FM) p(pi, t)[i] = paramDef(m, j).def; }
+    }
+    uint8_t* p(int pi, int t) { return pat(pi) + 24 + t * OLD_NPARAMS; }
+    uint8_t* lock(int pi, int t, int st) { return pat(pi) + 24 + 8 * OLD_NPARAMS + (t * NSTEPS + st) * (1 + OLD_NPARAMS) + 1; }
+    uint8_t* tail() { return b + 20 + (long)NPATTERNS * OLD_PAT_SIZE; }
+    uint8_t* fx() { return tail() + 8; }
+    uint8_t* song(int i) { return tail() + 16 + i * 2; }
+    uint8_t& songLen() { return tail()[144]; }
+    uint8_t* patMute() { return tail() + 148; }
+    uint8_t* row(int i) { return tail() + 148 + NPATTERNS + i * 12; }
+    bool write(const char* path, bool trailer = false) {
+        if (ver == 12) for (int i = 0; i < 64; i++) { uint8_t* r = row(i); if (!r[NTRACKS]) r[NTRACKS] = 1; }
+        FILE* g = fopen(path, "wb"); if (!g) return false;
+        bool ok = fwrite(b, 1, size, g) == (size_t)size;
+        if (trailer) ok = ok && fwrite("SPL1\0\0", 1, 6, g) == 6;
+        fclose(g); return ok;
+    }
+};
+
 static void testSaveLoad() {
     curTest = "Speichern/Laden";
     fresh(133);
@@ -298,24 +335,57 @@ static void testSaveLoad() {
     CHECK(E.load(path), "Laden fehlgeschlagen");
     CHECK(!memcmp(&ref, &E.proj, sizeof(Project)), "Projekt nach Laden verschieden");
     // v9-Datei: SYNTH mit LP12 -> LP24
-    fresh(120);
-    Engine::initTrack(E.proj.pat[0], 4, M_SYNTH);
-    E.proj.pat[0].p[4][P_FTYP] = FT_LP12;
-    E.proj.version = 9;
-    CHECK(E.save(path), "Speichern v9");
-    CHECK(E.load(path), "Laden v9");
-    CHECK(E.proj.version == PROJECT_VERSION, "Version %u", E.proj.version);
-    CHECK(E.proj.pat[0].p[4][P_FTYP] == FT_LP24, "Migration LP12->LP24 fehlt (%d)", E.proj.pat[0].p[4][P_FTYP]);
-    // v11-Datei (Song als Kette, ohne Clip-Matrix): nur der alte Teil + Sample-Liste dahinter
-    fresh(120);
-    E.proj.songLen = 2; E.proj.songOld[0].pat = 3; E.proj.songOld[0].rep = 4; E.proj.songOld[1].pat = 9; E.proj.songOld[1].rep = 1;
-    E.proj.version = 11;
-    { FILE* g = fopen(path, "wb"); fwrite(&E.proj, PROJECT_V11_SIZE, 1, g); fwrite("SPL1\0\0", 1, 6, g); fclose(g); }
-    memset(E.proj.row, 0x77, sizeof E.proj.row);
-    CHECK(E.load(path), "Laden v11");
-    CHECK(E.proj.songLen == 2 && E.proj.row[0].pat[0] == 3 && E.proj.row[0].pat[7] == 3 && E.proj.row[0].rep == 4 && E.proj.row[1].pat[5] == 9,
-          "Song v11 nicht in Zeilen umgestellt (%d %d %d)", E.proj.row[0].pat[0], E.proj.row[0].rep, E.proj.row[1].pat[5]);
-    CHECK(E.proj.row[0].mute == 0 && E.proj.patMute[0] == 0, "Mutes nach Umstellung nicht leer");
+    {
+        OldProj o(9);
+        o.machine(0, 4, M_SYNTH); o.p(0, 4)[P_FTYP] = FT_LP12;
+        CHECK(o.write(path), "v9 schreiben");
+        CHECK(E.load(path), "Laden v9");
+        CHECK(E.proj.version == PROJECT_VERSION, "Version %u", E.proj.version);
+        CHECK(E.proj.pat[0].p[4][P_FTYP] == FT_LP24, "Migration LP12->LP24 fehlt (%d)", E.proj.pat[0].p[4][P_FTYP]);
+    }
+    // v11-Datei (Song als Kette, ohne Clip-Matrix): alter Teil + Sample-Liste dahinter
+    {
+        OldProj o(11);
+        o.songLen() = 2; o.song(0)[0] = 3; o.song(0)[1] = 4; o.song(1)[0] = 9; o.song(1)[1] = 1;
+        CHECK(o.write(path, true), "v11 schreiben");
+        memset(E.proj.row, 0x77, sizeof E.proj.row);
+        CHECK(E.load(path), "Laden v11");
+        CHECK(E.proj.songLen == 2 && E.proj.row[0].pat[0] == 3 && E.proj.row[0].pat[7] == 3 && E.proj.row[0].rep == 4 && E.proj.row[1].pat[5] == 9,
+              "Song v11 nicht in Zeilen umgestellt (%d %d %d)", E.proj.row[0].pat[0], E.proj.row[0].rep, E.proj.row[1].pat[5]);
+        CHECK(E.proj.row[0].mute == 0 && E.proj.patMute[0] == 0, "Mutes nach Umstellung nicht leer");
+    }
+    // v12-Datei: FM mit 4 Operatoren, Sends auf die SEND-Seite, SYNTH-2. Seite, LFO-Ziele, Locks, Effekte -> Busse
+    {
+        OldProj o(12);
+        uint8_t* f = o.p(2, 0);
+        o.machine(2, 0, M_FM);
+        f[P_S0] = 2; f[P_S1] = 30; f[P_S2] = 3; f[P_S3] = 10; f[P_S4] = 3; f[P_S5] = 3; f[P_S6] = 96; f[P_S7] = 10;
+        f[P_X0] = 70; f[P_X1] = 0; f[P_X2] = 0; f[P_X3] = 127; f[P_X4] = 40; f[P_X5] = 50; f[P_X6] = 50; f[P_X7] = 90;
+        o.lock(2, 0, 5)[P_S3] = 7;                       // Lock: RAT2 = 3.0
+        uint8_t* y = o.p(2, 1);
+        o.machine(2, 1, M_SYNTH); y[OLD_P_DLY] = 50; y[OLD_P_REV] = 60; y[P_L1 + LF_DEST] = OLD_P_DLY + 1;
+        o.lock(2, 1, 3)[OLD_P_REV] = 99;
+        o.fx()[FX_DTIM] = 6; o.fx()[FX_DFBK] = 70; o.fx()[FX_RSIZ] = 100;
+        o.patMute()[2] = 0x81; o.songLen() = 1; o.row(0)[0] = 2;
+        CHECK(o.write(path, true), "v12 schreiben");
+        CHECK(E.load(path), "Laden v12");
+        const Pattern& P = E.proj.pat[2];
+        const uint8_t* q = P.p[0];
+        CHECK(P.machine[0] == M_FM && q[P_S0] == 2 && q[P_S1] == 30 && q[P_S2] == 90 && q[P_S5] == 10, "FM: ALGO/FBK/VELO/NOIS falsch (%d %d %d %d)", q[P_S0], q[P_S1], q[P_S2], q[P_S5]);
+        CHECK(FM_RATIOS[q[FM_OPB[0] + OP_RAT]] == 1.f && FM_RATIOS[q[FM_OPB[1] + OP_RAT]] == 5.f, "FM: Ratios falsch (%g %g)", FM_RATIOS[q[FM_OPB[0] + OP_RAT]], FM_RATIOS[q[FM_OPB[1] + OP_RAT]]);
+        CHECK(q[FM_OPB[0] + OP_LVL] == 127 && q[FM_OPB[1] + OP_LVL] == 70 && q[FM_OPB[2] + OP_LVL] == 0, "FM: Pegel falsch");
+        CHECK(q[FM_OPB[0] + OP_SUS] == 127 && q[FM_OPB[1] + OP_SUS] == 0 && q[FM_OPB[1] + OP_DEC] > 0, "FM: Huellkurven falsch (SUS1 %d SUS2 %d DEC2 %d)", q[FM_OPB[0] + OP_SUS], q[FM_OPB[1] + OP_SUS], q[FM_OPB[1] + OP_DEC]);
+        CHECK(q[FM_OPB[1] + OP_DETN] > 64 && q[FM_OPB[0] + OP_DETN] == 64, "FM: FINE nicht in DETN umgerechnet (%d)", q[FM_OPB[1] + OP_DETN]);
+        CHECK(FM_RATIOS[P.s[0][5].lock[FM_OPB[1] + OP_RAT]] == 3.f, "FM: Ratio-Lock falsch (%d)", P.s[0][5].lock[FM_OPB[1] + OP_RAT]);
+        const uint8_t* w = P.p[1];
+        CHECK(w[P_DLY] == 50 && w[P_REV] == 60 && w[P_A6] == 0 && w[P_A7] == 0, "Sends nicht verschoben (%d %d)", w[P_DLY], w[P_REV]);
+        CHECK(w[P_L1 + LF_DEST] == P_DLY + 1, "LFO-Ziel nicht mitgezogen (%d)", w[P_L1 + LF_DEST]);
+        CHECK(P.s[1][3].lock[P_REV] == 99 && P.s[1][3].lock[OLD_P_REV] == NO_LOCK, "Send-Lock nicht verschoben");
+        CHECK(w[P_X0] == 3 && w[P_X2] == 127 && w[P_X3] == 127, "SYNTH 2. Seite nicht auf Grundwerte (%d %d)", w[P_X0], w[P_X2]);
+        CHECK(E.proj.bus[0][BX_TYPE] == BF_DELAY && E.proj.bus[0][BX_P1] == 6 && E.proj.bus[0][BX_P2] == 70, "Delay nicht auf Bus A");
+        CHECK(E.proj.bus[1][BX_TYPE] == BF_REVERB && E.proj.bus[1][BX_P1] == 100, "Reverb nicht auf Bus B");
+        CHECK(E.proj.patMute[2] == 0x81 && E.proj.songLen == 1 && E.proj.row[0].pat[0] == 2, "v12: Mutes/Song verloren");
+    }
     // kaputte Datei darf nicht geladen werden
     FILE* f = fopen(path, "wb"); fwrite("GBX1xxxx", 1, 8, f); fclose(f);
     CHECK(!E.load(path), "kaputte Datei wurde geladen");
