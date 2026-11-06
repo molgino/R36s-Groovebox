@@ -24,7 +24,7 @@ CXXFLAGS += $(TFLAGS)
 LDFLAGS += $(TFLAGS)
 LIBS += -lstdc++
 endif
-SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp src/dhcpd.cpp src/web.cpp src/webpage.cpp src/drmout.cpp src/usbaudio.cpp src/remote.cpp
+SRC = src/main.cpp src/engine.cpp src/input.cpp src/samples.cpp src/midi.cpp src/dhcpd.cpp src/web.cpp src/webpage.cpp src/drmout.cpp src/usbaudio.cpp src/remote.cpp src/fxbus.cpp
 OBJ = $(SRC:.cpp=.o)
 OUT ?= groovebox
 
@@ -42,11 +42,11 @@ clean:
 .PHONY: clean r36s
 
 # Tests: make test (SAN=1 -> AddressSanitizer + UBSan), make test-tsan (ThreadSanitizer: Mehrkern-Audio)
-tests/unit: tests/unit.cpp src/engine.cpp src/samples.cpp src/*.h
-	$(CXX) $(filter-out -O2,$(CXXFLAGS)) -O2 $(TFLAGS) -Isrc -o $@ tests/unit.cpp src/engine.cpp src/samples.cpp $(TFLAGS) -lm -lpthread $(if $(TFLAGS),-lstdc++,)
+tests/unit: tests/unit.cpp src/engine.cpp src/samples.cpp src/fxbus.cpp src/*.h
+	$(CXX) $(filter-out -O2,$(CXXFLAGS)) -O2 $(TFLAGS) -Isrc -o $@ tests/unit.cpp src/engine.cpp src/samples.cpp src/fxbus.cpp $(TFLAGS) -lm -lpthread $(if $(TFLAGS),-lstdc++,)
 test: tests/unit
 	./tests/unit samples
 test-tsan:
-	$(CXX) -O1 -g -fsanitize=thread -DWITH_MIDI -fno-exceptions -fno-rtti -Isrc -o tests/unit-tsan tests/unit.cpp src/engine.cpp src/samples.cpp -lm -lpthread
+	$(CXX) -O1 -g -fsanitize=thread -DWITH_MIDI -fno-exceptions -fno-rtti -Isrc -o tests/unit-tsan tests/unit.cpp src/engine.cpp src/samples.cpp src/fxbus.cpp -lm -lpthread
 	TSAN_OPTIONS=halt_on_error=1 ./tests/unit-tsan samples
 .PHONY: test test-tsan

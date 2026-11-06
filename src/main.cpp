@@ -69,8 +69,9 @@ static Pattern mutUndo;            // Pattern vor der letzten Mutation
 static bool haveMutUndo = false;
 static int mutAmt = 1, mutPat = 0;
 static int mixRow = 0;
-static const uint8_t MIX_P[4] = {P_VOL, P_PAN, P_DLY, P_REV};
-static const char* const MIX_NAMES[4] = {"VOL", "PAN", "DLY", "REV"};
+enum { MIX_ROWS = 5 };
+static const uint8_t MIX_P[MIX_ROWS] = {P_VOL, P_PAN, P_DLY, P_REV, P_SNDC};
+static const char* const MIX_NAMES[MIX_ROWS] = {"VOL", "PAN", "S.A", "S.B", "S.C"};   // Sends an Effekt-Bus A/B/C
 static bool menuOpen = false; static int menuSel = 0;
 static bool confirmOpen = false; static char confirmText[80]; static int confirmAct = 0, confirmArg = 0;
 static Uint32 selDownAt = 0;
@@ -706,21 +707,37 @@ static void redoStep() {
 }
 
 // Seiten: Spurseiten haben eine Speicherseite (je 8 Parameter), globale nicht
-static bool trackPage(int p) { return p < FIRST_GLOBAL_PAGE; }
+static bool trackPage(int p) { return p >= 0 && p < NUI_PAGES && PG_STORE[p] >= 0; }
 static int sp() { return PG_STORE[page]; }
 static bool pageAvail(int p) {
     if (p == PG_SRC2) return machineHasSrc2(curP().machine[track]);
+    if (p == PG_SRC3 || p == PG_SRC4 || p == PG_SRC5) return machineHasSrc35(curP().machine[track]);
     if (p == PG_ARP) return !machineIsDrum(curP().machine[track]);   // Arpeggiator nur fuer Klangerzeuger mit Tonhoehe
     return true;
 }
 // Seitenringe fuer L2/R2: innerhalb der Gruppe (Spur / Live, Mix & FX / Projekt), Reihenfolge wie der Signalfluss
-static const int RING_TRK[] = {PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS, PG_LFO1, PG_LFO2, PG_LFO3};
-static const int RING_MIX[] = {PG_LIVE, PG_MIX, PG_FX, PG_CMP};
+static const int RING_TRK[] = {PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_SRC3, PG_SRC4, PG_SRC5, PG_FLT, PG_FLT2, PG_AMP, PG_INS, PG_SEND, PG_LFO1, PG_LFO2, PG_LFO3};
+enum { RING_TRK_N = sizeof RING_TRK / sizeof *RING_TRK };
+static const int RING_MIX[] = {PG_LIVE, PG_MIX, PG_FX, PG_FXB, PG_FXC, PG_CMP};
 static const int RING_PRJ[] = {PG_SONG, PG_PRJ, PG_MST, PG_SYS};
 static void pageRing(int p, const int*& r, int& n) {
-    for (int i = 0; i < 4; i++) if (RING_MIX[i] == p) { r = RING_MIX; n = 4; return; }
+    for (int i = 0; i < 6; i++) if (RING_MIX[i] == p) { r = RING_MIX; n = 6; return; }
     for (int i = 0; i < 4; i++) if (RING_PRJ[i] == p) { r = RING_PRJ; n = 4; return; }
-    r = RING_TRK; n = 12;
+    r = RING_TRK; n = RING_TRK_N;
+}
+// Seitentitel je Engine (FM: Operatoren, SYNTH/WTBL: Oszillatoren)
+static const char* pageLong(int p) {
+    int m = curP().machine[track];
+    if (m == M_FM) {
+        if (p == PG_SRC) return TR("FM: ALGORITHMUS", "FM: ALGORITHM");
+        if (p == PG_SRC2) return "OPERATOR 1";
+        if (p == PG_SRC3) return "OPERATOR 2";
+        if (p == PG_SRC4) return "OPERATOR 3";
+        if (p == PG_SRC5) return "OPERATOR 4";
+    }
+    if (p == PG_SRC2 && m == M_SYNTH) return TR("OSZILLATOREN", "OSCILLATORS");
+    if (p == PG_SRC2 && m == M_WTBL) return TR("OSZILLATOR + EIGENE WAVETABLE", "OSCILLATOR + USER WAVETABLE");
+    return PAGE_LONG[p];
 }
 static void gotoPage(int dir) {
     const int* r; int n; pageRing(page, r, n);
@@ -826,7 +843,7 @@ static void drawHeader() {
         text(310, 2, b, C_DIM);
     }
     if (trackPage(page)) {   // Signalweg-Oberflaeche: Pfad statt Reiter
-        snprintf(b, sizeof b, TR("SPUR %d > %s", "TRACK %d > %s"), track + 1, PAGE_LONG[page]);
+        snprintf(b, sizeof b, TR("SPUR %d > %s", "TRACK %d > %s"), track + 1, pageLong(page));
         text(334, 4, b, C_TEXT);
     } else
     {   // Reiter nur der aktuellen Gruppe (Seitenmenue: SELECT kurz antippen)
@@ -894,9 +911,11 @@ static bool knobInfo(int k, ParamDef& d, int& val, bool& locked, int& baseVal, c
     } else if (page == PG_MIX) {
         d = PDEF_NONE;
         val = 0;
-    } else if (page == PAGE_FX) {
-        d = FX_DEFS[k];
-        val = eng.proj.fx[k];
+    } else if (busOfPage(page) >= 0) {   // Effekt-Bus: Regler je nach Effekt-Typ
+        const uint8_t* bp = eng.proj.bus[busOfPage(page)];
+        d = busDef(busOfPage(page), bp[BX_TYPE], k);
+        val = bp[k];
+        if (k == BX_FWD && d.kind != K_NONE) snprintf(label, ln, TR("> BUS %c", "> BUS %c"), 'A' + busOfPage(page) + 1);
     } else if (page == PAGE_CMP) {
         d = CMP_DEFS[k];
         val = k == CM_GR ? 0 : eng.proj.cmp[k];
@@ -1267,13 +1286,13 @@ static void fmGraph(int gx, int gy, int gw, int gh, int algo, const int* rat, co
     for (int k = 0; k < 4; k++) {
         bool car = FM_CARRIERS[algo] >> k & 1;
         float glow = (vo && vo->active && vo->machine == M_FM) ? vo->fmEnv[k] : 0.f;
-        float lv = k == 0 ? 1.f : lvl[k] / 127.f;
+        float lv = lvl[k] / 127.f;
         Col bc = car ? mix(dimC(c, 0.35f + 0.65f * lv), C_PLAY, glow * 0.4f) : mix(C_SEL, c, glow * 0.6f);
         if (k == selOp) { float p = 0.5f + 0.5f * sinf(animTime * 7.f); rrect(bx[k] - 3, by[k] - 3, bw + 6, bh + 6, 6, c, (Uint8)(60 + 60 * p)); }
         rrect(bx[k], by[k], bw, bh, 4, bc);
         if (!car) { rrect(bx[k] + 1, by[k] + 1, bw - 2, bh - 2, 3, C_PANEL); fill(bx[k] + 2, by[k] + bh - 3, (int)((bw - 4) * lv), 2, c); }
         char b[24];
-        snprintf(b, sizeof b, "OP%d x%.2g", k + 1, FM_RATIOS[rat[k] & 15]);
+        snprintf(b, sizeof b, "OP%d x%.2g", k + 1, FM_RATIOS[rat[k] % FM_NRAT]);
         text(bx[k] + 6, by[k], b, car ? C_BG : C_TEXT);
         if (car) { int x1 = bx[k] + bw; fill(x1, by[k] + bh / 2, ox - x1, 1, dimC(c, 0.5f)); }
         if (k == 3) { rrect(bx[3] + bw - 14, by[3] - 4, 12, 6, 3, dimC(c, 0.6f)); }   // Feedback-Schleife
@@ -1511,6 +1530,8 @@ const float* wavetableFrame(int t, int f);
 static bool nameIs(const char* n, const char* const* list) { for (; *list; list++) if (!strcmp(n, *list)) return true; return false; }
 
 // Kurve aus Funktionswerten v(t) in [0,1] in ein Rechteck zeichnen
+static inline float fastTanhUi(float x) { return x < -3.f ? -1.f : (x > 3.f ? 1.f : x * (27.f + x * x) / (27.f + 9.f * x * x)); }
+static float symScroll() { return fmodf(animTime * 0.35f, 1.f); }   // Laufschrift fuer periodische Wert-Symbole
 template <typename Fn> static void symCurve(int x, int y, int w, int h, Col c, Fn f, bool fillUnder = true) {
     int py = y + h - (int)(f(0.f) * h);
     for (int i = 1; i <= w; i++) {
@@ -1521,6 +1542,16 @@ template <typename Fn> static void symCurve(int x, int y, int w, int h, Col c, F
         if (fillUnder) fill(x + i, ny, 1, y + h - ny, c, 45);
         line(x + i - 1, py, x + i, ny, c, 2);
         py = ny;
+    }
+    if (w > 8) {   // Leuchtpunkt laeuft die Kurve entlang (je Kachel versetzt), mit kurzem Schweif
+        int dx = (int)(fmodf(animTime * 0.45f + x * 0.0137f + y * 0.0071f, 1.f) * w);
+        for (int k = 10; k >= 0; k--) {
+            int i = dx - k; if (i < 0) continue;
+            float v = f((float)i / w); v = v < 0 ? 0 : (v > 1 ? 1 : v);
+            int yy = y + h - (int)(v * h);
+            if (k) fill(x + i, yy - 1, 1, 3, mix(c, C_PLAY, (10 - k) / 14.f));
+            else { disc(x + i, yy, 3, mix(c, C_PLAY, 0.7f)); fill(x + i, yy, 1, 1, C_PLAY); }
+        }
     }
 }
 static float symWave(int w, float p) {   // 0 SAW 1 SQR 2 TRI 3 SIN (wie Oszillator) -> 0..1
@@ -1537,11 +1568,11 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     const char* n = d.name;
     Col cd = dimC(c, 0.4f);
     int cx = x + w / 2, cy = y + h / 2;
-    static const char* DEC[] = {"DCAY", "DEC", "REL", "N.DEC", "M.DEC", "F.DEC", "F.REL", "DEC1", "DEC2", "DEC3", "DEC4", "R.DAMP", 0};
-    static const char* ATK[] = {"ATK", "F.ATK", 0};
-    static const char* SUS[] = {"SUS", "F.SUS", 0};
+    static const char* DEC[] = {"DCAY", "DEC", "REL", "O.DEC", "O.REL", "N.DEC", "M.DEC", "F.DEC", "F.REL", "DEC1", "DEC2", "DEC3", "DEC4", "R.DAMP", 0};
+    static const char* ATK[] = {"ATK", "F.ATK", "O.ATK", 0};
+    static const char* SUS[] = {"SUS", "F.SUS", "O.SUS", 0};
     static const char* PITCH[] = {"TUNE", "PTCH", "FINE", "DETN", "RAT1", "RAT2", "RAT3", "RAT4", "RATE", "SPD", 0};
-    static const char* LEVEL[] = {"VOL", "GAIN", "LVL2", "LVL3", "LVL4", 0};
+    static const char* LEVEL[] = {"VOL", "GAIN", "LVL", "LVL1", "LVL2", "LVL3", "LVL4", "O.LVL", 0};
     static const char* NOISE[] = {"NOIS", "GRIT", "SNAP", "CLCK", "METL", "SPRY", "P.SPR", 0};
     static const char* DRIVE[] = {"DRIV", "DRIVE", "BODY", 0};
     static const char* GLIDE[] = {"GLID", "SWEP", "S.TIM", 0};
@@ -1551,26 +1582,194 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
     static const char* ROOM[] = {"REV", "R.SIZE", 0};
     static const char* MIXS[] = {"MIX", 0};
 
-    if (d.kind == K_MACH) { drawIcon(val, cx - h / 2, y, h, c); return; }
+    if (d.kind == K_MACH) { int bob = (int)(sinf(animTime * 3.f) * 2.f); drawIcon(val, cx - h / 2, y + bob, h, mix(c, C_PLAY, 0.35f * (0.5f + 0.5f * sinf(animTime * 3.f)))); return; }
     if (d.kind == K_WAVE || (d.kind == K_LWAV)) {
-        if (d.kind == K_WAVE) symCurve(x, y + 4, w, h - 8, c, [&](float t) { return symWave(val, t * 2.f); }, false);
-        else symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * lfoWaveUi(val, t * 2.f); }, false);
+        if (d.kind == K_WAVE) symCurve(x, y + 4, w, h - 8, c, [&](float t) { return symWave(val, t * 2.f + symScroll()); }, false);
+        else symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * lfoWaveUi(val, t * 2.f + symScroll()); }, false);
         return;
     }
     if (!strcmp(n, "NOTE")) {   // Klaviatur, Taste der Note hervorgehoben
         static const int wk[7] = {0, 2, 4, 5, 7, 9, 11}, bk[5] = {1, 3, 6, 8, 10}, bp[5] = {0, 1, 3, 4, 5};
         int kw = w / 7, pc = val % 12;
-        for (int i = 0; i < 7; i++) rrect(x + i * kw, y + 4, kw - 1, h - 6, 2, wk[i] == pc ? c : C_TEXT);
-        for (int i = 0; i < 5; i++) rrect(x + bp[i] * kw + kw * 2 / 3, y + 4, kw * 2 / 3, (h - 6) * 3 / 5, 2, bk[i] == pc ? c : C_BG);
+        Col kc = mix(c, C_PLAY, 0.6f * (0.5f + 0.5f * sinf(animTime * 3.f)));
+        for (int i = 0; i < 7; i++) rrect(x + i * kw, y + 4, kw - 1, h - 6, 2, wk[i] == pc ? kc : C_TEXT);
+        for (int i = 0; i < 5; i++) rrect(x + bp[i] * kw + kw * 2 / 3, y + 4, kw * 2 / 3, (h - 6) * 3 / 5, 2, bk[i] == pc ? kc : C_BG);
+        int kx = -1; for (int i = 0; i < 7; i++) if (wk[i] == pc) kx = x + i * kw + kw / 2; for (int i = 0; i < 5; i++) if (bk[i] == pc) kx = x + bp[i] * kw + kw;
+        if (kx >= 0) { float f2 = fmodf(animTime * 1.2f, 1.f); int r2 = 2 + (int)(f2 * kw); ring(kx, y + h / 2, r2, 1, dimC(C_PLAY, 1.f - f2)); }
         return;
     }
-    if (!strcmp(n, "VEL")) { for (int i = 0; i < w; i += 4) { int hh = (int)((float)i / w * h); fill(x + i, y + h - hh, 3, hh, i < fr * w ? c : C_OFF2); } return; }
+    if (d.kind == K_OCT || d.kind == K_SUBO) {   // Oktave bipolar: Mitte = 0, Balken nach oben (+) bzw. unten (-); ein Punkt huepft von 0 zur Oktave
+        int lo = d.kind == K_OCT ? -3 : -2, hi = d.kind == K_OCT ? 3 : 0;
+        int cur = d.kind == K_OCT ? val - 3 : -(val + 1);
+        int nst = hi - lo + 1, sw2 = w / nst, unit = (h / 2 - 3) / (hi > -lo ? hi : -lo);
+        fill(x, cy, nst * sw2, 1, C_DIM);
+        for (int i = lo; i <= hi; i++) {
+            int bx = x + (i - lo) * sw2, hh = abs(i) * unit;
+            bool on = cur != 0 && (cur > 0 ? (i > 0 && i <= cur) : (i < 0 && i >= cur));
+            Col bc = i == cur ? c : (on ? cd : C_OFF2);
+            if (i == 0) rrect(bx, cy - 2, sw2 - 2, 5, 2, cur == 0 ? c : C_DIM);
+            else rrect(bx, i > 0 ? cy - hh : cy + 1, sw2 - 2, hh, 2, bc);
+        }
+        int steps = abs(cur) + 1, hop = (int)(animTime * 3.f) % steps, hi2 = cur < 0 ? -hop : hop;
+        float fy = fmodf(animTime * 3.f, 1.f);
+        int ty = hi2 > 0 ? cy - hi2 * unit - 4 : (hi2 < 0 ? cy + (-hi2) * unit + 4 : cy - 5);
+        disc(x + (hi2 - lo) * sw2 + sw2 / 2 - 1, ty - (int)(sinf(fy * 3.14159f) * 4.f) * (hi2 < 0 ? -1 : 1), 2, C_PLAY);
+        return;
+    }
+    if (!strcmp(n, "OCT") && d.kind == K_CNT) {   // Arp-Oktavbereich: Treppe aufwaerts
+        int nst = d.max + 1, cur = val; if (nst < 2) nst = 2;
+        int sw2 = w / nst;
+        for (int i = 0; i < nst; i++) { int hh = 4 + i * (h - 8) / (nst - 1); rrect(x + i * sw2, y + h - hh, sw2 - 2, hh, 2, i == cur ? c : (i < cur ? cd : C_OFF2)); }
+        int hop = (int)(animTime * 3.f) % (cur + 1); float fy = fmodf(animTime * 3.f, 1.f);
+        int hh = 4 + hop * (h - 8) / (nst - 1);
+        disc(x + hop * sw2 + sw2 / 2 - 1, y + h - hh - 4 - (int)(sinf(fy * 3.14159f) * 5.f), 2, C_PLAY);
+        return;
+    }
+    if (d.kind == K_RATIO) { float r = FM_RATIOS[val % FM_NRAT]; float cyc = r < 0.5f ? 0.5f : (r > 8.f ? 8.f : r); symCurve(x, y + 2, w, h - 4, c, [&](float t) { return 0.5f + 0.45f * sinf((t * cyc + symScroll()) * 6.2831853f); }, false); return; }
+    if (!strcmp(n, "XMOD")) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { float p = (t * 2.f + symScroll()) * 6.2831853f; return 0.5f + 0.45f * sinf(p + fr * 3.f * sinf(p * 2.f)); }, false); return; }
+    if (!strcmp(n, "RING")) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { float p = (t + symScroll()) * 6.2831853f; return 0.5f + 0.45f * sinf(p * 6.f) * (1.f - fr + fr * sinf(p)); }, false); return; }
+    if (!strcmp(n, "GATE")) { symCurve(x, y + 4, w, h - 8, c, [&](float t) { float p = t * 4.f + symScroll() * 2.f; p -= floorf(p); return p < fr ? 0.9f : 0.05f; }); return; }
+    if (!strcmp(n, "ACCT")) { for (int i = 0; i < 8; i++) { bool ac = ((i * 5 + 3) % 8) < fr * 8.f; int hh = ac ? h - 2 : h / 2; bool hot = i == (int)(animTime * 6.f) % 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, hot ? C_PLAY : (ac ? c : cd)); } return; }
+    if (!strcmp(n, "F.KRV") || !strcmp(n, "A.KRV")) { float k = exp2f((val - 64) / 32.f); symCurve(x, y + 2, w, h - 4, c, [&](float t) { return powf(1.f - t, k); }); return; }
+    if (d.kind == K_ARPM) {   // Tonfolge des Arp-Modus, Licht laeuft mit
+        static const int pat[6][8] = {{0,0,0,0,0,0,0,0}, {0,1,2,3,0,1,2,3}, {3,2,1,0,3,2,1,0}, {0,1,2,3,2,1,0,1}, {2,0,3,1,3,0,2,1}, {3,3,3,3,3,3,3,3}};
+        int m = val % 6, hot = (int)(animTime * 6.f) % 8;
+        for (int i = 0; i < 8; i++) {
+            int lv = pat[m][i], bx = x + i * w / 8;
+            if (m == 5) { for (int j = 0; j < 3; j++) fill(bx, y + h - 4 - j * (h - 6) / 3, w / 8 - 3, 3, i == hot ? C_PLAY : c); continue; }
+            fill(bx, y + h - 4 - lv * (h - 6) / 3, w / 8 - 3, 4, m == 0 ? C_OFF2 : (i == hot ? C_PLAY : c));
+        }
+        return;
+    }
+    if (d.kind == K_ACHD) {   // Akkord: Notenpunkte uebereinander, Arp-Licht laeuft durch
+        int nn = 2 + val % 3, hot = (int)(animTime * 6.f) % nn;
+        for (int i = 0; i < 5; i++) fill(x + 4, y + 3 + i * (h - 6) / 4, w - 8, 1, C_OFF2);
+        for (int i = 0; i < nn; i++) { int py = y + h - 5 - i * (h - 10) / (nn - 1 > 0 ? nn - 1 : 1), px = cx + (i - nn / 2) * 12; fill(px + 4, py - 12, 1, 12, c); disc(px, py, 4, i == hot ? C_PLAY : c); }
+        return;
+    }
+    if (n[0] == 'P' && n[1] >= '1' && n[1] <= '3' && !n[2]) {   // Insert-Regler P1-P3: Bild je Effekt-Typ und Regler
+        int ty = pv(P_ITYP) % INS_COUNT, k = n[1] - '1';
+        float v = val / 127.f, t0 = animTime;
+        auto band = [&](float pos, float q, float amt) {   // Frequenzgang mit Kerbe/Spitze bei pos
+            return [=](float t) { float d2 = (t - pos) * q; return 0.55f + amt * expf(-d2 * d2); };
+        };
+        switch (ty) {
+        case INS_CHORUS:
+            if (k == 0) {   // RATE: zwei Stimmen laufen gegeneinander, Tempo = Wert
+                float ph = sinf(t0 * (0.5f + v * 6.f)) * 0.25f;
+                symCurve(x, y + 3, w, h - 6, cd, [&](float t) { return 0.5f + 0.42f * sinf((t * 2.f + symScroll()) * 6.2831853f); }, false);
+                symCurve(x, y + 3, w, h - 6, c, [&](float t) { return 0.5f + 0.42f * sinf((t * 2.f + symScroll() + ph) * 6.2831853f); }, false);
+            } else if (k == 1) {   // DEPTH: Kopie pendelt um so weiter, je tiefer
+                for (int j = 2; j >= 0; j--) { float ph = sinf(t0 * 2.f + j * 2.1f) * v * 0.3f * (j ? 1.f : 0.f);
+                    symCurve(x, y + 3, w, h - 6, j ? dimC(c, 0.45f) : c, [&](float t) { return 0.5f + 0.42f * sinf((t * 2.f + symScroll() + ph) * 6.2831853f); }, false); }
+            } else {   // WIDTH: zwei Stimmen links/rechts, Abstand = Breite
+                int sp = (int)(v * (w / 2 - 10) * (0.85f + 0.15f * sinf(t0 * 2.f)));
+                text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM);
+                for (int j = -1; j <= 1; j += 2) { int px = cx + j * sp; disc(px, cy + (int)(sinf(t0 * 3.f + j) * 4.f), 5, c); ring(px, cy, 8 + (int)(fmodf(t0, 1.f) * 6), 1, dimC(c, 1.f - fmodf(t0, 1.f))); }
+            }
+            return;
+        case INS_PHASER: case INS_FLANGER: {
+            bool fl = ty == INS_FLANGER;
+            float rate = k == 0 ? v : pv(P_IP1) / 127.f, dep = k == 1 ? v : pv(P_IP2) / 127.f, fb = k == 2 ? v : pv(P_IP3) / 127.f;
+            float sw = 0.5f + 0.5f * sinf(t0 * (0.4f + rate * 5.f));
+            float lo = 0.5f - dep * 0.4f, hi = 0.5f + dep * 0.4f, pos = lo + (hi - lo) * sw;
+            if (k == 1) fill(x + (int)(lo * w), y, (int)((hi - lo) * w) + 1, h, dimC(c, 0.15f));   // DEPTH: Bereich der Bewegung
+            if (fl) symCurve(x, y + 2, w, h - 4, c, [&](float t) { float cm = cosf((t / (0.06f + pos * 0.12f)) * 6.2831853f); return 0.5f + 0.4f * cm * (0.4f + 0.6f * fb); }, false);
+            else {
+                float amt = -(0.3f + 0.25f * fb);
+                auto n1 = band(pos * 0.6f, 9.f + fb * 20.f, amt), n2 = band(pos * 0.6f + 0.35f, 9.f + fb * 20.f, amt);
+                symCurve(x, y + 2, w, h - 4, c, [&](float t) { return fminf(n1(t), n2(t)) + (k == 2 ? fb * 0.25f * expf(-((t - pos * 0.6f - 0.17f) * 14.f) * ((t - pos * 0.6f - 0.17f) * 14.f)) : 0.f); });
+            }
+            if (k == 0) disc(x + (int)(pos * w), y + 2, 2, C_PLAY);
+            return;
+        }
+        case INS_DRIVE:
+            if (k == 0) { float g = 1.f + v * 9.f; symCurve(x, y + 3, w, h - 6, c, [&](float t) { float sv = sinf((t * 2.f + symScroll()) * 6.2831853f) * g; return 0.5f + 0.45f * fastTanhUi(sv); }, false); }
+            else if (k == 1) { float tl = (v - 0.5f) * 0.8f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return 0.5f + tl * (t - 0.5f) + 0.04f * sinf(t * 20.f + t0 * 3.f); }); }
+            else { int lv = 1 + (int)(v * 7.f); int hot = (int)(t0 * 8.f) % (lv + 1); for (int i = 0; i < 8; i++) { int hh = 4 + i * (h - 6) / 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, i < lv ? (i == hot ? C_PLAY : c) : C_OFF2); } }
+            return;
+        case INS_RING: {   // FREQ/FINE: Traeger * Signal, Schwebung
+            float cf = 2.f + (pv(P_IP1) / 127.f) * 14.f, fi = (pv(P_IP2) - 64) / 64.f;
+            symCurve(x, y + 3, w, h - 6, cd, [&](float t) { return 0.5f + 0.42f * sinf((t * 1.5f + symScroll()) * 6.2831853f); }, false);
+            symCurve(x, y + 3, w, h - 6, c, [&](float t) { float p = (t + symScroll() * 0.5f) * 6.2831853f; return 0.5f + 0.42f * sinf(p * 1.5f) * sinf(p * (cf + fi * (k == 1 ? 2.f : 0.5f)) + t0 * 2.f); }, false);
+            return;
+        }
+        case INS_APAN: {   // RATE/DEPTH: Punkt wandert zwischen L und R
+            float rate = k == 0 ? v : pv(P_IP1) / 127.f, dep = k == 1 ? v : pv(P_IP2) / 127.f;
+            text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM);
+            fill(x + 12, cy, w - 24, 1, C_OFF2);
+            int rx = (int)(dep * (w / 2 - 14));
+            fill(cx - rx, cy - 1, 2 * rx + 1, 3, dimC(c, 0.3f));
+            float ph = sinf(t0 * (0.5f + rate * 8.f));
+            int px = cx + (int)(ph * rx);
+            for (int j = 1; j < 5; j++) { float pp = sinf((t0 - j * 0.04f) * (0.5f + rate * 8.f)); disc(cx + (int)(pp * rx), cy, 4 - j / 2, dimC(c, 1.f - j * 0.2f)); }
+            disc(px, cy, 6, c);
+            return;
+        }
+        default: break;
+        }
+    }
+    if (d.kind == K_LMODE) {   // LFO-Modus: Kurve laeuft frei / startet mit dem Trig neu / haelt / einmal / halbe Welle
+        int m = val % 5; float sc = symScroll() * 2.f;
+        symCurve(x, y + 3, w, h - 6, c, [&](float t) {
+            float p = t * 2.f + (m == LM_FREE ? sc : 0.f);
+            if (m == LM_TRIG) p = fmodf(t * 2.f, 1.f) * 1.4f;
+            if (m == LM_HOLD) p = floorf(t * 4.f) * 0.37f;
+            if (m == LM_ONE && t > 0.5f) p = 1.f;
+            if (m == LM_HALF && t > 0.25f) p = 0.5f;
+            return 0.5f + 0.42f * sinf(p * 6.2831853f);
+        }, false);
+        if (m == LM_TRIG) for (int i = 0; i < 2; i++) fill(x + i * w / 2, y, 1, h, C_PLAY);
+        return;
+    }
+    if (d.kind == K_INS) {   // Insert-Typ als laufende Mini-Welle
+        int ty = val % INS_COUNT; float sc = symScroll();
+        if (ty == INS_OFF) { fill(x, cy, w, 1, C_DIM); disc(x + (int)(sc * w), cy, 2, C_DIM); return; }
+        if (ty == INS_CHORUS || ty == INS_FLANGER) symCurve(x, y + 3, w, h - 6, cd, [&](float t) { return 0.5f + 0.4f * sinf((t * 3.f + sc + 0.1f * sinf(animTime * 2.f)) * 6.2831853f); }, false);
+        symCurve(x, y + 3, w, h - 6, c, [&](float t) {
+            float p = (t * 3.f + sc) * 6.2831853f, v = sinf(p);
+            switch (ty) {
+            case INS_PHASER: v = sinf(p + 1.5f * sinf(animTime * 1.5f + t * 3.f)); break;
+            case INS_DRIVE: v = fmaxf(-0.6f, fminf(0.6f, v * 2.5f)) / 0.6f; break;
+            case INS_RING: v = sinf(p * 3.f) * sinf(p * 0.5f + animTime); break;
+            case INS_APAN: v = v * (0.6f + 0.4f * sinf(animTime * 3.f)); break;
+            default: break;
+            }
+            return 0.5f + 0.42f * v;
+        }, false);
+        return;
+    }
+    if ((!strcmp(n, "STRT") || !strcmp(n, "END")) && curP().machine[track] == M_SAMPLE) {   // Ausschnitt im Sample, Kopf laeuft im Bereich
+        float a = pv(P_S3) / 127.f, b2 = pv(P_S4) / 127.f, lo = fminf(a, b2), hi = fmaxf(a, b2);
+        for (int i = 0; i < w; i += 2) { float t = i / (float)w; float am = fabsf(sinf(i * 0.37f + 3.f)) * expf(-t * 1.5f); int hh = (int)(am * h / 2); fill(x + i, cy - hh, 1, hh * 2 + 1, t >= lo && t <= hi ? c : C_OFF2); }
+        int ax = x + (int)(a * w), bx = x + (int)(b2 * w);
+        fill(ax, y, 1, h, !strcmp(n, "STRT") ? C_PLAY : C_DIM); fill(bx, y, 1, h, !strcmp(n, "END") ? C_PLAY : C_DIM);
+        float f2 = fmodf(animTime * 0.5f, 1.f); fill(ax + (int)((bx - ax) * f2), y + 2, 2, h - 4, C_TEXT);
+        return;
+    }
+    if (curP().machine[track] == M_GRAN && (!strcmp(n, "SPRY") || !strcmp(n, "SIZE") || !strcmp(n, "DENS") || !strcmp(n, "POS"))) {   // Koerner um die Position
+        float pos = pv(P_S1) / 127.f, spr = pv(P_S2) / 127.f, sz = pv(P_S3) / 127.f, dn = pv(P_S4) / 127.f;
+        int ng = 3 + (int)(dn * 12.f), gl = 3 + (int)(sz * w / 6);
+        fill(x, cy, w, 1, C_OFF2);
+        fill(x + (int)(pos * w), y, 1, h, C_DIM);
+        for (int i = 0; i < ng; i++) {
+            float life = fmodf(animTime * (0.7f + dn) + i / (float)ng, 1.f);
+            uint32_t hsh = (uint32_t)(i * 2654435761u + (uint32_t)((animTime * (0.7f + dn) + i / (float)ng)) * 40503u);
+            float off = ((hsh >> 8) % 1000 / 1000.f - 0.5f) * (0.05f + spr * 0.9f);
+            int gx = x + (int)((pos + off) * w) - gl / 2, gy = y + 2 + (int)((hsh >> 20) % 1000 / 1000.f * (h - 6));
+            float br = sinf(life * 3.14159f);
+            if (gx >= x && gx + gl <= x + w) rrect(gx, gy, gl, 3, 1, dimC(mix(c, C_PLAY, br * 0.4f), 0.3f + 0.7f * br));
+        }
+        return;
+    }
+    if (!strcmp(n, "VEL")) { for (int i = 0; i < w; i += 4) { int hh = (int)((float)i / w * h); fill(x + i, y + h - hh, 3, hh, i < fr * w ? (fabsf(i / (float)w - fmodf(animTime * 0.7f, 1.f)) < 0.06f ? C_PLAY : c) : C_OFF2); } return; }
     if (d.kind == K_LEN) {   // Notenlaenge als Balken ueber einem Step-Raster
         for (int i = 0; i < 4; i++) fill(x + i * w / 4, y + h - 6, 1, 6, C_DIM);
         float s2 = lenSteps(val);
         int bw = s2 < 0 ? w : (int)fminf(w, s2 * w / 4.f);
         rrect(x, cy - 6, bw < 4 ? 4 : bw, 12, 5, c);
         if (s2 < 0) text(x + w - 16, cy - 8, ">", C_BG);
+        { int px = x + (int)(fmodf(animTime * 0.5f, 1.f) * w); fill(px, cy - 9, 2, 18, px < x + bw ? C_PLAY : C_DIM); }
         return;
     }
     if (!strcmp(n, "PROB") || (!strcmp(n, "DENS") && d.kind == K_PCT)) {   // Torte
@@ -1578,12 +1777,15 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         disc(cx, cy, r, C_OFF2);
         float a1 = fr * 6.2831853f;
         for (float a = 0; a < a1; a += 0.04f) line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), c);
+        { float a = fmodf(animTime * 2.f, 6.2831853f); bool in = a < a1; disc(cx + (int)((r + 3) * sinf(a)), cy - (int)((r + 3) * cosf(a)), 2, in ? C_PLAY : C_DIM); }
         return;
     }
-    if (d.kind == K_RTRG) { int nn = RTRG_DIV[val % 7]; if (!nn) nn = 1; for (int i = 0; i < nn; i++) { int hh = h - i * h / (nn + 2); fill(x + i * w / nn, y + h - hh, 2, hh, val ? c : C_DIM); } return; }
+    if (d.kind == K_RTRG) { int nn = RTRG_DIV[val % 7]; if (!nn) { nn = 1; float f2 = fmodf(animTime * 0.8f, 1.f); disc(x + (int)(f2 * w), cy, 2, dimC(c, 1.f - f2)); } for (int i = 0; i < nn; i++) { int hh = h - i * h / (nn + 2); fill(x + i * w / nn, y + h - hh, 2, hh, val ? (i == (int)(animTime * 8.f) % nn ? C_PLAY : c) : C_DIM); } return; }
     if (d.kind == K_MTIM) {
         fill(x, cy, w, 1, C_DIM); fill(cx, y + 2, 1, h - 4, C_TEXT);
         int mx = cx + (val - 23) * (w / 2) / 23;
+        float f2 = fmodf(animTime * 0.9f, 1.f); int gx = cx + (int)((mx - cx) * f2) + (val == 23 ? (int)(sinf(animTime * 4.f) * 6.f) : 0);
+        rrect(gx - 3, cy - 5, 7, 10, 3, dimC(C_PLAY, 0.7f));
         rrect(mx - 4, cy - 8, 9, 16, 3, c);
         return;
     }
@@ -1591,48 +1793,78 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         if (val >= CND_AB) {
             int a, b; bool ng; condDecode(val, a, b, ng);
             int r = w / (b * 2 + 1); if (r > 6) r = 6;
-            for (int i = 0; i < b; i++) { bool on = (i == a - 1) != ng; int px = x + (i * 2 + 1) * w / (b * 2); if (on) disc(px, cy, r, c); else ring(px, cy, r, 1, C_DIM); }
+            int cur2 = (int)(animTime * 3.f) % b; for (int i = 0; i < b; i++) { bool on = (i == a - 1) != ng; int px = x + (i * 2 + 1) * w / (b * 2); if (on) disc(px, cy, r, i == cur2 ? C_PLAY : c); else ring(px, cy, r, 1, i == cur2 ? C_TEXT : C_DIM); }
         } else if (val) { char b2[8]; fmtParam(d, val, b2, sizeof b2); text(cx - textW(b2) / 2, cy - 8, b2, c); }
-        else for (int i = 0; i < 4; i++) disc(x + (i * 2 + 1) * w / 8, cy, 4, c);
+        else for (int i = 0; i < 4; i++) disc(x + (i * 2 + 1) * w / 8, cy, 4, i == (int)(animTime * 4.f) % 4 ? C_PLAY : c);
         return;
     }
     if (nameIs(n, DEC)) { float k = 1.f + (1.f - fr) * 12.f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return expf(-t * k); }); return; }
     if (nameIs(n, ATK)) { float a = 0.05f + fr * 0.9f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < a ? t / a : 1.f; }); return; }
     if (nameIs(n, SUS)) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < 0.15f ? t / 0.15f : (t < 0.35f ? 1.f - (1.f - fr) * (t - 0.15f) / 0.2f : fr); }); return; }
-    if (nameIs(n, PITCH)) { float cyc = 1.f + fr * 5.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * sinf(t * cyc * 6.2831853f); }, false); return; }
+    if (nameIs(n, PITCH)) { float cyc = 1.f + fr * 5.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * sinf((t * cyc + symScroll()) * 6.2831853f); }, false); return; }
     if (nameIs(n, LEVEL)) {   // Lautsprecher mit Schallwellen
-        fill(x + 4, cy - 5, 7, 10, c);
-        for (int i = 0; i < 5; i++) line(x + 11, cy - 5 - i, x + 11, cy + 5 + i, c), fill(x + 11 + i, cy - 5 - i * 2, 2, 10 + i * 4, c);
-        int waves = (int)(fr * 4.f + 0.5f);
-        for (int k = 0; k < waves; k++) { int r = 10 + k * 7; for (int dy = -r * 2 / 3; dy <= r * 2 / 3; dy++) { int dx = (int)sqrtf((float)(r * r - dy * dy)); fill(x + 14 + dx, cy + dy, 2, 1, k == waves - 1 ? c : cd); } }
+        int sp = h / 5;
+        fill(x + 4, cy - sp, 7, 2 * sp, c);
+        for (int i = 0; i < 5; i++) fill(x + 11 + i, cy - sp - i * sp / 3, 2, 2 * sp + i * sp * 2 / 3, c);
+        int waves = 1 + (int)(fr * 3.f + 0.5f);
+        float mv = fmodf(animTime * 1.5f, 1.f);
+        for (int k = 0; k < waves; k++) { int r = sp + 6 + (int)((k + mv) * (sp + 2)), ry = r * 2 / 3 < h / 2 - 1 ? r * 2 / 3 : h / 2 - 1;
+            for (int dy = -ry; dy <= ry; dy++) { int dx = (int)sqrtf((float)(r * r - dy * dy)); fill(x + 14 + dx, cy + dy, 2, 1, dimC(c, 1.f - (k + mv) / 4.f)); } }
         return;
     }
-    if (nameIs(n, NOISE)) { Rng rr; rr.s = 1234; for (int i = 0; i < w; i += 2) { int a = (int)(rr.next() * fr * h / 2); fill(x + i, cy - (a > 0 ? a : 0), 2, abs(a) + 1, c); } return; }
-    if (nameIs(n, DRIVE)) { float g = 1.f + fr * 8.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = sinf(t * 2.f * 6.2831853f) * g; return 0.5f + 0.5f * (sv > 1 ? 1 : (sv < -1 ? -1 : sv)); }, false); return; }
-    if (!strcmp(n, "CRSH")) { int st = 2 + (int)((1.f - fr) * 14.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = 0.5f + 0.5f * sinf(t * 6.2831853f); return floorf(sv * st) / st; }, false); return; }
-    if (!strcmp(n, "SRR")) { int st = 32 - (int)(fr * 28.f); symCurve(x, y + 4, w, h - 8, c, [&](float t) { float q = floorf(t * st) / st; return 0.5f + 0.5f * sinf(q * 6.2831853f); }, false); return; }
+    if (nameIs(n, NOISE)) { Rng rr; rr.s = 1234 + (int)(animTime * 14.f); for (int i = 0; i < w; i += 2) { int a = (int)(rr.next() * (0.12f + 0.88f * fr) * h / 2); fill(x + i, cy - (a > 0 ? a : 0), 2, abs(a) + 1, c); } return; }
+    if (nameIs(n, DRIVE)) { float g = 1.f + fr * 8.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float sv = sinf((t * 2.f + symScroll()) * 6.2831853f) * g; return 0.5f + 0.5f * (sv > 1 ? 1 : (sv < -1 ? -1 : sv)); }, false); return; }
+    if (!strcmp(n, "CRSH")) {   // Bitcrush: links die Bits als Zellen (je weniger, desto groeber), rechts die Welle als Treppe
+        int bits = 8 - (int)(fr * 7.f + 0.5f), st = 1 << (bits > 4 ? 4 : bits);
+        int cw2 = 10, ch = (h - 4) / 8;
+        for (int i = 0; i < 8; i++) {
+            bool on = i < bits; bool lsb = on && i == bits - 1;
+            rrect(x, y + h - 2 - (i + 1) * ch, cw2, ch - 1, 1, on ? (lsb ? mix(c, C_PLAY, 0.5f + 0.5f * sinf(animTime * 8.f)) : c) : C_OFF2);
+        }
+        int sx = x + cw2 + 6, sw = w - cw2 - 6;
+        for (int i = 0; i <= st && st <= 8; i++) fill(sx, y + 4 + i * (h - 8) / st, sw, 1, C_OFF2);
+        symCurve(sx, y + 4, sw, h - 8, c, [&](float t) { float sv = 0.5f + 0.5f * sinf((t * 1.5f + symScroll()) * 6.2831853f); return floorf(sv * st + 0.5f) / st; }, false);
+        return;
+    }
+    if (!strcmp(n, "SRR")) {   // Abtastrate: senkrechte Abtastpunkte (Stiel + Punkt), gehalten bis zum naechsten
+        int st = 22 - (int)(fr * 18.f); float sc = symScroll();
+        symCurve(x, y + 4, w, h - 8, cd, [&](float t) { return 0.5f + 0.5f * sinf((t + sc) * 6.2831853f); }, false);
+        int by = y + h - 4, hh = h - 8, py = -1;
+        for (int i = 0; i <= st; i++) {
+            float t = (i - fmodf(sc * st, 1.f)) / st; if (t < 0) continue;
+            float q = floorf((t + sc) * st + 0.5f) / st;
+            int sx = x + (int)(t * w), sy = by - (int)((0.5f + 0.5f * sinf(q * 6.2831853f)) * hh);
+            if (sx > x + w) break;
+            if (py >= 0) fill(sx - (w / st), py, w / st, 1, c);   // Halten
+            fill(sx, sy < by ? sy : by, 1, abs(by - sy) / 3 + 1, dimC(c, 0.5f));
+            disc(sx, sy, st > 20 ? 1 : 2, i == (int)(animTime * 6.f) % (st + 1) ? C_PLAY : c);
+            py = sy;
+        }
+        return;
+    }
     if (nameIs(n, GLIDE)) { float sl = 0.05f + fr * 0.9f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return t < sl ? 0.15f + 0.7f * t / sl : 0.85f; }, false); return; }
     if (nameIs(n, BRIGHT)) {   // Sonne: Strahlen = Helligkeit
         disc(cx, cy, h / 6, c);
         int rays = 3 + (int)(fr * 9.f);
-        for (int i = 0; i < rays; i++) { float a = i * 6.2831853f / rays; line(cx + (int)(h / 4 * cosf(a)), cy + (int)(h / 4 * sinf(a)), cx + (int)(h / 2.2f * cosf(a)), cy + (int)(h / 2.2f * sinf(a)), c); }
+        for (int i = 0; i < rays; i++) { float a = i * 6.2831853f / rays + animTime * 0.6f; line(cx + (int)(h / 4 * cosf(a)), cy + (int)(h / 4 * sinf(a)), cx + (int)(h / 2.2f * cosf(a)), cy + (int)(h / 2.2f * sinf(a)), c); }
         return;
     }
     if (nameIs(n, BIPARROW) || d.kind == K_BIP) {   // Pfeil nach oben/unten bzw. Ausschlag um die Mitte
         float v = (val - 64) / 64.f;
         fill(x, cy, w, 1, C_DIM);
-        int len = (int)(fabsf(v) * (h / 2 - 2));
-        if (len) { fill(cx - 3, v > 0 ? cy - len : cy, 7, len, c); for (int i = 0; i < 6; i++) fill(cx - 6 + i, v > 0 ? cy - len - 6 + i : cy + len + 5 - i, 13 - 2 * i, 1, c); }
-        else disc(cx, cy, 3, c);
+        int len = (int)(fabsf(v) * (h / 2 - 2) * (0.85f + 0.15f * sinf(animTime * 3.f)));
+        if (len) { fill(cx - 3, v > 0 ? cy - len : cy, 7, len, c); for (int i = 0; i < 6; i++) fill(cx - 6 + i, v > 0 ? cy - len - 6 + i : cy + len + 5 - i, 13 - 2 * i, 1, c);
+                   float f2 = fmodf(animTime * 1.3f, 1.f); int py = cy + (int)((v > 0 ? -1 : 1) * f2 * len); fill(cx - 2, py - 1, 5, 3, mix(c, C_PLAY, 1.f - f2)); }
+        else { float f2 = fmodf(animTime, 1.f); ring(cx, cy, 3 + (int)(f2 * 8), 1, dimC(c, 1.f - f2)); disc(cx, cy, 3, c); }
         return;
     }
-    if (!strcmp(n, "PAN")) { fill(x + 10, cy, w - 20, 2, C_DIM); text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM); disc(x + 10 + (int)(fr * (w - 20)), cy, 6, c); return; }
-    if (nameIs(n, WIDTH)) { int sp = (int)(fr * (w / 2 - 8)); disc(cx - sp, cy, 6, c); disc(cx + sp, cy, 6, c); fill(cx - sp, cy, 2 * sp, 1, cd); return; }
-    if (!strcmp(n, "DLY")) { int nn = 1 + (int)(fr * 5.f); for (int i = 0; i < nn; i++) { int hh = (int)(h * powf(0.7f, (float)i)); fill(x + i * w / 6, y + h - hh, w / 10, hh, i ? cd : c); } return; }
-    if (nameIs(n, ROOM)) { int nn = 1 + (int)(fr * 4.f); for (int i = 0; i < nn; i++) ring(cx, cy, 6 + i * (h / 2 - 6) / 4, 1, i == nn - 1 ? c : cd); return; }
-    if (nameIs(n, MIXS)) { int r = h / 3; disc(cx - r / 2, cy, (int)(r * (1.f - fr * 0.6f)), cd); disc(cx + r / 2, cy, (int)(r * (0.4f + fr * 0.6f)), c); return; }
-    if (!strcmp(n, "PW")) { float pw = 0.5f + (val - 64) / 140.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float p = t * 2.f; p -= floorf(p); return p < pw ? 1.f : 0.f; }, false); return; }
-    if (!strcmp(n, "SUB")) { symCurve(x, y + 4, w, h - 8, cd, [&](float t) { return 0.5f + 0.4f * sinf(t * 4.f * 6.2831853f); }, false); symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * fr * sinf(t * 2.f * 6.2831853f); }, false); return; }
+    if (!strcmp(n, "PAN")) { fill(x + 10, cy, w - 20, 2, C_DIM); text(x, cy - 8, "L", C_DIM); text(x + w - 8, cy - 8, "R", C_DIM); { int px = x + 10 + (int)(fr * (w - 20)); float mv = fmodf(animTime, 1.f); ring(px, cy, 6 + (int)(mv * 8), 1, dimC(c, 1.f - mv)); disc(px, cy, 5, c); } return; }
+    if (nameIs(n, WIDTH)) { int sp = (int)(fr * (w / 2 - 8) * (0.85f + 0.15f * sinf(animTime * 2.5f))); disc(cx - sp, cy, 6, c); disc(cx + sp, cy, 6, c); fill(cx - sp, cy, 2 * sp, 1, cd); return; }
+    if (!strcmp(n, "DLY")) { int nn = 1 + (int)(fr * 5.f); for (int i = 0; i < nn; i++) { int hh = (int)(h * powf(0.7f, (float)i)); fill(x + i * w / 6, y + h - hh, w / 10, hh, i == (int)fmodf(animTime * 3.f, (float)nn) ? C_PLAY : (i ? cd : c)); } return; }
+    if (nameIs(n, ROOM)) { int nn = 1 + (int)(fr * 4.f); float mv = fmodf(animTime * 0.6f, 1.f); for (int i = 0; i < nn; i++) { float rr2 = (i + mv) / nn; ring(cx, cy, 3 + (int)(rr2 * (h / 2 - 3) * (0.4f + 0.6f * fr)), 1, dimC(c, 1.f - rr2 * 0.8f)); } disc(cx, cy, 2, c); return; }
+    if (nameIs(n, MIXS)) { int r = h / 3; float br = 1.f + 0.08f * sinf(animTime * 3.f); disc(cx - r / 2, cy, (int)(r * (1.f - fr * 0.6f) * br), cd); disc(cx + r / 2, cy, (int)(r * (0.4f + fr * 0.6f) * (2.f - br)), c); return; }
+    if (!strcmp(n, "PW")) { float pw = 0.5f + (val - 64) / 140.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { float p = t * 2.f + symScroll(); p -= floorf(p); return p < pw ? 1.f : 0.f; }, false); return; }
+    if (!strcmp(n, "SUB")) { symCurve(x, y + 4, w, h - 8, cd, [&](float t) { return 0.5f + 0.4f * sinf((t * 4.f + symScroll() * 2.f) * 6.2831853f); }, false); symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * fr * sinf((t * 2.f + symScroll()) * 6.2831853f); }, false); return; }
     if (!strcmp(n, "FREQ")) { float fc = 0.08f + fr * 0.88f; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < fc ? 0.8f : 0.8f * expf(-(t - fc) * 12.f); }); return; }
     if (!strcmp(n, "RESO")) { symCurve(x, y + 2, w, h - 4, c, [&](float t) { float pk = expf(-(t - 0.55f) * (t - 0.55f) * 400.f) * fr * 0.45f; return (t < 0.55f ? 0.55f : 0.55f * expf(-(t - 0.55f) * 10.f)) + pk; }); return; }
     if (d.kind == K_FTYPE) {   // Kurvenbild des Filtertyps (wie die grosse Grafik, feste Werte)
@@ -1651,76 +1883,83 @@ static void paramSymbol(const ParamDef& d, int val, float fr, int x, int y, int 
         return;
     }
     if (!strcmp(n, "KEYT")) { symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + (t - 0.5f) * fr; }, false); for (int i = 0; i < 7; i++) fill(x + i * w / 7, y + h - 4, w / 7 - 1, 4, C_TEXT); return; }
-    if (!strcmp(n, "PHASE")) { int r = h / 2 - 2; ring(cx, cy, r, 1, cd); float a = fr * 6.2831853f; line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), c, 2); return; }
+    if (!strcmp(n, "PHASE")) { int r = h / 2 - 2; ring(cx, cy, r, 1, cd); float a = fr * 6.2831853f; line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), cd, 1); a += animTime * 2.f; line(cx, cy, cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), c, 2); return; }
     if (!strcmp(n, "FADE")) { float v = (val - 64) / 64.f; symCurve(x, y + 4, w, h - 8, c, [&](float t) { return v < 0 ? fminf(1.f, t / (-v + 0.01f)) * 0.9f : (v > 0 ? fmaxf(0.f, 1.f - t / (1.01f - v)) * 0.9f : 0.9f); }); return; }
-    if (d.kind == K_LDEST) { ring(x + w - h / 2, cy, h / 3, 2, c); disc(x + w - h / 2, cy, 3, c); line(x, cy, x + w - h / 2 - h / 3 - 2, cy, val ? c : C_DIM, 2); return; }
+    if (d.kind == K_LDEST) { { float f2 = fmodf(animTime, 1.f); ring(x + w - h / 2, cy, h / 3 + (int)(f2 * 5), 1, dimC(c, 1.f - f2)); } ring(x + w - h / 2, cy, h / 3, 2, c); disc(x + w - h / 2, cy, 3, c); line(x, cy, x + w - h / 2 - h / 3 - 2, cy, val ? c : C_DIM, 2); if (val) for (int i = 0; i < 3; i++) disc(x + (int)(fmodf(animTime * 0.8f + i / 3.f, 1.f) * (w - h / 2 - h / 3 - 2)), cy, 2, C_PLAY); return; }
     if (d.kind == K_LSYNC || d.kind == K_DTIM || !strcmp(n, "D.TIME")) {   // Notensymbol
-        disc(x + w / 3, y + h - 8, 6, c); fill(x + w / 3 + 5, y + 4, 2, h - 12, c);
-        if (d.kind == K_LSYNC && val == 0) { ring(x + w * 2 / 3, cy, 8, 1, cd); }
+        float bt = fmodf(animTime * eng.proj.bpm / 60.f, 1.f); int jy = -(int)(sinf(bt * 3.14159f) * 4.f);
+        disc(x + w / 3, y + h - 8 + jy, 6, c); fill(x + w / 3 + 5, y + 4 + jy, 2, h - 12, c);
+        if (d.kind == K_LSYNC && val == 0) { float f2 = fmodf(animTime, 1.f); ring(x + w * 2 / 3, cy, 4 + (int)(f2 * 8), 1, dimC(cd, 1.f - f2 * 0.7f)); }
         return;
     }
     if (d.kind == K_DIR) {
         static const char* ar[6] = {">>", "<<", "<>", "<=>", "??", "~~"};
-        text(cx - textW(ar[val % 6], 2) / 2, cy - 16, ar[val % 6], c, 2);
+        { int dx = (int)(sinf(animTime * 3.f) * 5.f) * (val % 6 == 1 ? -1 : 1); text(cx - textW(ar[val % 6], 2) / 2 + dx, cy - 16, ar[val % 6], mix(c, C_PLAY, 0.3f * (0.5f + 0.5f * sinf(animTime * 3.f))), 2); }
         return;
     }
     if (!strcmp(n, "PULS") || !strcmp(n, "ROT")) {
         int len = curP().len[track] < 1 ? 1 : curP().len[track], k = pv(P_PULS), rot = pv(P_EROT), r = h / 2 - 3;
         int nn = len > 32 ? 32 : len;
         for (int i = 0; i < nn; i++) { float a = i * 6.2831853f / nn; int px = cx + (int)(r * sinf(a)), py = cy - (int)(r * cosf(a)); bool hit = k > 0 && euclidHitUi(i * len / nn, k, len, rot); if (hit) disc(px, py, 3, c); else fill(px, py, 1, 1, C_DIM); }
+        { int i = eng.playing && eng.playedStep[track] >= 0 ? eng.playedStep[track] % len * nn / len : (int)(animTime * 4.f) % nn; float a = i * 6.2831853f / nn; ring(cx + (int)(r * sinf(a)), cy - (int)(r * cosf(a)), 5, 1, C_PLAY); }
         return;
     }
     if (!strcmp(n, "CHNG")) {   // Wuerfel
+        cx += (int)(sinf(animTime * 5.f) * (1.5f + 3.f * fr)); cy += (int)(fabsf(sinf(animTime * 2.5f)) * -3.f);
         rrect(cx - h / 3, cy - h / 3, h * 2 / 3, h * 2 / 3, 5, C_TEXT);
         int pips = 1 + (int)(fr * 5.f), s3 = h / 6;
         static const int px[6][6][2] = {{{0,0}},{{-1,-1},{1,1}},{{-1,-1},{0,0},{1,1}},{{-1,-1},{1,-1},{-1,1},{1,1}},{{-1,-1},{1,-1},{0,0},{-1,1},{1,1}},{{-1,-1},{1,-1},{-1,0},{1,0},{-1,1},{1,1}}};
         for (int i = 0; i < pips; i++) disc(cx + px[pips - 1][i][0] * s3, cy + px[pips - 1][i][1] * s3, 2, C_BG);
         return;
     }
-    if (d.kind == K_RANGE) { int st2 = 1 + val / 6; for (int i = 0; i < 8; i++) { int hh = (int)((i * 37 % 8) / 8.f * h * fminf(1.f, st2 / 8.f)) + 2; fill(x + i * w / 8, y + h - hh, w / 8 - 2, hh, val ? c : C_DIM); } return; }
-    if (d.kind == K_SMPL) { for (int i = 0; i < w; i += 3) { float a = fabsf(sinf(i * 0.37f + val)) * expf(-i / (float)w * 1.5f); int hh = (int)(a * h / 2); fill(x + i, cy - hh, 2, hh * 2 + 1, c); } return; }
-    if (d.kind == K_OFFON) { if (!strcmp(n, "LOOP") || !strcmp(n, "REV")) { text(cx - 16, cy - 16, !strcmp(n, "REV") ? (val ? "<<" : ">>") : (val ? "()" : "->"), val ? c : C_DIM, 2); return; }
-        rrect(cx - 18, cy - 9, 36, 18, 9, val ? c : C_OFF2); disc(val ? cx + 9 : cx - 9, cy, 7, C_TEXT); return; }
+    if (d.kind == K_RANGE) { int st2 = 1 + val / 6; for (int i = 0; i < 8; i++) { int sd = (int)(animTime * 3.f); int hh = (int)(((i * 37 + sd * 11 + (i * sd) % 5) % 8) / 8.f * h * fminf(1.f, st2 / 8.f)) + 2; fill(x + i * w / 8, y + h - hh, w / 8 - 2, hh, val ? (i == sd % 8 ? C_PLAY : c) : C_DIM); } return; }
+    if (d.kind == K_SMPL) { for (int i = 0; i < w; i += 3) { float a = fabsf(sinf(i * 0.37f + val)) * expf(-i / (float)w * 1.5f); int hh = (int)(a * h / 2); fill(x + i, cy - hh, 2, hh * 2 + 1, c); } fill(x + (int)(fmodf(animTime * 0.4f, 1.f) * w), y, 1, h, C_PLAY); return; }
+    if (d.kind == K_OFFON) { if (!strcmp(n, "LOOP") || !strcmp(n, "REV")) { int dx = (int)(fmodf(animTime * 1.5f, 1.f) * 10.f) - 5; bool rv = !strcmp(n, "REV") && val; text(cx - 16 + (rv ? -dx : dx), cy - 16, !strcmp(n, "REV") ? (val ? "<<" : ">>") : (val ? "()" : "->"), val ? mix(c, C_PLAY, 0.3f * (0.5f + 0.5f * sinf(animTime * 3.f))) : C_DIM, 2); return; }
+        rrect(cx - 18, cy - 9, 36, 18, 9, val ? mix(c, C_PLAY, 0.15f + 0.15f * sinf(animTime * 3.f)) : C_OFF2); disc(val ? cx + 9 : cx - 9, cy, 7, C_TEXT); disc(val ? cx + 9 : cx - 9, cy, 2 + (int)(2.f * (0.5f + 0.5f * sinf(animTime * 3.f))), val ? c : C_DIM); return; }
     if (d.kind == K_ALGO) {   // Mini-Routing
-        for (int k = 0; k < 4; k++) { int bx = x + FM_LAYOUT[val & 7][k][0] * w / 4, by = y + FM_LAYOUT[val & 7][k][1] * h / 3; rrect(bx, by + 2, w / 5, h / 4, 2, FM_CARRIERS[val & 7] >> k & 1 ? c : cd); }
+        for (int k = 0; k < 4; k++) { int bx = x + FM_LAYOUT[val & 7][k][0] * w / 4, by = y + FM_LAYOUT[val & 7][k][1] * h / 3; rrect(bx, by + 2, w / 5, h / 4, 2, FM_CARRIERS[val & 7] >> k & 1 ? mix(c, C_PLAY, 0.3f + 0.3f * sinf(animTime * 4.f + k)) : cd); }
         return;
     }
     if (d.kind == K_WTAB || !strcmp(n, "POS")) {
         if (curP().machine[track] == M_WTBL) { const float* f2 = wavetableFrame(pv(P_S0) & 3, pv(P_S1) * 31 / 127); symCurve(x, y + 4, w, h - 8, c, [&](float t) { return 0.5f + 0.5f * f2[(int)(t * 255)]; }, false); return; }
     }
-    if (d.kind == K_SLICE || !strcmp(n, "SLCS")) { int nn = pv(P_S1) + 1; int sl = pv(P_S2); for (int i = 0; i < nn && i < 32; i++) fill(x + i * w / (nn < 32 ? nn : 32), y + 4, 1, h - 8, C_DIM); if (sl) fill(x + ((sl - 1) % nn) * w / nn, y + 4, w / nn > 2 ? w / nn : 2, h - 8, c); return; }
+    if (d.kind == K_SLICE || !strcmp(n, "SLCS")) { int nn = pv(P_S1) + 1; int sl = pv(P_S2); for (int i = 0; i < nn && i < 32; i++) fill(x + i * w / (nn < 32 ? nn : 32), y + 4, 1, h - 8, C_DIM); int cs = sl ? (sl - 1) % nn : (int)(animTime * 4.f) % nn; fill(x + cs * w / nn, y + 4, w / nn > 2 ? w / nn : 2, h - 8, sl ? c : dimC(C_PLAY, 0.6f)); return; }
     if (!strcmp(n, "BPM")) {   // Metronom mit Pendel im Takt
         for (int i = 0; i < h; i++) { int hw = i * w / (3 * h); fill(cx - hw, y + i, 2 * hw + 1, 1, C_OFF2); }
         float a = sinf(animTime * 3.14159f * eng.proj.bpm / 60.f) * 0.5f;
         line(cx, y + h - 4, cx + (int)(sinf(a) * h * 0.9f), y + h - 4 - (int)(cosf(a) * h * 0.9f), c, 2);
         return;
     }
-    if (d.kind == K_SWNG) { disc(x + w / 4, y + h - 8, 6, c); fill(x + w / 4 + 5, y + 4, 2, h - 12, c); int sx = x + w / 2 + (int)(fr * w / 3); disc(sx, y + h - 8, 6, c); fill(sx + 5, y + 4, 2, h - 12, c); return; }
+    if (d.kind == K_SWNG) { float bt = fmodf(animTime * eng.proj.bpm / 120.f, 1.f); int sx = x + w / 2 + (int)(fr * w / 3); int j1 = -(int)(sinf(bt * 3.14159f) * 4.f), j2 = -(int)(sinf(fmodf(bt + 0.5f + fr * 0.3f, 1.f) * 3.14159f) * 4.f); disc(x + w / 4, y + h - 8 + j1, 6, c); fill(x + w / 4 + 5, y + 4 + j1, 2, h - 12, c); disc(sx, y + h - 8 + j2, 6, c); fill(sx + 5, y + 4 + j2, 2, h - 12, c); return; }
     if (d.kind == K_ROOT) {   // Tastatur, Grundton leuchtet
         static const int wk[7] = {0, 2, 4, 5, 7, 9, 11}, bk[5] = {1, 3, 6, 8, 10}, bp[5] = {0, 1, 3, 4, 5};
         int kw = w / 7;
-        for (int i = 0; i < 7; i++) rrect(x + i * kw, y + 4, kw - 1, h - 6, 2, wk[i] == val ? C_PLAY : C_OFF2);
-        for (int i = 0; i < 5; i++) rrect(x + bp[i] * kw + kw - kw / 3, y + 4, kw * 2 / 3, (h - 6) * 3 / 5, 2, bk[i] == val ? C_PLAY : C_BG);
+        Col rc = mix(C_ACC, C_PLAY, (0.5f + 0.5f * sinf(animTime * 3.f))); for (int i = 0; i < 7; i++) rrect(x + i * kw, y + 4, kw - 1, h - 6, 2, wk[i] == val ? rc : C_OFF2);
+        for (int i = 0; i < 5; i++) rrect(x + bp[i] * kw + kw - kw / 3, y + 4, kw * 2 / 3, (h - 6) * 3 / 5, 2, bk[i] == val ? rc : C_BG);
         return;
     }
     if (d.kind == K_SCALE) {
         static const int wk[7] = {0, 2, 4, 5, 7, 9, 11};
         int kw = w / 7;
-        for (int i = 0; i < 7; i++) { bool on = val == 0 || inScale(wk[i], val); rrect(x + i * kw, y + 4, kw - 1, h - 6, 2, on ? c : C_OFF2); }
+        int hot = (int)(animTime * 5.f) % 7; for (int i = 0; i < 7; i++) { bool on = val == 0 || inScale(wk[i], val); rrect(x + i * kw, y + 4, kw - 1, h - 6, 2, on ? (i == hot ? C_PLAY : c) : C_OFF2); }
         return;
     }
     if (d.kind == K_THR) { fill(x, y + h - (int)(fr * h), w, 2, c); symCurve(x, y, w, h, cd, [&](float t) { return 0.5f + 0.4f * sinf(t * 18.f) * expf(-t); }, false); return; }
     if (d.kind == K_CRAT) { float r2 = val >= 8 ? 100.f : CMP_RATIOS[val]; symCurve(x, y + 2, w, h - 4, c, [&](float t) { return t < 0.5f ? t : 0.5f + (t - 0.5f) / r2; }, false); return; }
-    if (d.kind == K_SCSRC) { if (val) drawIcon(curP().machine[(val - 1) % NTRACKS], cx - h / 2, y, h, c); else text(cx - 24, cy - 8, TR("SUMME", "MASTER"), c); return; }
-    if (d.kind == K_GR) { int gh = clampi((int)(grDisp / 24.f * h), 0, h); rrect(cx - 8, y, 16, h, 4, C_OFF); if (gh) rrect(cx - 8, y, 16, gh, 4, C_TRIG); return; }
-    if (d.kind == K_FBK) { int nn = 1 + (int)(fr * 4.f); for (int i = 0; i < nn; i++) ring(cx, cy, 4 + i * (h / 2 - 4) / 4, 1, val > 106 && i == nn - 1 ? C_TRIG : c); return; }
+    if (d.kind == K_SCSRC) { if (val) { float fl = flash[(val - 1) % NTRACKS]; ring(cx, cy, h / 2 - 2 + (int)((1.f - fl) * 4), 1, dimC(c, fl)); drawIcon(curP().machine[(val - 1) % NTRACKS], cx - h / 2, y, h, mix(c, C_PLAY, fl * 0.6f)); } else text(cx - 24, cy - 8, TR("SUMME", "MASTER"), c); return; }
+    if (d.kind == K_GR) { int gh = clampi((int)(grDisp / 24.f * h), 0, h); rrect(cx - 8, y, 16, h, 4, C_OFF); if (gh) rrect(cx - 8, y, 16, gh, 4, C_TRIG); fill(cx - 8, y + (int)(fmodf(animTime * 0.8f, 1.f) * (h - 2)), 16, 2, dimC(C_TRIG, 0.5f)); return; }
+    if (d.kind == K_FBK) { int nn = 1 + (int)(fr * 4.f); float mv = fmodf(animTime * 0.8f, 1.f); for (int i = 0; i < nn; i++) { float rr2 = (i + mv) / 4.f; ring(cx, cy, 3 + (int)(rr2 * (h / 2 - 3)), 1, val > 106 && i == nn - 1 ? C_TRIG : dimC(c, 1.f - rr2 * 0.7f)); } return; }
     if (d.kind == K_MS) { fill(x, cy, (int)(fr * w / 2), 1, C_DIM); symCurve(x + (int)(fr * w / 2), y + 2, w - (int)(fr * w / 2), h - 4, c, [&](float t) { return expf(-t * 5.f); }); return; }
     // Standard: segmentierter Pegel
-    for (int i = 0; i < 8; i++) { int hh = 6 + i * (h - 6) / 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, (i + 0.5f) / 8.f <= fr ? c : C_OFF2); }
+    int lit = (int)(fr * 8.f + 0.5f);
+    int pk = lit > 0 ? lit - 1 - (int)((0.5f + 0.5f * sinf(animTime * 4.f + x * 0.05f)) * (lit > 2 ? 1.6f : 0.f)) : -1;
+    int run = (int)(fmodf(animTime * 1.6f + x * 0.01f, 1.f) * 9.f) - 1;   // Lichtlauf von unten bis zum Wert
+    for (int i = 0; i < 8; i++) { int hh = 6 + i * (h - 6) / 8; rrect(x + i * w / 8, y + h - hh, w / 8 - 3, hh, 2, i <= pk ? (i == run ? C_PLAY : c) : (i < lit ? cd : (i == run && lit == 0 ? cd : C_OFF2))); }
 }
 
 // ---------------------------------------------------------------- Kacheln statt Drehregler
 
+static void filler(int x, int y, int w, int h, Col c, int seed);
 static void tile(int x, int y, int k, const ParamDef& d, int val, int baseVal, bool locked, const char* label, bool sel, Col tc, Uint32 now) {
     char b[32];
     bool justEdited = sel && editAt && now - editAt < 300;
@@ -1731,21 +1970,22 @@ static void tile(int x, int y, int k, const ParamDef& d, int val, int baseVal, b
         rrect(x + 4, y + 2, 152, 2, 1, fc); rrect(x + 4, y + 88, 152, 2, 1, fc);
         rrect(x + 4, y + 2, 2, 88, 1, fc); rrect(x + 154, y + 2, 2, 88, 1, fc);
     }
-    if (d.kind == K_NONE) return;
-    char nm[24];
-    snprintf(nm, sizeof nm, "%.18s", label[0] ? label : d.name);
-    text(x + 14, y + 6, nm, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
+    if (d.kind == K_NONE) { filler(x + 6, y + 6, 148, 80, tc, k + page); return; }   // leeres Feld: Animation statt Leere
     knobText(d, val, b, sizeof b, k);
     Col vc = locked ? C_LOCK : (sel ? mix(tc, C_PLAY, justEdited ? 0.5f : 0.f) : C_TEXT);
     float target = knobFrac(d, val);
     knobAnim[k] += (target - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
-    // Wert-Symbol links, Zahl rechts
+    // Kopfzeile: Name links, Zahl (klein) rechts; darunter das animierte Wert-Symbol ueber die ganze Breite
+    int vw = textW(b); if (vw > 100) { b[100 / FONT_W] = 0; vw = textW(b); }
+    char nm[24];
+    int room = (136 - vw - 8) / FONT_W; if (room < 3) room = 3;
+    snprintf(nm, sizeof nm, "%.*s", room > 18 ? 18 : room, label[0] ? label : d.name);
+    text(x + 14, y + 6, nm, sel ? (locked ? C_LOCK : C_TEXT) : C_DIM);
+    rrect(x + 146 - vw - 6, y + 6, vw + 10, 18, 5, sel ? dimC(locked ? C_LOCK : tc, 0.25f) : C_BG);
+    text(x + 146 - vw - 1, y + 7, b, vc);
     Col sc2 = locked ? C_LOCK : (sel ? tc : dimC(tc, 0.75f));
-    int sw = 78, sh = 50;
-    paramSymbol(d, val, knobAnim[k], x + 14, y + 28, sw, sh, mix(sc2, C_PLAY, justEdited ? 0.4f : 0.f));
-    int scl = textW(b, 2) <= 52 ? 2 : 1;
-    text(x + 150 - textW(b, scl), y + (scl == 2 ? 44 : 52), b, vc, scl);
-    if (locked) { text(x + 150 - textW("LOCK"), y + 6, "LOCK", C_LOCK); }
+    paramSymbol(d, val, knobAnim[k], x + 16, y + 30, 128, 50, mix(sc2, C_PLAY, justEdited ? 0.4f : 0.f));
+    if (locked) text(x + 14, y + 70, "LOCK", C_LOCK);
 }
 
 // ---------------------------------------------------------------- Grafiken der Engines
@@ -1905,6 +2145,7 @@ static void paramChip(int k, int x, int y, Col tc) {
 }
 
 // welche Reihe (0/1) der aktuellen Seite als Grafik erscheint
+static int fmOpPage(int p) { return p == PG_SRC2 ? 0 : (p == PG_SRC3 ? 1 : (p == PG_SRC4 ? 2 : (p == PG_SRC5 ? 3 : -1))); }
 static int graphKind(int row) {
     if (page == PG_AMP && row == 0) return 1;             // AMP: Huellkurve
     if (page == PG_FLT) return row == 0 ? 2 : 1;          // FLT: Filter + Huellkurve
@@ -1919,10 +2160,16 @@ static int graphKind(int row) {
         if (m == M_CHOP) return 10;
         if (m == M_GRAN) return 11;
     }
-    if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_FM) return 6;
+    if (curP().machine[track] == M_FM && fmOpPage(page) >= 0) return row == 1 ? 14 : 0;   // FM-Operator: eigene Huellkurve
     if (page == PG_SEQ && row == 0) return 7;
     if (page == PG_ARP && row == 0) return 13;
     if (page == PG_FLT2 && row == 0) return 12;
+    if (busOfPage(page) >= 0) return row == 0 ? 15 : 21;   // Effekt-Bus: Signalfluss + Erklaerung, darunter Animation des Effekts
+    if (page == PG_TRG && row == 0) return 16;            // TRIG: Piano-Roll der Spur
+    if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_SYNTH) return 17;   // Oszillatoren
+    if (page == PG_SRC2 && row == 0 && curP().machine[track] == M_WTBL) return 18;    // Wavetable-Stapel
+    if (page == PG_INS && row == 0) return 19;            // Insert-Effekt
+    if (page == PG_SEND && row == 0) return 20;           // Sends zu den Bussen
     return 0;
 }
 static int pv(int idx) {   // Wert (inkl. Lock beim Halten) eines Spurparameters
@@ -1959,8 +2206,8 @@ static void drawMixer(int ox) {
         snprintf(b, sizeof b, "%d", vol);
         text(x + 54, fy + fh - 14, b, rs ? C_PLAY : C_DIM);
         // Panorama + Sends
-        int rowY[3] = {y + 138, y + 154, y + 170};
-        for (int r = 1; r < 4; r++) {
+        int rowY[MIX_ROWS - 1] = {y + 134, y + 148, y + 162, y + 176};
+        for (int r = 1; r < MIX_ROWS; r++) {
             int yy = rowY[r - 1], v = P.p[t][MIX_P[r]];
             bool on = sel && mixRow == r;
             text(x + 8, yy - 5, MIX_NAMES[r], on ? C_PLAY : C_DIM);
@@ -1983,10 +2230,10 @@ static void drawMixer(int ox) {
 static const char* sigName(int p);
 static void sigSummary(int p, char* b, int n);
 static const int MAP_ROWS[5][6] = {
-    {PG_TRG, PG_SEQ, PG_ARP, -1, -1, -1},
-    {PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS},
-    {PG_LFO1, PG_LFO2, PG_LFO3, -1, -1, -1},
-    {PG_LIVE, PG_MIX, PG_FX, PG_CMP, -1, -1},
+    {PG_TRG, PG_SEQ, PG_ARP, PG_LFO1, PG_LFO2, PG_LFO3},
+    {PG_SRC, PG_SRC2, PG_SRC3, PG_SRC4, PG_SRC5, -1},
+    {PG_FLT, PG_FLT2, PG_AMP, PG_INS, PG_SEND, -1},
+    {PG_LIVE, PG_MIX, PG_FX, PG_FXB, PG_FXC, PG_CMP},
     {PG_SONG, PG_PRJ, PG_MST, PG_SYS, -1, -1}};
 static const char* const PAGE_DESC_DE[NUI_PAGES] = {
     "Werte des Steps: Note, Anschlag, Länge, Wahrscheinlichkeit, Bedingung, Engine",
@@ -2002,13 +2249,19 @@ static const char* const PAGE_DESC_DE[NUI_PAGES] = {
     "LFO 3: moduliert einen Regler der Spur",
     "Insert-Effekt der Spur: Verzerrer, Bitcrusher, Chorus ...",
     "Mixer: Lautstärke, Panorama, Sends, Mute und Solo aller Spuren",
-    "Delay und Reverb (für alle Spuren)",
+    "Effekt-Bus A: Effekt frei wählbar (Delay, Tape, Reverb, Spring, Chorus)",
     "Kompressor auf der Summe mit Sidechain",
     "Projekte laden/speichern, Sounds der Spur laden/speichern",
     "Song als Clip-Matrix: Pattern je Spur, Mutes, Export als WAV",
     "Tempo, Swing, Tonskala, Lautstärke und Summen-Klang",
     "Einstellungen: Pattern, Audio, MIDI, USB/PC, Samples, System",
-    "Performance: Mutes auf den Tasten, FILL, WAV-Aufnahme, DJ-Filter"};
+    "Performance: Mutes auf den Tasten, FILL, WAV-Aufnahme, DJ-Filter",
+    "Weitere Klang-Regler der Engine (FM: Operator 2)",
+    "Weitere Klang-Regler der Engine (FM: Operator 3)",
+    "Weitere Klang-Regler der Engine (FM: Operator 4)",
+    "Anteil der Spur an den Effekt-Bussen A, B und C",
+    "Effekt-Bus B: Effekt frei wählbar (Delay, Tape, Reverb, Spring, Chorus)",
+    "Effekt-Bus C: Effekt frei wählbar (Delay, Tape, Reverb, Spring, Chorus)"};
 static const char* const PAGE_DESC_EN[NUI_PAGES] = {
     "Step values: note, velocity, length, probability, condition, engine",
     "Direction, length, tempo factor, Euclid and random generator",
@@ -2023,37 +2276,51 @@ static const char* const PAGE_DESC_EN[NUI_PAGES] = {
     "LFO 3: modulates a control of the track",
     "Insert effect of the track: drive, bitcrusher, chorus ...",
     "Mixer: level, pan, sends, mute and solo of all tracks",
-    "Delay and reverb (for all tracks)",
+    "Effect bus A: any effect (delay, tape, reverb, spring, chorus)",
     "Compressor on the master with sidechain",
     "Load/save projects, load/save sounds of the track",
     "Song as clip matrix: pattern per track, mutes, WAV export",
     "Tempo, swing, scale, volume and master sound",
     "Settings: pattern, audio, MIDI, USB/PC, samples, system",
-    "Performance: mutes on the buttons, FILL, WAV recording, DJ filter"};
+    "Performance: mutes on the buttons, FILL, WAV recording, DJ filter",
+    "More sound controls of the engine (FM: operator 2)",
+    "More sound controls of the engine (FM: operator 3)",
+    "More sound controls of the engine (FM: operator 4)",
+    "Share of the track sent to effect buses A, B and C",
+    "Effect bus B: any effect (delay, tape, reverb, spring, chorus)",
+    "Effect bus C: any effect (delay, tape, reverb, spring, chorus)"};
 #define PAGE_DESC (g_lang ? PAGE_DESC_EN : PAGE_DESC_DE)
 static void mapPos(int p, int& r, int& c) { r = c = 0; for (int i = 0; i < 5; i++) for (int k = 0; k < 6; k++) if (MAP_ROWS[i][k] == p) { r = i; c = k; } }
 static int mapCols(int r) { int n = 0; while (n < 6 && MAP_ROWS[r][n] >= 0) n++; return n; }
-static void mapBox(int r, int c, int& x, int& y, int& w, int& h) {   // Spur-Zeilen: Raster mit 6 Spalten, untere Zeilen: 4 breite Felder
+static void mapBox(int r, int c, int& x, int& y, int& w, int& h) {   // Raster mit 6 Spalten
     static const int RY[5] = {82, 148, 214, 290, 356};
     h = 42; y = RY[r];
-    if (r <= 2) { w = 88; x = 26 + c * (w + 12); }
-    else { w = 136; x = 26 + c * (w + 12); }
+    w = 88; x = 26 + c * (w + 12);
+}
+static const char* mapName(int p) {   // kurze Namen der globalen Seiten (88 px)
+    switch (p) {
+    case PG_LIVE: return "LIVE"; case PG_MIX: return "MIXER"; case PG_FX: return "FX A"; case PG_FXB: return "FX B"; case PG_FXC: return "FX C";
+    case PG_CMP: return TR("KOMPR.", "COMP"); case PG_SONG: return "SONG"; case PG_PRJ: return TR("PROJEKT", "PROJECT"); case PG_MST: return "MASTER";
+    case PG_SYS: return TR("SETUP", "SETUP");
+    }
+    return PAGE_NAMES[p];
 }
 static void mapSummary(int p, char* b, int n) {
     if (trackPage(p)) { sigSummary(p, b, n); return; }
     switch (p) {
     case PG_LIVE: snprintf(b, n, TR("MUTES  FILL  REC", "MUTES  FILL  REC")); break;
     case PG_MIX: snprintf(b, n, TR("8 KANÄLE", "8 CHANNELS")); break;
-    case PG_FX: snprintf(b, n, "DELAY  REVERB"); break;
+    case PG_FX: case PG_FXB: case PG_FXC: snprintf(b, n, "%s", BUS_TYPE_NAMES[eng.proj.bus[busOfPage(p)][BX_TYPE] % BF_COUNT]); break;
     case PG_CMP: snprintf(b, n, "SIDECHAIN"); break;
     case PG_SONG: snprintf(b, n, TR("%d ZEILEN%s", "%d ROWS%s"), eng.proj.songLen, eng.songOn ? TR("  AN", "  ON") : ""); break;
     case PG_PRJ: snprintf(b, n, "%.15s", cfg.project); break;
     case PG_MST: snprintf(b, n, "%d BPM", eng.proj.bpm); break;
-    case PG_SYS: snprintf(b, n, TR("AUDIO  USB  SYSTEM", "AUDIO  USB  SYSTEM")); break;
+    case PG_SYS: snprintf(b, n, TR("AUDIO, USB", "AUDIO, USB")); break;
     default: b[0] = 0;
     }
 }
 static void drawExportModal();
+static void drawWtEditorIfOpen();
 static void drawMenu() {
     rrect(10, 30, 620, 420, 14, C_ACC);
     rrect(12, 32, 616, 416, 13, C_BG);
@@ -2062,8 +2329,8 @@ static void drawMenu() {
     Col tc = TCOL[track];
     snprintf(b, sizeof b, TR("SPUR %d - %s - P%02d", "TRACK %d - %s - P%02d"), track + 1, MACHINE_NAMES[curP().machine[track] % M_COUNT], curPi() + 1);
     text(26, 46, b, tc);
-    static const char* const RL_DE[5] = {"SEQUENZ", "KLANG (SIGNALWEG)", "MODULATION", "LIVE, MIX & FX", "PROJEKT"};
-    static const char* const RL_EN[5] = {"SEQUENCE", "SOUND (SIGNAL PATH)", "MODULATION", "LIVE, MIX & FX", "PROJECT"};
+    static const char* const RL_DE[5] = {"SEQUENZ + MODULATION", "QUELLE", "KLANGWEG", "LIVE, MIX & EFFEKT-BUSSE", "PROJEKT"};
+    static const char* const RL_EN[5] = {"SEQUENCE + MODULATION", "SOURCE", "SOUND PATH", "LIVE, MIX & EFFECT BUSES", "PROJECT"};
     for (int r = 0; r < 5; r++) {
         int x, y, w, h; mapBox(r, 0, x, y, w, h);
         text(26, y - 15, g_lang ? RL_EN[r] : RL_DE[r], r <= 2 ? dimC(tc, 0.85f) : C_DIM);
@@ -2072,15 +2339,16 @@ static void drawMenu() {
             int p = MAP_ROWS[r][c];
             mapBox(r, c, x, y, w, h);
             bool av = pageAvail(p), sel = p == menuSel, cur = p == page;
-            if (r == 1 && c > 0) {   // Pfeil im Signalweg
+            if (!av) continue;   // Seite gibt es bei dieser Engine nicht
+            if ((r == 1 || r == 2) && c > 0) {   // Pfeil im Signalweg
                 Col ac = av ? tc : C_OFF2;
                 fill(x - 11, y + h / 2, 9, 2, ac); fill(x - 5, y + h / 2 - 2, 2, 6, ac); fill(x - 4, y + h / 2 - 1, 2, 4, ac);
             }
             Col bg = sel ? (r <= 2 ? tc : C_ACC) : (cur ? C_SEL : C_PANEL);
             rrect(x, y, w, h, 7, av ? bg : C_BG);
             if (cur && !sel) { Col fc = r <= 2 ? tc : C_ACC; rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); }
-            if (!av) { rrect(x, y, w, h, 7, C_DARK); text(x + 8, y + 5, r <= 2 ? sigName(p) : PAGE_LONG[p], C_OFF2); continue; }
-            const char* nm = r <= 2 ? sigName(p) : PAGE_LONG[p];
+            if (!av) { rrect(x, y, w, h, 7, C_DARK); text(x + 8, y + 5, r <= 2 ? sigName(p) : mapName(p), C_OFF2); continue; }
+            const char* nm = r <= 2 ? sigName(p) : mapName(p);
             text(x + 8, y + 5, nm, sel ? C_BG : (cur ? (r <= 2 ? tc : C_ACC) : C_TEXT));
             mapSummary(p, b, sizeof b);
             char sb[40]; snprintf(sb, sizeof sb, "%.*s", (w - 14) / FONT_W, b);
@@ -2105,6 +2373,8 @@ static void drawConfirm() {
     rrect(220, 226, 90, 32, 8, C_GREEN); textC(265, 234, "A = JA", C_BG);
     rrect(330, 226, 90, 32, 8, C_OFF2); textC(375, 234, TR("B = NEIN", "B = NO"), C_TEXT);
 }
+
+#include "anim.inc"
 
 static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
     Col tc = TCOL[track];
@@ -2131,11 +2401,60 @@ static void drawPageGraph(int gk, int gx, int gy, int gw, int gh, int selRel) {
         oscGraph(gx, gy, gw, gh, pv(P_S0) & 3, pv(P_S1) & 3, pv(P_S2), pv(P_S3), pv(P_S6), pv(P_S4), selRel, tc);
         break;
     case 6: {
-        int rat[4] = {pv(P_S2), pv(P_S3), pv(P_S4), pv(P_S5)}, lvl[4] = {127, pv(P_X0), pv(P_X1), pv(P_X2)};
-        int selOp = -1;
-        if (page == PG_SRC) selOp = selRel == 0 ? 4 : (selRel == 1 ? 3 : (selRel >= 2 ? selRel - 2 : -1));
-        else selOp = selRel >= 0 && selRel < 3 ? selRel + 1 : (selRel == 3 ? 0 : -1);
-        fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, selOp, &v, tc);
+        int rat[4], lvl[4];
+        for (int k = 0; k < 4; k++) { rat[k] = pv(FM_OPB[k] + OP_RAT); lvl[k] = pv(FM_OPB[k] + OP_LVL); }
+        int op = fmOpPage(page);
+        fmGraph(gx, gy, gw, gh, pv(P_S0), rat, lvl, op >= 0 ? op : (selRel == 0 ? 4 : -1), &v, tc);
+    } break;
+    case 16: trigGraph(gx, gy, gw, gh, tc); break;
+    case 17: oscPageGraph(gx, gy, gw, gh, tc); break;
+    case 18: wtStackGraph(gx, gy, gw, gh, tc); break;
+    case 19: insGraph(gx, gy, gw, gh, tc); break;
+    case 20: sendGraph(gx, gy, gw, gh, tc); break;
+    case 21: busAnimGraph(gx, gy, gw, gh, busOfPage(page) < 0 ? 0 : busOfPage(page)); break;
+    case 15: {   // Effekt-Bus: Spuren -> Bus -> (naechster Bus) -> Summe, Pegel, Erklaerung des Reglers
+        int b = busOfPage(page);
+        const uint8_t* bp = eng.proj.bus[b];
+        graphBox(gx, gy, gw, gh);
+        Col bc = C_ACC;
+        int ns = 0; for (int t = 0; t < NTRACKS; t++) if (curP().p[t][b == 0 ? P_DLY : (b == 1 ? P_REV : P_SNDC)] > 0) ns++;
+        char ib[96];
+        snprintf(ib, sizeof ib, TR("%d SPUREN", "%d TRACKS"), ns);
+        int y = gy + 10;
+        rrect(gx + 10, y, 92, 22, 5, C_PANEL); textC(gx + 56, y + 3, ib, ns ? C_TEXT : C_DIM);
+        fill(gx + 104, y + 10, 24, 2, bc);
+        snprintf(ib, sizeof ib, "BUS %c: %s", 'A' + b, BUS_TYPE_NAMES[bp[BX_TYPE] % BF_COUNT]);
+        int bw = textW(ib) + 20;
+        rrect(gx + 130, y - 2, bw, 26, 6, bp[BX_TYPE] ? bc : C_OFF2); text(gx + 140, y + 3, ib, bp[BX_TYPE] ? C_BG : C_TEXT);
+        int xo = gx + 130 + bw;
+        fill(xo, y + 10, 24, 2, bc);
+        rrect(xo + 26, y, 70, 22, 5, C_PANEL); textC(xo + 61, y + 3, TR("SUMME", "MIX"), C_TEXT);
+        if (b < NBUS - 1 && bp[BX_FWD] > 0) {   // Weiterleitung
+            fill(xo + 8, y + 12, 2, 18, bc);
+            snprintf(ib, sizeof ib, "> BUS %c (%d)", 'B' + b, bp[BX_FWD]); text(xo + 14, y + 22, ib, bc);
+        }
+        float pk = eng.bus[b].peak; int mw = clampi((int)(sqrtf(pk) * 120), 0, 120);
+        fill(gx + gw - 136, y + 4, 120, 6, C_OFF2); if (mw) fill(gx + gw - 136, y + 4, mw, 6, C_GREEN);
+        ParamDef hd; int hv, hb; bool hl; char hlab[24];
+        if (knobInfo(slot, hd, hv, hl, hb, hlab, sizeof hlab) && hd.kind != K_NONE) {
+            const char* ht = busHelp(bp[BX_TYPE] % BF_COUNT, hd.name);
+            if (*ht) { snprintf(ib, sizeof ib, "%s: %s", hd.name, ht); text(gx + 10, gy + gh - 20, ib, C_TEXT); }
+        }
+    } break;
+    case 14: {   // FM-Operator: Huellkurve + Kurzinfo
+        int op = fmOpPage(page), b = FM_OPB[op < 0 ? 0 : op];
+        envShapeK = 1.f;
+        envGraph(gx, gy, gw, gh, pv(b + OP_ATK), pv(b + OP_DEC), pv(b + OP_SUS), pv(b + OP_REL), selRel, nullptr, tc);
+        int algo = pv(P_S0) & 7;
+        bool car = FM_CARRIERS[algo] >> op & 1;
+        char ib[64];
+        float r = FM_RATIOS[pv(b + OP_RAT) % FM_NRAT] + (pv(b + OP_FINE) - 64) / 64.f * 0.5f;
+        int cents = (int)lrintf((pv(b + OP_DETN) - 64) / 64.f * 50.f);
+        int tgt = 0; for (int k = 0; k < 4; k++) if (FM_MODS[algo][k] >> op & 1) tgt |= 1 << k;
+        if (car) snprintf(ib, sizeof ib, TR("OP%d  x%.3g  %+d CENT  TRÄGER (HÖRBAR)", "OP%d  x%.3g  %+d CENT  CARRIER (AUDIBLE)"), op + 1, r, cents);
+        else snprintf(ib, sizeof ib, TR("OP%d  x%.3g  %+d CENT  MODULIERT OP%d", "OP%d  x%.3g  %+d CENT  MODULATES OP%d"), op + 1, r, cents, tgt ? __builtin_ctz(tgt) + 1 : 0);
+        text(gx + gw - 8 - textW(ib), gy + gh - 18, ib, car ? tc : C_TEXT);
+        if (v.active && v.machine == M_FM && op >= 0) { int lh = (int)((gh - 8) * v.fmEnv[op]); fill(gx + gw - 8, gy + gh - 4 - lh, 4, lh, tc); }
     } break;
     case 7: seqGraph(gx, gy, gw, gh, selRel, tc); break;
     case 13: arpGraph(gx, gy, gw, gh, tc); break;
@@ -2243,8 +2562,10 @@ static void drawKnobs() {
             if (ok && d.kind == K_ACT) {   // Schaltflaeche
                 if (sel) rrect(x + 4, y + 2, 152, 88, 10, C_SEL);
                 float p = sel ? 0.5f + 0.5f * sinf(animTime * 4.f) : 0.f;
-                rrect(cx - 54, cy - 18, 108, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
-                textC(cx, cy - 8, d.name, sel ? C_BG : C_TEXT);
+                prjIcon(k, x + 14, y + 12, 44, sel ? C_ACC : dimC(C_ACC, 0.6f));
+                rrect(x + 64, cy - 18, 86, 36, 10, sel ? mix(C_ACC, C_PLAY, p * 0.25f) : C_OFF2);
+                char an[16]; snprintf(an, sizeof an, "%.10s", d.name);
+                textC(x + 107, cy - 8, an, sel ? C_BG : C_TEXT);
                 textC(cx, y + 70, sel ? TR("A = START", "A = GO") : label, sel ? C_DIM : C_TEXT);
                 continue;
             }
@@ -2408,7 +2729,11 @@ static const int SIG_CHAIN[] = {PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_INS
 static const int SIG_MOD[] = {PG_TRG, PG_SEQ, PG_ARP, PG_LFO1, PG_LFO2, PG_LFO3};
 static const int SIG_NCH = 6, SIG_NMOD = 6;
 static const char* sigName(int p) {
+    int m = curP().machine[track];
+    if (m == M_FM) switch (p) { case PG_SRC: return "FM"; case PG_SRC2: return "OP 1"; case PG_SRC3: return "OP 2"; case PG_SRC4: return "OP 3"; case PG_SRC5: return "OP 4"; }
+    if (p == PG_SRC2 && (m == M_SYNTH || m == M_WTBL)) return "OSC";
     switch (p) {
+    case PG_SEND: return "SENDS";
     case PG_SRC: return TR("QUELLE", "SOURCE"); case PG_SRC2: return TR("QUELLE 2", "SOURCE 2"); case PG_FLT: return "FILTER 1"; case PG_FLT2: return "FILTER 2";
     case PG_AMP: return "AMP"; case PG_INS: return "INSERT"; case PG_TRG: return "TRIG"; case PG_SEQ: return "SEQ";
     case PG_ARP: return "ARP"; case PG_LFO1: return "LFO1"; case PG_LFO2: return "LFO2"; case PG_LFO3: return "LFO3";
@@ -2421,7 +2746,14 @@ static void sigSummary(int p, char* b, int n) {
     char v[24];
     switch (p) {
     case PG_SRC: snprintf(b, n, "%s", MACHINE_NAMES[P.machine[track] % M_COUNT]); break;
-    case PG_SRC2: snprintf(b, n, TR("MEHR", "MORE")); break;
+    case PG_SRC2: case PG_SRC3: case PG_SRC4: case PG_SRC5: {
+        int m = P.machine[track] % M_COUNT;
+        if (m == M_FM) { int op = p == PG_SRC2 ? 0 : p - PG_SRC3 + 1; snprintf(b, n, "x%.3g", FM_RATIOS[q[FM_OPB[op] + OP_RAT] % FM_NRAT]); }
+        else if (m == M_SYNTH) snprintf(b, n, "%+d/%+d", q[P_X0] - 3, q[P_X1] - 3);
+        else if (m == M_WTBL) snprintf(b, n, "%s", q[P_S0] % 5 == 4 ? "USER" : "OCT");
+        else snprintf(b, n, TR("MEHR", "MORE"));
+    } break;
+    case PG_SEND: snprintf(b, n, "%d/%d/%d", q[P_DLY], q[P_REV], q[P_SNDC]); break;
     case PG_FLT: knobText(COMMON_DEFS[P_FTYP], q[P_FTYP], v, sizeof v); snprintf(b, n, "%s %d", v, q[P_FREQ]); break;
     case PG_FLT2: snprintf(b, n, "%s", q[P_BASE] > 0 || q[P_WDTH] < 127 ? TR("AN", "ON") : TR("AUS", "OFF")); break;
     case PG_AMP: snprintf(b, n, "VOL %d", q[P_VOL]); break;
@@ -2429,11 +2761,12 @@ static void sigSummary(int p, char* b, int n) {
     case PG_TRG: fmtParam(COMMON_DEFS[P_NOTE], q[P_NOTE], v, sizeof v); snprintf(b, n, "%s", v); break;
     case PG_SEQ: snprintf(b, n, "%d STEPS", P.len[track]); break;
     case PG_ARP: snprintf(b, n, "%s", ARP_MODES[q[P_AMOD] % 6]); break;
-    default: {
+    case PG_LFO1: case PG_LFO2: case PG_LFO3: {
         int k = p - PG_LFO1, dst = q[LFO_BASE[k] + 2];
         if (dst > 0 && q[LFO_BASE[k] + 3] != 64) snprintf(b, n, ">%.5s", paramDef(P.machine[track], dst - 1).name);
         else snprintf(b, n, "-");
-    }
+    } break;
+    default: b[0] = 0;
     }
 }
 // kompakte Kachel: Name, Wert, Balken
@@ -2447,18 +2780,70 @@ static void miniTile(int k, int x, int y, int w, int h, Col tc) {
         Col fc = dimC(locked ? C_LOCK : tc, 0.6f + 0.25f * sinf(animTime * 3.f));
         rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); rrect(x, y, 2, h, 1, fc); rrect(x + w - 2, y, 2, h, 1, fc);
     }
-    if (!ok || d.kind == K_NONE) return;
+    if (!ok || d.kind == K_NONE) { filler(x + 2, y + 2, w - 4, h - 4, dimC(tc, 0.8f), k + page); return; }
     if (d.kind == K_ACT) { textC(x + w / 2, y + h / 2 - 8, d.name, sel ? C_ACC : C_TEXT); return; }
-    char nm[24];
-    snprintf(nm, sizeof nm, "%.*s", (w - 12) / FONT_W, label[0] ? label : d.name);
-    text(x + 7, y + 3, nm, sel ? (locked ? C_LOCK : tc) : C_DIM);
+    // Kopfzeile: Name links, Zahl (klein) rechts; darunter animiertes Wert-Symbol, unten duenner Balken
     knobText(d, val, b, sizeof b, k);
-    int sc = textW(b, 2) <= w - 14 ? 2 : 1;
-    text(x + w - 7 - textW(b, sc), y + (sc == 2 ? 15 : 21), b, locked ? C_LOCK : C_TEXT, sc);
+    int vw = textW(b); if (vw > w - 40) { b[(w - 40) / FONT_W] = 0; vw = textW(b); }
+    char nm[24];
+    int room = (w - 14 - vw - 6) / FONT_W; if (room < 2) room = 2;
+    snprintf(nm, sizeof nm, "%.*s", room > 20 ? 20 : room, label[0] ? label : d.name);
+    text(x + 7, y + 3, nm, sel ? (locked ? C_LOCK : tc) : C_DIM);
+    text(x + w - 7 - vw, y + 3, b, locked ? C_LOCK : (sel ? C_PLAY : C_TEXT));
     knobAnim[k] += (knobFrac(d, val) - knobAnim[k]) * (1.f - expf(-animDt * 14.f));
+    int sy = y + 21, sh = h - 33;
+    if (sh >= 14) {
+        Col sc2 = locked ? C_LOCK : (sel ? tc : dimC(tc, 0.75f));
+        int sw = w - 18; if (sw > sh * 4) sw = sh * 4;
+        paramSymbol(d, val, knobAnim[k], x + (w - sw) / 2, sy, sw, sh, sc2);
+    }
     int bw = (int)((w - 14) * knobAnim[k]);
-    fill(x + 7, y + h - 7, w - 14, 3, C_OFF2);
-    if (bw > 0) fill(x + 7, y + h - 7, bw, 3, locked ? C_LOCK : (sel ? tc : dimC(tc, 0.7f)));
+    Col bc = locked ? C_LOCK : (sel ? tc : dimC(tc, 0.7f));
+    fill(x + 7, y + h - 7, w - 14, 2, C_OFF2);
+    if (d.kind == K_BIP || d.kind == K_OCT) {   // bipolar: Balken ab der Mitte
+        int mid = x + 7 + (w - 14) / 2, e = x + 7 + bw;
+        fill(mid, y + h - 9, 1, 6, C_DIM);
+        if (e != mid) fill(e < mid ? e : mid, y + h - 7, abs(e - mid), 2, bc);
+    } else if (bw > 0) fill(x + 7, y + h - 7, bw, 2, bc);
+}
+// FILTER 2: BASE und WDTH teilen sich eine breite Kachel (ein Durchlassband); Spektrum der Summe, innen hell
+static void bwTile(int x, int y, int w, int h, Col tc) {
+    bool sel = slot == 0 || slot == 1;
+    rrect(x, y, w, h, 6, sel ? C_SEL : C_PANEL);
+    if (sel) {
+        Col fc = dimC(tc, 0.6f + 0.25f * sinf(animTime * 3.f));
+        rrect(x, y, w, 2, 1, fc); rrect(x, y + h - 2, w, 2, 1, fc); rrect(x, y, 2, h, 1, fc); rrect(x + w - 2, y, 2, h, 1, fc);
+    }
+    int bs = pv(P_BASE), wd = pv(P_WDTH);
+    bool lB = aHeld && holdS().lock[P_BASE] != NO_LOCK, lW = aHeld && holdS().lock[P_WDTH] != NO_LOCK;
+    char b[16];
+    text(x + 7, y + 3, "BASE", slot == 0 ? (lB ? C_LOCK : tc) : C_DIM);
+    snprintf(b, sizeof b, "%d", bs); text(x + 7 + textW("BASE") + 8, y + 3, b, slot == 0 ? C_PLAY : C_TEXT);
+    snprintf(b, sizeof b, "%d", wd); int vx = x + w - 7 - textW(b);
+    text(vx, y + 3, b, slot == 1 ? C_PLAY : C_TEXT);
+    text(vx - 8 - textW("WDTH"), y + 3, "WDTH", slot == 1 ? (lW ? C_LOCK : tc) : C_DIM);
+    // Band
+    int gx = x + 8, gw = w - 16, gy = y + 21, gh = h - 30;
+    float lo = bs / 127.f, hi = fminf(1.f, lo + wd / 127.f);
+    int lx = gx + (int)(lo * gw), hx = gx + (int)(hi * gw);
+    if (hx > lx) fill(lx, gy, hx - lx, gh, dimC(tc, 0.18f));
+    specUpdate();
+    int nb = SPEC_N, bw2 = gw / nb;
+    for (int i = 0; i < nb; i++) {   // Spektrum der Summe (bei Stille: ruhige Welle), ausserhalb des Bandes gedaempft
+        float t = (i + 0.5f) / nb;
+        float v = fmaxf(specVal[i], 0.12f + 0.1f * sinf(animTime * 2.f + i * 0.5f));
+        float g = (t < lo ? expf(-(lo - t) * 14.f) : 1.f) * (t > hi ? expf(-(t - hi) * 14.f) : 1.f);
+        int bh = (int)(v * g * (gh - 2)); if (bh < 1) bh = 1;
+        fill(gx + i * bw2, gy + gh - bh, bw2 - 1, bh, g > 0.7f ? mix(tc, C_PLAY, v * 0.3f) : dimC(tc, 0.25f + 0.5f * g));
+    }
+    symCurve(gx, gy, gw, gh, dimC(tc, 0.9f), [&](float t) { return (t < lo ? expf(-(lo - t) * 14.f) : 1.f) * (t > hi ? expf(-(t - hi) * 14.f) : 1.f) * 0.92f; }, false);
+    float pu = 0.5f + 0.5f * sinf(animTime * 4.f);
+    fill(lx, gy, 2, gh, slot == 0 ? mix(tc, C_PLAY, pu) : dimC(tc, 0.7f));
+    fill(hx - 1, gy, 2, gh, slot == 1 ? mix(tc, C_PLAY, pu) : dimC(tc, 0.7f));
+    // unten: Bereich als Balken
+    fill(x + 7, y + h - 7, w - 14, 2, C_OFF2);
+    int bl = x + 7 + (int)(lo * (w - 14)), bh2 = x + 7 + (int)(hi * (w - 14));
+    if (bh2 > bl) fill(bl, y + h - 7, bh2 - bl, 2, sel ? tc : dimC(tc, 0.7f));
 }
 static void drawSigB() {
     const Pattern& P = curP();
@@ -2491,66 +2876,56 @@ static void drawSigB() {
         fill(x + 6, y + 36, w - 12, 2, C_OFF);
         if (mw) fill(x + 6, y + 36, mw, 2, meterV[t] > 0.9f ? C_TRIG : C_GREEN);
     }
-    // --- Signalweg
+    // --- Signalweg: Spalten SEQUENZ | QUELLE -> FILTER -> AMP -> INSERT | MOD (LFO 1-3 untereinander)
     int X0 = 118, W = 518;
     snprintf(b, sizeof b, TR("SIGNALWEG  SPUR %d", "SIGNAL PATH  TRACK %d"), track + 1);
     text(X0, 44, b, C_DIM);
     { const char* lh = TR("L2/R2 = SEITE  SELECT = KARTE", "L2/R2 = PAGE  SELECT = MAP"); text(X0 + W - textW(lh), 44, lh, dimC(C_ACC, 0.8f)); }
-    // Spalten: zusammengehoerige Seiten untereinander (QUELLE/QUELLE 2, FILTER 1/FILTER 2)
-    static const int COLS[4][2] = {{PG_SRC, PG_SRC2}, {PG_FLT, PG_FLT2}, {PG_AMP, -1}, {PG_INS, -1}};
-    int gap = 14, bw = (W - gap * 3) / 4;
-    for (int ci = 0; ci < 4; ci++) {
-        int x = X0 + ci * (bw + gap), y = 62;
-        int n = 0, items[2];
-        for (int k = 0; k < 2; k++) if (COLS[ci][k] >= 0 && pageAvail(COLS[ci][k])) items[n++] = COLS[ci][k];
-        if (ci) fill(x - gap, y + 20, gap, 2, tc);
-        int ih = n == 2 ? 20 : 42;
-        for (int k = 0; k < n; k++) {
-            int p = items[k], yy = y + k * 22;
-            bool sel = p == page;
-            rrect(x, yy, bw, ih, 5, sel ? C_SEL : C_PANEL);
-            if (sel) { rrect(x, yy, bw, 2, 1, tc); rrect(x, yy + ih - 2, bw, 2, 1, tc); rrect(x, yy, 2, ih, 1, tc); rrect(x + bw - 2, yy, 2, ih, 1, tc); }
-            sigSummary(p, b, sizeof b);
-            char sb[40];
-            if (n == 2) {   // eine Zeile: Name + Kurzinfo
-                snprintf(sb, sizeof sb, "%s", sigName(p));
-                text(x + 6, yy + 2, sb, sel ? tc : C_TEXT);
-                char vb[24]; snprintf(vb, sizeof vb, "%.*s", (bw - 16 - textW(sb)) / FONT_W > 0 ? (bw - 16 - textW(sb)) / FONT_W : 0, b);
-                text(x + bw - 6 - textW(vb), yy + 2, vb, C_DIM);
-            } else {
-                text(x + 6, yy + 3, sigName(p), sel ? tc : C_TEXT);
-                snprintf(sb, sizeof sb, "%.*s", (bw - 10) / FONT_W, b);
-                text(x + 6, yy + 21, sb, C_DIM);
+    {
+        int m = P.machine[track] % M_COUNT;
+        // QUELLE-Spalte: Quelle + 2. Seite; FM: Operator der gerade gewaehlten bzw. zuletzt besuchten Seite
+        static int lastOp = PG_SRC2;
+        if (page == PG_SRC2 || page == PG_SRC3 || page == PG_SRC4 || page == PG_SRC5) lastOp = page;
+        int opPage = m == M_FM ? lastOp : PG_SRC2;
+        const int COLS[6][3] = {{PG_TRG, PG_SEQ, PG_ARP}, {PG_SRC, opPage, -1}, {PG_FLT, PG_FLT2, -1}, {PG_AMP, PG_SEND, -1}, {PG_INS, -1, -1}, {PG_LFO1, PG_LFO2, PG_LFO3}};
+        int gap = 8, cw = (W - gap * 5) / 6, rowH = 21, y0 = 60;
+        for (int c = 0; c < 6; c++) {
+            int x = X0 + c * (cw + gap);
+            if (c >= 2 && c <= 4) { fill(x - gap, y0 + 9, gap, 2, tc); fill(x - 3, y0 + 7, 1, 6, tc); }   // Pfeile im Klangweg
+            bool side = c == 0 || c == 5;
+            for (int r = 0; r < 3; r++) {
+                int p = COLS[c][r];
+                if (p < 0 || !pageAvail(p)) continue;
+                int y = y0 + r * (rowH + 1);
+                bool sel = p == page || (c == 1 && r == 1 && m == M_FM && (page == PG_SRC2 || page == PG_SRC3 || page == PG_SRC4 || page == PG_SRC5));
+                rrect(x, y, cw, rowH - 1, 4, sel ? tc : (side ? C_BG : C_PANEL));
+                char nm[24], sm[24], cb[40];
+                snprintf(nm, sizeof nm, "%s", sigName(sel && c == 1 && r == 1 ? page : p));
+                sigSummary(sel && c == 1 && r == 1 ? page : p, sm, sizeof sm);
+                int maxc = (cw - 8) / FONT_W;
+                snprintf(cb, sizeof cb, "%s", nm);
+                int room = maxc - (int)strlen(cb) - 1;
+                if (room >= 2 && sm[0] && strcmp(sm, nm)) { size_t l = strlen(cb); snprintf(cb + l, sizeof cb - l, " %.*s", room, sm); }
+                cb[maxc > 0 ? maxc : 0] = 0;
+                text(x + 4, y + 1, cb, sel ? C_BG : (side ? C_DIM : C_TEXT));
             }
         }
-    }
-    // --- Modulation / Sequenz
-    text(X0, 108, "SEQ", C_DIM);
-    int x = X0 + 34;
-    for (int i = 0; i < SIG_NMOD; i++) {
-        int p = SIG_MOD[i];
-        if (!pageAvail(p)) continue;
-        bool sel = p == page;
-        sigSummary(p, b, sizeof b);
-        char cb[32]; snprintf(cb, sizeof cb, "%s %s", sigName(p), b);
-        int cw = textW(cb) + 10;
-        if (x + cw > X0 + W - 46) break;
-        rrect(x, 106, cw, 20, 4, sel ? tc : C_PANEL);
-        text(x + 5, 108, cb, sel ? C_BG : C_TEXT);
-        x += cw + 5;
+        if (m == M_FM) text(X0 + 1 * (cw + gap) + 4, y0 + 2 * (rowH + 1) + 1, "OP 1-4", page == PG_SRC2 || page == PG_SRC3 || page == PG_SRC4 || page == PG_SRC5 ? tc : C_OFF2);
     }
     // --- Bedienfeld der gewaehlten Seite
     int py = 132, ph = 254;
     rrect(X0, py, W, ph, 6, C_PANEL);
     fill(X0, py, W, 2, tc);
-    text(X0 + 8, py + 4, PAGE_LONG[page], tc);
+    text(X0 + 8, py + 4, pageLong(page), tc);
     {   // Erklaerung des gewaehlten Reglers
         ParamDef hd; int hv, hb; bool hl; char hlab[24];
         if (knobInfo(slot, hd, hv, hl, hb, hlab, sizeof hlab) && hd.kind != K_NONE) {
             const char* ht = paramHelp(hd.name);
+            if (curP().machine[track] == M_FM && !strcmp(hd.name, "FINE")) ht = TR("Ratio fein: +-0,5 (unharmonisch, glockig)", "Fine ratio: +-0.5 (inharmonic, bell-like)");
+            if (curP().machine[track] == M_FM && !strcmp(hd.name, "DETN")) ht = TR("Verstimmung +-50 Cent (Schwebung)", "Detune +-50 cents (beating)");
             if (*ht) {
                 char hs[96]; snprintf(hs, sizeof hs, "%s: %s", hd.name, ht);
-                int maxw = W - 24 - textW(PAGE_LONG[page]);
+                int maxw = W - 24 - textW(pageLong(page));
                 while (textW(hs) > maxw && strlen(hs) > 4) hs[strlen(hs) - 1] = 0;
                 while (strlen(hs) && ((unsigned char)hs[strlen(hs) - 1] & 0xC0) == 0xC0) hs[strlen(hs) - 1] = 0;   // kein halbes UTF-8-Zeichen
                 text(X0 + W - 8 - textW(hs), py + 4, hs, C_TEXT);
@@ -2567,7 +2942,11 @@ static void drawSigB() {
     }
     int th = gk ? 62 : 100;
     int tw = (W - 12 - 3 * 6) / 4;
-    for (int k = 0; k < 8; k++) miniTile(k, X0 + 6 + (k % 4) * (tw + 6), ty + (k / 4) * (th + 6), tw, th, tc);
+    for (int k = 0; k < 8; k++) {
+        if (page == PG_FLT2 && k == 1) continue;   // BASE + WDTH = eine breite Kachel
+        if (page == PG_FLT2 && k == 0) { bwTile(X0 + 6, ty, tw * 2 + 6, th, tc); continue; }
+        miniTile(k, X0 + 6 + (k % 4) * (tw + 6), ty + (k / 4) * (th + 6), tw, th, tc);
+    }
     // --- Steps der Spur
     int sy = 392;
     int npg = (len0 + 15) / 16;
@@ -2605,6 +2984,7 @@ static const char* const LIVE_KEY[NTRACKS] = {"^", ">", "v", "<", "X", "A", "B",
 static void drawLive() {
     const Pattern& P = curP();
     char b[48];
+    liveArt();   // Spektrum oben, Takt-Ringe in der Mitte
     text(10, 48, "LIVE", C_ACC, 2);
     snprintf(b, sizeof b, "PATTERN %02d", curPi() + 1);
     text(120, 50, b, C_TEXT);
@@ -2675,6 +3055,7 @@ static void drawAll(bool help) {
     else { drawKnobs(); drawGrid(); drawSteps(); }
     if (help) drawHelp();
     if (menuOpen) drawMenu();
+    drawWtEditorIfOpen();
     drawExportModal();
     if (fbOpen) drawBrowser();
     if (kbOpen) drawKeyboard();
@@ -2837,8 +3218,18 @@ static void editValue(int delta) {
         saveSettings();
         return;
     }
-    if (page == PAGE_FX) {
-        eng.proj.fx[slot] = (uint8_t)clampi(eng.proj.fx[slot] + delta, 0, FX_DEFS[slot].max);
+    if (busOfPage(page) >= 0) {
+        int b = busOfPage(page);
+        uint8_t* bp = eng.proj.bus[b];
+        const ParamDef& bd = busDef(b, bp[BX_TYPE], slot);
+        if (bd.kind == K_NONE) return;
+        lockA();
+        if (slot == BX_TYPE) {   // Typ wechseln: Regler auf dessen Grundwerte, Sends/Weiterleitung bleiben
+            uint8_t fwd = bp[BX_FWD], lvl = bp[BX_LVL];
+            Engine::setBusType(eng.proj, b, clampi(bp[BX_TYPE] + (delta > 0 ? 1 : -1), 0, BF_COUNT - 1));
+            bp[BX_FWD] = fwd; bp[BX_LVL] = lvl;
+        } else bp[slot] = (uint8_t)clampi(bp[slot] + delta, 0, bd.max);
+        unlockA();
         return;
     }
     if (page == PAGE_CMP) {
@@ -2919,7 +3310,7 @@ static int curMax() {
     if (page == PAGE_MST) return slot == MS_BPM ? 270 : MST_DEFS[slot].max;
     if (page == PAGE_SYS) return 1;
     if (page == PAGE_CMP) return CMP_DEFS[slot].max;
-    if (page == PAGE_FX) return FX_DEFS[slot].max;
+    if (busOfPage(page) >= 0) return busDef(busOfPage(page), eng.proj.bus[busOfPage(page)][BX_TYPE], slot).max;
     if (!trackPage(page)) return 127;
     return paramDef(curP().machine[track], sp() * 8 + slot).max;
 }
@@ -2956,8 +3347,9 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
     }
     fclose(f);
     if (!ok) return -1;
-    int slot = -1;
-    if (machineUsesSample(hdr[4]) && np > P_S0) {
+    int slot = -1, si = machineSampleParam(hdr[4]);
+    if (si == P_X3 && hdr[6] < 3) si = -1;   // WTBL-Presets vor v13 hatten keine eigene Wavetable
+    if (si >= 0 && np > si) {
         if (!hasName) {   // alter Sound: Nummer = Position in der frueheren Sample-Liste (neuere 250er-Liste, wenn sie reicht)
             static char legacy[250][96];
             int n = libLegacyList(legacy, 250, SAMPLE_DEPTH, 500);
@@ -2965,20 +3357,27 @@ static int loadPresetPath(int t, const char* p) {   // 1 ok, 0 fehlt, -1 Fehler
             if (prm[P_S0] < n) snprintf(sname, sizeof sname, "%s", legacy[prm[P_S0]]);
         }
         if (sname[0]) slot = poolAssign(sname);
-        if (slot < 0) slot = curP().p[t][P_S0];   // Sample fehlt: bisheriges behalten
+        if (slot < 0) slot = si == P_S0 ? curP().p[t][P_S0] : -1;   // Sample fehlt: bisheriges behalten
     }
     lockA();
     Pattern& P = curP();
     Engine::initTrack(P, t, hdr[4]);
-    memcpy(P.p[t], prm, np);
+    if (hdr[6] < 3) {   // bis Format 2: 96 Parameter im alten Layout -> v13 (Sends, FM-Operatoren, SYNTH/WTBL-Seite 2)
+        uint8_t o[OLD_NPARAMS];
+        for (int i = 0; i < OLD_NPARAMS; i++) o[i] = i < np ? prm[i] : P.p[t][i];
+        Engine::migrateTrack13(hdr[4], o, P.p[t], false);
+    } else memcpy(P.p[t], prm, np);
     if (hdr[6] == 0 && (hdr[4] == M_SYNTH || hdr[4] == M_WTBL) && P.p[t][P_FTYP] == FT_LP12) P.p[t][P_FTYP] = FT_LP24;   // alte Presets
     if (hdr[6] < 2) { P.p[t][P_FCRV] = 64; P.p[t][P_ACRV] = 64; }
-    if (slot >= 0) P.p[t][P_S0] = (uint8_t)slot;
+    if (slot >= 0 && si >= 0) P.p[t][si] = (uint8_t)slot;
+    else if (si == P_X3 && P.p[t][P_S0] % 5 == 4) P.p[t][P_S0] = 0;   // eigene Wavetable fehlt: BASIC
     unlockA();
     return 1;
 }
 
 #include "filedlg.inc"
+#include "wtedit.inc"
+static void drawWtEditorIfOpen() { if (wteOpen) drawWtEditor(); }
 
 static void runAction(int act, int arg) {
     switch (act) {
@@ -3644,8 +4043,8 @@ static void drawSong() {
     if (target > J.songLen - visible) target = J.songLen > visible ? J.songLen - visible : 0;
     songScroll += (target - songScroll) * (1.f - expf(-animDt * 14.f));
     if (J.songLen == 0) {
-        textC(320, 200, TR("NOCH LEER - L1 LEGT EINE ZEILE MIT DEM", "STILL EMPTY - L1 ADDS A ROW WITH THE"), C_DIM);
-        textC(320, 220, TR("AKTUELLEN PATTERN UND SEINEN MUTES AN", "CURRENT PATTERN AND ITS MUTES"), C_DIM);
+        textC(320, 136, TR("NOCH LEER - L1 LEGT EINE ZEILE MIT DEM", "STILL EMPTY - L1 ADDS A ROW WITH THE"), C_DIM);
+        textC(320, 156, TR("AKTUELLEN PATTERN UND SEINEN MUTES AN", "CURRENT PATTERN AND ITS MUTES"), C_DIM);
     }
     for (int i = 0; i < J.songLen; i++) {
         float yf = top + (i - songScroll) * rowH;
@@ -3684,6 +4083,10 @@ static void drawSong() {
         snprintf(b, sizeof b, play ? "%d/%d" : "x%d", play ? eng.songRep + 1 : rep, rep);
         text(xRep + 6, y + 6, b, sel && songCol == SC_REP ? C_ACC : (play ? C_PLAY : C_TEXT));
         if (sel && !songExp && songCol == SC_REP) { rrect(xRep, y, wRep, 2, 1, C_ACC); rrect(xRep, y + rowH - 6, wRep, 2, 1, C_ACC); }
+    }
+    {   // freie Flaeche unter der Matrix: Zeitleiste des Songs + Oszilloskop
+        int yfree = top + (J.songLen - (int)songScroll) * rowH + 4;
+        if (J.songLen < visible && 386 - yfree >= 50) songTimeline(10, yfree, 620, 386 - yfree);
     }
     // Export-Leiste: Zeilen von..bis als WAV (Standard: ganzer Song)
     {
@@ -3842,6 +4245,7 @@ static void drawSettings() {
         cy += 36;
     }
     text(12, cy + 6, TR("L1/R1 = BEREICH", "L1/R1 = SECTION"), C_DIM);
+    if (436 - (cy + 30) > 40) { rrect(10, cy + 30, 140, 436 - (cy + 30), 8, C_BG); drawSpectrum(14, cy + 36, 132, 436 - (cy + 30) - 12, C_ACC, 12); }
     // rechts: Eintraege des Bereichs
     const int X0 = 158, W = 470, rowH = 27, top = 56, visible = 13;
     int first = cat + 1, end = setCatEnd(cat), n = end - first;
@@ -3870,6 +4274,11 @@ static void drawSettings() {
             text(X0 + W - 18 - textW(vb), y + 5, vb, sel ? C_ACC : C_TEXT);
             if (sel) { text(X0 + W - 18 - textW(vb) - 14, y + 5, "<", C_DIM); text(X0 + W - 12, y + 5, ">", C_DIM); }
         }
+    }
+    {   // freie Flaeche unter der Liste: Bild zum Bereich
+        int used = top + (n - (int)setScroll) * rowH + 6;
+        int ci = 0; for (int i = 0; i < cat; i++) if (setIsHeader(i)) ci++;
+        if (n <= visible && 404 - used >= 44) settingsArt(ci, X0, used, W, 404 - used);
     }
     // Erklaerung des gewaehlten Eintrags
     fill(X0, 410, W, 1, C_OFF2);
@@ -3979,6 +4388,7 @@ static void handleInput(Uint32 now, float dt) {
     }
     if (kbOpen) { kbInput(I, now); return; }
     if (fbOpen) { fbInput(I, now); return; }
+    if (wteOpen) { wteInput(I, now, dt); return; }
     if (expState == 1) { if (I.pressed(BT_B)) expCancel = true; return; }   // Export laeuft: nur Abbrechen
     if (expState >= 2) {
         if (expState == 2) toast(TR("EXPORT FERTIG: SAMPLES/REC/%s", "EXPORT DONE: SAMPLES/REC/%s"), expName);
@@ -4091,14 +4501,14 @@ static void handleInput(Uint32 now, float dt) {
             }
         }
         bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
-        bool knobPg = page == PG_FX || page == PG_CMP || page == PG_MST;   // globale Reglerseiten: Steuerkreuz waehlt den Regler
+        bool knobPg = busOfPage(page) >= 0 || page == PG_CMP || page == PG_MST;   // globale Reglerseiten: Steuerkreuz waehlt den Regler
         if (!aHeld) {
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             int dx = (I.repeat(BT_RIGHT, now, 250, 70) ? 1 : 0) - (I.repeat(BT_LEFT, now, 250, 70) ? 1 : 0);
             int dy = (I.repeat(BT_DOWN, now) ? 1 : 0) - (I.repeat(BT_UP, now) ? 1 : 0);
             if (mixP) {   // Mixer: links/rechts = Kanal, hoch/runter = Zeile
                 if (dx) track = (track + NTRACKS + dx) % NTRACKS;
-                if (dy) mixRow = clampi(mixRow + dy, 0, 3);
+                if (dy) mixRow = clampi(mixRow + dy, 0, MIX_ROWS - 1);
             } else if (knobPg) {
                 if (dx) slot = (slot + 8 + dx) % 8;
                 if (dy) slot = (slot + 4) % 8;
@@ -4142,7 +4552,7 @@ static void handleInput(Uint32 now, float dt) {
         }
         // Linker Stick: auf Regler zeigen (Mixer: hoch/runter = Zeile, links/rechts = Kanal)
         if (mixP) {
-            int f = flick(I.ly, flLY, flLYt, now); if (f) mixRow = clampi(mixRow - f, 0, 3);
+            int f = flick(I.ly, flLY, flLYt, now); if (f) mixRow = clampi(mixRow - f, 0, MIX_ROWS - 1);
             int g = flick(I.lx, flLX, flLXt, now); if (g) track = (track + NTRACKS + g) % NTRACKS;
         } else {   // Linker Stick: pro Antippen genau eine Kachel weiter (halten = wiederholen)
             int fx = flick(I.lx, flLX, flLXt, now), fy = flick(I.ly, flLY, flLYt, now);
@@ -4153,7 +4563,7 @@ static void handleInput(Uint32 now, float dt) {
         flRX = 0;
         {   // L1/R1: Regler waehlen (auch im Lock-Modus), Mixer: Zeile
             int dl = (I.repeat(BT_R1, now, 300, 110) ? 1 : 0) - (I.repeat(BT_L1, now, 300, 110) ? 1 : 0);
-            if (dl && mixP) mixRow = (mixRow + 4 + dl) % 4;
+            if (dl && mixP) mixRow = (mixRow + MIX_ROWS + dl) % MIX_ROWS;
             else if (dl) {
                 int s2 = slot;
                 for (int k = 0; k < 8; k++) {   // leere Felder ueberspringen
@@ -4176,7 +4586,8 @@ static void handleInput(Uint32 now, float dt) {
             if (I.pressed(BT_X) && trackPage(page)) {   // Sample-Regler: X oeffnet den Explorer (mit Unterordnern)
                 ParamDef sd; int sv, sb; bool sl; char slab[24];
                 if (knobInfo(slot, sd, sv, sl, sb, slab, sizeof slab)) {
-                    if (sd.kind == K_SMPL) { openBrowser(FB_SAMPLE); return; }
+                    if (sd.kind == K_SMPL) { fbSmpIdx = sp() * 8 + slot; openBrowser(FB_SAMPLE); return; }
+                    if (sd.kind == K_WDRAW && !aHeld) { openWtEditor(); return; }
                     if (sd.kind == K_LDEST) { fbParam = sp() * 8 + slot; openBrowser(FB_LDEST); return; }
                     if (sd.kind == K_MACH && !aHeld) { openBrowser(FB_MACH); return; }
                 }
@@ -4340,6 +4751,7 @@ static void audioCb(void*, Uint8* stream, int len) {
     usbAudioPush((const float*)stream, frames);   // parallel an den PC (falls aktiv)
     pcInMix((float*)stream, frames, pcInGain);    // PC-Ton dazumischen (nach dem Senden: kein Echo zum PC)
     recPush((const float*)stream, frames);
+    scopePush((const float*)stream, frames);      // fuer Oszilloskop/Spektrum der Oberflaeche
     double el = (double)(SDL_GetPerformanceCounter() - t0) / SDL_GetPerformanceFrequency();
     double avail = (double)frames / eng.sr;
     if (el * 1000.0 > audWorkMax) audWorkMax = el * 1000.0;
@@ -4485,9 +4897,11 @@ static void poolUsed(const Project& J, bool* used) {   // welche Plaetze benutzt
     for (int i = 0; i < MAX_SAMPLES; i++) used[i] = false;
     for (int p = 0; p < NPATTERNS; p++) for (int t = 0; t < NTRACKS; t++) {
         const Pattern& P = J.pat[p];
-        if (!machineUsesSample(P.machine[t] % M_COUNT)) continue;
-        if (P.p[t][P_S0] < MAX_SAMPLES) used[P.p[t][P_S0]] = true;
-        for (int st = 0; st < NSTEPS; st++) { uint8_t v = P.s[t][st].lock[P_S0]; if (v < MAX_SAMPLES) used[v] = true; }
+        int si = machineSampleParam(P.machine[t] % M_COUNT);
+        if (si < 0) continue;
+        if (si == P_X3 && P.p[t][P_S0] % 5 != 4) { bool lk = false; for (int st = 0; st < NSTEPS && !lk; st++) lk = P.s[t][st].lock[P_S0] == 4; if (!lk) continue; }   // WTBL nur mit TABL = USER
+        if (P.p[t][si] < MAX_SAMPLES) used[P.p[t][si]] = true;
+        for (int st = 0; st < NSTEPS; st++) { uint8_t v = P.s[t][st].lock[si]; if (v < MAX_SAMPLES) used[v] = true; }
     }
 }
 static void writePoolTrailer(FILE* f, const Project& J) {   // "SPL1", Anzahl, je Eintrag: Platz, Laenge, Name
@@ -4507,8 +4921,8 @@ static bool readPoolTrailer(const char* path, char (*names)[96]) {
     if (!f) return false;
     bool ok = false;
     char mg[4]; uint16_t n = 0;
-    uint32_t ver = 0;   // v9-v11 sind kuerzer: Namensliste steht direkt nach PROJECT_V11_SIZE
-    long at = (fseek(f, 4, SEEK_SET) == 0 && fread(&ver, 4, 1, f) == 1 && ver < 12) ? (long)PROJECT_V11_SIZE : (long)sizeof(Project);
+    uint32_t ver = 0;   // Namensliste steht direkt hinter den Projektdaten (Groesse je nach Format)
+    long at = (fseek(f, 4, SEEK_SET) == 0 && fread(&ver, 4, 1, f) == 1) ? projectDataSize(ver) : (long)sizeof(Project);
     if (fseek(f, at, SEEK_SET) == 0 && fread(mg, 1, 4, f) == 4 && !memcmp(mg, "SPL1", 4) && fread(&n, 2, 1, f) == 1) {
         ok = true;
         for (int k = 0; k < n; k++) {
@@ -4644,12 +5058,18 @@ int main(int argc, char** argv) {
         static float tmp[44100];
         for (int k = 0; k < 6; k++) eng.render(tmp, 22050 / 2);
         // 0..12 = Seiten (PG_*), 20 Hilfe, 21 P-Lock, 22 Werte-Overlay, 23 Engine-Leiste, 24 Skala, 25 Menue, 26 Abfrage, 27 FM SRC2
-        page = shotPage < NUI_PAGES ? shotPage : PG_TRG; track = 4; cursor = 3; slot = 1;
+        page = shotPage < 20 ? shotPage : (shotPage >= 100 && shotPage - 100 < NUI_PAGES ? shotPage - 100 : PG_TRG); track = 4; cursor = 3; slot = 1;   // neue Seiten: 100 + Seitennummer
+        if (shotPage >= 60 && shotPage <= 64) {   // 60 FM-Algorithmus, 61 FM-Operator 2, 62 SYNTH Oszillatoren, 63 Effekt-Bus B (Spring)
+            if (shotPage <= 61) { applyFactory(curP(), 5, factoryByName("DX E-PIANO")); track = 5; page = shotPage == 60 ? PG_SRC : PG_SRC3; slot = shotPage == 60 ? 0 : 5; }
+            if (shotPage == 62) { page = PG_SRC2; track = 4; slot = 1; curP().p[4][P_X1] = 4; curP().p[4][P_X5] = 1; }
+            if (shotPage == 64) { track = 6; Engine::setMachine(curP(), 6, M_WTBL); page = PG_SRC2; slot = 4; openWtEditor(); wteShape(3); wteKey = 1; wteShape(0); wteCur = 20; wtePts[1][20] = 0.4f; wteKey = 1; }
+            if (shotPage == 63) { page = PG_FXB; Engine::setBusType(eng.proj, 1, BF_SPRING); slot = 3; }
+        }
         refreshDevices();
         if (page == PG_SRC) { track = 7; slot = 0; }
         if (page == PG_SRC || page == PG_SRC2 || shotPage == 27) { }
-        if (shotPage == 27 || page == PG_SRC2) { page = PG_SRC2; track = 6; slot = 0; }
-        if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = INS_CHORUS; editAt = 1; editSlot = 0; slot = 0; }
+        if (shotPage == 27) { page = PG_SRC2; track = 6; slot = 0; }   // FM Operator 1
+        if (page == PG_INS) { track = 5; curP().p[5][P_ITYP] = getenv("GB_INS") ? (uint8_t)atoi(getenv("GB_INS")) : INS_CHORUS; editAt = getenv("GB_INS") ? 0 : 1; editSlot = 0; slot = 0; }
         if (page == PG_MIX) { track = 2; mixRow = 0; eng.solo[1] = true; eng.setMute(3, true); for (int k = 0; k < 3; k++) { eng.render(tmp, 22050 / 2); animate(); } }
         if (page == PG_PRJ) { slot = 2; }
         if (shotPage >= 30 && shotPage <= 33) {   // Engine-Grafiken: 30 KICK, 31 WTBL, 32 CHOP, 33 GRAN
@@ -4711,6 +5131,13 @@ int main(int argc, char** argv) {
         if (shotPage == 55) { page = PG_LFO1; track = 4; slot = LF_DEST; fbParam = P_L1 + LF_DEST; openBrowser(FB_LDEST); }   // LFO-Ziel-Liste
         if (shotPage == 26) { page = PG_PRJ; slot = 1; askConfirm(ACT_LOAD, 2, "SONG 03 LADEN? UNGESPEICHERTES GEHT VERLOREN"); }
         if (page == PG_SRC && curP().machine[track] == M_SAMPLE) { }
+        {   // Oszilloskop/Spektrum mit echtem Signal fuellen (sonst Ruhe-Animation)
+            bool wasPlaying = eng.playing;
+            if (!wasPlaying && shotPage != 26) { lockA(); eng.start(); unlockA(); }
+            for (int k2 = 0; k2 < 4; k2++) { eng.render(tmp, 2048); scopePush(tmp, 2048); }
+            for (int k2 = 0; k2 < 3; k2++) animate();
+        }
+        if (getenv("GB_ANIMT")) animTime += (float)atof(getenv("GB_ANIMT"));   // Screenshots zu anderer Animationszeit (Vergleich)
         lastPage = page;
         if (getenv("GB_BENCH")) {   // Zeichenzeit messen: GB_BENCH=frames ./groovebox --shot x.bmp <seite>
             int n = atoi(getenv("GB_BENCH")); Uint64 t0 = SDL_GetPerformanceCounter();

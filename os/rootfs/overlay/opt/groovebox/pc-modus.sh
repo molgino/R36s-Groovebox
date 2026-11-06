@@ -9,6 +9,7 @@
 #   GB_USB_NET=ncm|rndis   Netzwerk: NCM (Standard: Windows 11/10 ab 2004, macOS, iPadOS, Linux, Android) oder RNDIS (aeltere Windows 10)
 #   GB_UAC=2|1             Audio: UAC2 (Standard, 44,1 + 48 kHz) oder UAC1 (aeltere Geraete/Konsolen; braucht CONFIG_USB_CONFIGFS_F_UAC1)
 #   GB_UAC_RATES="44100,48000"   angebotene Abtastraten (der PC waehlt)
+#   GB_USB_POWER=<mA>      Strombedarf melden (Standard: eigene Stromversorgung, 2 mA - fuer iPhone/iPad)
 DIR=/opt/groovebox
 LOG=$DIR/pc-modus.log
 G=/sys/kernel/config/usb_gadget/groovebox
@@ -40,7 +41,13 @@ setup() {   # $1 = audio (0/1), $2 = laufwerk-Geraet oder leer
     cat /etc/machine-id 2>/dev/null | cut -c1-12 > strings/0x409/serialnumber
     mkdir -p configs/c.1/strings/0x409
     echo "Groovebox" > configs/c.1/strings/0x409/configuration
-    echo 500 > configs/c.1/MaxPower
+    # Eigene Stromversorgung (Akku): kaum Strombedarf melden, sonst lehnen iPhone/iPad das Geraet ab
+    # ("Zubehoer benoetigt zu viel Strom"). Ueberschreibbar: GB_USB_POWER=<mA> (dann bus-powered).
+    if [ -n "$GB_USB_POWER" ]; then
+        echo 0x80 > configs/c.1/bmAttributes; echo "$GB_USB_POWER" > configs/c.1/MaxPower
+    else
+        echo 0xC0 > configs/c.1/bmAttributes; echo 2 > configs/c.1/MaxPower
+    fi
 
     # Netzwerk - muss die erste Funktion sein (Schnittstelle usb0)
     if [ "${GB_USB_NET:-ncm}" = rndis ]; then   # RNDIS: Windows erkennt es ueber os_desc ohne Treiber

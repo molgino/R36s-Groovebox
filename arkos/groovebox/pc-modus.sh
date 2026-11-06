@@ -95,7 +95,7 @@ aus)
   echo "Synth City" > strings/0x409/product
   mkdir -p configs/c.1/strings/0x409
   echo "Groovebox" > configs/c.1/strings/0x409/configuration
-  echo 100 > configs/c.1/MaxPower
+  echo 0xC0 > configs/c.1/bmAttributes; echo 2 > configs/c.1/MaxPower   # eigene Stromversorgung (iPhone/iPad)
   MIDIOK=""; AUDOK=""
   if mkdir -p functions/midi.usb0 2>/dev/null; then
     echo "Synth City" > functions/midi.usb0/id 2>/dev/null

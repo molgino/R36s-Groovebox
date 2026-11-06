@@ -4,7 +4,7 @@ name: Groovebox-OS
 on:
   push:
     branches: [main]
-    paths: ['os/**', '.github/workflows/os.yml']   # App-Aenderungen kommen per App-Update (build.yml)
+    paths: ['os/**', '!os/rootfs/overlay/opt/groovebox/pc-modus.sh']   # Aenderung nur an dieser Datei: per workflow_dispatch starten   # App-Aenderungen (auch pc-modus.sh) kommen per App-Update (build.yml)
   workflow_dispatch:
 
 permissions:
