@@ -725,6 +725,15 @@ static void switchPattern(int to) {
     if (wasSong) toast(TR("SONG AUS - PATTERN %02d", "SONG OFF - PATTERN %02d"), to + 1);
 }
 static Step& holdS() { return eng.proj.pat[holdPat].s[holdTrack][holdStep]; }
+static void lockJumpTo(int st) {   // Lock-Modus: zu einem anderen Step derselben Spur springen, Modus bleibt
+    Step& o = holdS();
+    if (aPrevOn == 0 && !aEdited) o.on = 0;
+    cursor = st; holdStep = st;
+    Step& s = holdS();
+    aPrevOn = s.on; aJustOn = s.on == 0; aEdited = false;
+    if (s.on == 0) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
+    toast("LOCK STEP %d", st + 1);
+}
 
 // Rueckgaengig: Stapel von Pattern-Staenden; zusammenhaengende Aenderungen (bis 0,8 s Pause) = ein Schritt
 enum { UNDO_N = 12 };
@@ -912,7 +921,7 @@ static void battery(int x, int y) {
 static void drawIcon(int m, int x, int y, int s, Col c);
 // ---------------------------------------------------------------- Touch-Flaechen (Fernbedienung im Browser)
 // Jede Zeichenfunktion meldet ihre bedienbaren Flaechen; Touch prueft gegen das zuletzt gezeichnete Bild (oberste zuerst).
-enum HitKind { HK_TRACK, HK_PAGE, HK_SLOT, HK_STEP, HK_MUTE, HK_SOLO, HK_MIXCH, HK_MENU, HK_YES, HK_NO, HK_LIVE, HK_BTN, HK_SET, HK_SONG, HK_PRJ, HK_BLOCK };
+enum HitKind { HK_TRACK, HK_PAGE, HK_SLOT, HK_STEP, HK_MUTE, HK_SOLO, HK_MIXCH, HK_MENU, HK_YES, HK_NO, HK_LIVE, HK_BTN, HK_SET, HK_SONG, HK_PRJ, HK_BLOCK, HK_LOCKEND, HK_FBROW, HK_FBBACK, HK_FBCANCEL, HK_FBPLAY };
 struct Hit { short x, y, w, h; uint8_t k; short a, b; };
 enum { MAX_HITS = 320 };
 static Hit hits[MAX_HITS];
@@ -998,8 +1007,14 @@ static void drawHeader() {
         }
     }
     if (aHeld) {
-        snprintf(b, sizeof b, lockLatch ? TR("LOCK-MODUS STEP %02d", "LOCK MODE STEP %02d") : TR("TRIG %02d HALTEN: P-LOCK", "HOLD TRIG %02d: P-LOCK"), holdStep + 1);
+        snprintf(b, sizeof b, lockLatch ? TR("LOCK STEP %02d", "LOCK STEP %02d") : TR("TRIG %02d HALTEN: P-LOCK", "HOLD TRIG %02d: P-LOCK"), holdStep + 1);
         text(332, 23, b, C_LOCK);
+        if (lockLatch) {   // Knopf zum Beenden (Touch in der Fernbedienung; am Geraet A)
+            const char* ft = TR("FERTIG", "DONE");
+            int bx = 332 + textW(b) + 8, bw = textW(ft) + 12;
+            rrect(bx, 22, bw, 16, 5, C_LOCK); text(bx + 6, 23, ft, C_BG);
+            hitAdd(328, 20, bx + bw - 324, 22, HK_LOCKEND);
+        }
     } else {
         int hx = 334;
         if (!trackPage(page)) { text(hx, 23, GROUP_NAMES[PG_GROUP[page]], dimC(C_ACC, 0.8f)); hx += textW(GROUP_NAMES[PG_GROUP[page]]) + 10; }
@@ -4709,16 +4724,7 @@ static void handleInput(Uint32 now, float dt) {
         if (lockLatch) {   // Lock-Modus: links/rechts springt zum naechsten Step und bleibt im Modus
             int cl = curP().len[track] < 1 ? 1 : curP().len[track];
             int d = (I.repeat(BT_RIGHT, now, 250, 90) ? 1 : 0) - (I.repeat(BT_LEFT, now, 250, 90) ? 1 : 0);
-            if (d) {
-                Step& o = holdS();
-                if (aPrevOn == 0 && !aEdited) o.on = 0;
-                cursor = ((cursor + d) % cl + cl) % cl;
-                holdStep = cursor;
-                Step& s = holdS();
-                aPrevOn = s.on; aJustOn = s.on == 0; aEdited = false;
-                if (s.on == 0) { memset(s.lock, NO_LOCK, NPARAMS); s.on = 1; }
-                toast("LOCK STEP %d", cursor + 1);
-            }
+            if (d) lockJumpTo(((cursor + d) % cl + cl) % cl);
         }
         bool mixP = page == PG_MIX, prjAct = page == PG_PRJ && prjIsAction(slot);
         bool knobPg = busOfPage(page) >= 0 || page == PG_CMP || page == PG_MST;   // globale Reglerseiten: Steuerkreuz waehlt den Regler
@@ -4759,7 +4765,7 @@ static void handleInput(Uint32 now, float dt) {
         // A lange halten (ohne zu drehen) = Lock-Modus einrasten: Daumen frei fuer Stick und X/Y
         if (aHeld && !lockLatch && I.down[BT_A] && !aEdited && now - aDownAt > 450) {
             lockLatch = true;
-            toast(TR("LOCK-MODUS STEP %d  (A = FERTIG)", "LOCK MODE STEP %d  (A = DONE)"), holdStep + 1);
+            toast(TR("LOCK-MODUS STEP %d  (A ODER FERTIG = ENDE)", "LOCK MODE STEP %d  (A OR DONE = EXIT)"), holdStep + 1);
         }
         if (I.pressed(BT_B)) {
             if (aHeld) {

@@ -28,6 +28,13 @@ static void touchDrag(TouchPtr& t, int x, int y) {
         t.acc += (dx - dy) / per;
         int d = (int)t.acc;
         if (d) { t.acc -= d; editValue(d); if (aHeld) aEdited = true; }
+    } else if (t.kind == HK_FBROW && fbOpen && fbN > 15) {   // Liste mit dem Finger schieben (Auswahl bleibt sichtbar)
+        fbScroll -= dy / 22.f;
+        if (fbScroll > fbN - 15) fbScroll = (float)(fbN - 15);
+        if (fbScroll < 0) fbScroll = 0;
+        int lo = (int)ceilf(fbScroll) + 2, hi = (int)fbScroll + 12;   // ceil: sonst zieht drawBrowser die Liste zurueck
+        if (fbSel < lo) fbSel = lo; if (fbSel > hi) fbSel = hi;
+        if (fbSel >= fbN) fbSel = fbN - 1;
     } else if (t.kind == HK_SET && !setIsAction(t.a)) {
         t.acc += dx / 22.f;
         int d = (int)t.acc;
@@ -52,7 +59,12 @@ static void touchDown(TouchPtr& t, int x, int y, Uint32 now) {
     case HK_STEP: {
         bool other = false;
         for (int i = 0; i < REMOTE_TOUCH_IDS; i++) if (&tch[i] != &t && tch[i].on && tch[i].emuA) other = true;
-        if (other || lockLatch) break;   // nur ein gehaltener Step
+        if (lockLatch) {   // Lock-Modus: gleicher Step = fertig, anderer Step derselben Spur = dorthin springen
+            if (h->b >= 0 && h->b != holdTrack) break;
+            if (h->a == holdStep) remoteHit[BT_A] = true; else lockJumpTo(h->a);
+            break;
+        }
+        if (other) break;   // nur ein gehaltener Step
         if (h->b >= 0) track = h->b;
         cursor = h->a;
         t.emuA = true; touchEmuDown(BT_A);
@@ -64,12 +76,21 @@ static void touchDown(TouchPtr& t, int x, int y, Uint32 now) {
     case HK_SET: t.wasSel = setSel == h->a && setIn; setSel = h->a; setIn = true; break;
     case HK_SONG: t.wasSel = songSel == h->a && songCol == h->b; songSel = h->a; songCol = h->b; break;
     case HK_BLOCK: if (menuOpen) menuOpen = false; break;   // neben die Karte getippt: schliessen
+    case HK_LOCKEND: if (lockLatch) remoteHit[BT_A] = true; break;
+    case HK_FBROW: t.wasSel = fbSel == h->a; fbSel = h->a; break;
+    case HK_FBBACK: if (fbDir[0]) fbUp(); else fbClose(true); break;
+    case HK_FBCANCEL: fbClose(true); break;
+    case HK_FBPLAY: fbPreview(); break;
     }
 }
 static void touchUp(TouchPtr& t, Uint32 now) {
     bool tap = !t.moved && now - t.t0 < 500;
     if (tap) {
         if (t.kind == HK_PRJ) prjTrigger(t.a);
+        if (t.kind == HK_FBROW && fbOpen && t.a < fbN) {   // Liste: nochmal antippen = waehlen/oeffnen, erstes Antippen bei Samples = vorhoeren
+            if (t.wasSel) fbPick();
+            else if (fbMode == FB_SAMPLE && !fbEnt[t.a].dir) fbPreview();
+        }
         if (t.kind == HK_SLOT && t.wasSel && trackPage(page)) {   // nochmal antippen: Liste wie X (nur Sonderregler)
             ParamDef d; int v, bv; bool lk; char lb[24];
             if (knobInfo(t.a, d, v, lk, bv, lb, sizeof lb) && (d.kind == K_SMPL || d.kind == K_LDEST || d.kind == K_MACH || d.kind == K_WDRAW)) remoteHit[BT_X] = true;

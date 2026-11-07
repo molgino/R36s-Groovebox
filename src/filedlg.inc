@@ -453,6 +453,7 @@ static void drawBrowser() {
         else if (fbMode == FB_LDEST && e.dir) info = PAGE_LONG[ldestUiPage(e.idx)];
         else if (fbMode == FB_LDEST) info = e.idx ? paramHelp(e.name) : TR("kein Ziel (LFO aus)", "no target (LFO off)");
         if (sel) rrect(x0 + 10, y - 2, w - 20, rh, 5, C_SEL);
+        hitAdd(x0 + 10, y - 2, w - 20, rh, HK_FBROW, i);
         if (e.dir) {   // Ordnersymbol
             fill(x0 + 20, y + 4, 7, 3, C_LOCK); fill(x0 + 20, y + 6, 14, 10, C_LOCK);
             const char* dn = (fbMode == FB_PRESET && !strcmp(e.name, FB_FACTORY)) ? TR("WERKSKLÄNGE", "FACTORY SOUNDS") : e.name;
@@ -476,5 +477,17 @@ static void drawBrowser() {
     const char* h1 = (fbMode == FB_LDEST || fbMode == FB_MACH) ? TR("[A]WÄHLEN [B]ZURÜCK [L1/R1]SEITE [SEL]ABBRUCH", "[A]PICK [B]BACK [L1/R1]PAGE [SEL]CANCEL")
                    : fbMode == FB_SAMPLE ? TR("[A]WÄHLEN [X]HÖREN [B]ZURÜCK [L1/R1]SEITE [SEL]ABBRUCH", "[A]PICK [X]LISTEN [B]BACK [L1/R1]PAGE [SEL]CANCEL")
                                          : TR("[A]ÖFFNEN/LADEN [B]ZURÜCK [L1/R1]SEITE [SEL]ABBRUCH", "[A]OPEN/LOAD [B]BACK [L1/R1]PAGE [SEL]CANCEL");
-    hint(x0 + 16, y0 + h - 26, h1, C_ACC, C_DIM);
+    hitAdd(x0, y0, w, 46, HK_FBBACK);   // Titel/Pfad antippen = eine Ebene zurueck
+    if (remoteWanted()) {   // Fernbedienung: Touch-Knoepfe statt Tastenhinweis
+        struct { const char* t; int k; } B[3] = {{fbDir[0] ? TR("< ZURÜCK", "< BACK") : TR("< SCHLIESSEN", "< CLOSE"), HK_FBBACK},
+                                                  {TR("ABBRUCH", "CANCEL"), HK_FBCANCEL}, {TR("HÖREN", "LISTEN"), HK_FBPLAY}};
+        int bx = x0 + 16, nb = fbMode == FB_SAMPLE ? 3 : 2;
+        for (int k = 0; k < nb; k++) {
+            int bw = textW(B[k].t) + 20;
+            rrect(bx, y0 + h - 30, bw, 22, 6, C_OFF2); text(bx + 10, y0 + h - 26, B[k].t, k == 1 ? C_TRIG : C_CYAN);
+            hitAdd(bx - 2, y0 + h - 34, bw + 4, 30, B[k].k);
+            bx += bw + 8;
+        }
+        text(bx + 4, y0 + h - 26, TR("2x TIPPEN = WÄHLEN", "TAP TWICE = PICK"), C_DIM);
+    } else hint(x0 + 16, y0 + h - 26, h1, C_ACC, C_DIM);
 }

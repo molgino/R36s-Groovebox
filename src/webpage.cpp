@@ -320,12 +320,22 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padd
 #lost{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;background:rgba(8,4,18,.78);color:#fff;font-size:15px;line-height:1.6;z-index:5;backdrop-filter:grayscale(1)}#lost.on{display:flex}#lost b{color:#ff4fa3;font-size:18px}#lostT{color:var(--dim);font-size:12px}#lost button{margin-top:10px;padding:6px 16px;border-radius:6px;border:1px solid var(--cy);background:transparent;color:var(--cy);font:inherit}.spin{width:34px;height:34px;margin:0 auto 8px;border-radius:50%;border:3px solid rgba(255,255,255,.15);border-top-color:var(--cy);animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.rip{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid var(--cy);pointer-events:none;animation:rip .45s ease-out forwards}
 .rip.hold{border-color:var(--acc);animation:none;opacity:.8}
 @keyframes rip{from{transform:scale(.4);opacity:1}to{transform:scale(1.6);opacity:0}}
+/* Bild-Vollbild: nur das Bild, so gross wie moeglich, schwebende Mini-Leiste */
+body.full header,body.full #ctl,body.full #midL{display:none !important}
+body.full #app{padding:0}body.full #stage{padding:0;gap:0;grid-template-columns:1fr !important;grid-template-rows:minmax(0,1fr) !important}
+body.full #scr{grid-column:1 !important;grid-row:1 !important;width:100%;height:100%}
+body.full canvas,body.full #cvw{border-radius:0}body.full canvas{box-shadow:none}
+#fbar{display:none;position:fixed;right:max(6px,env(safe-area-inset-right));top:max(6px,env(safe-area-inset-top));z-index:8;gap:6px;opacity:.55;touch-action:none}
+body.full #fbar{display:flex}#fbar:hover,#fbar:active{opacity:1}
+#fbar .btn{width:auto;height:30px;padding:0 10px;font-size:11px;border-radius:15px;background:#20183acc}
+body.full.fleft #fbar{right:auto;left:max(6px,env(safe-area-inset-left))}
 body.nopad #ctl{display:none}
 body.nopad #stage{grid-template-columns:1fr !important}
 body.nopad #scr{grid-column:1 !important}
 </style></head><body><div id="app">
 <header><span id="dot"></span><h1>SYNTH CITY</h1><span id="stat">…</span><span class="sp"></span>
-<button class="hb" id="bAud" title="Ton im Browser">🔈 Ton</button><input id="vol" type="range" min="0" max="100" value="80" style="width:70px;display:none"><button class="hb" id="zo" title="Verkleinern (−)">−</button><button class="hb" id="zl" title="Zoom zurücksetzen (0)">100%</button><button class="hb" id="zi" title="Vergrößern (+)">+</button><button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
+<button class="hb" id="bAud" title="Ton im Browser">🔈 Ton</button><input id="vol" type="range" min="0" max="100" value="80" style="width:70px;display:none"><button class="hb" id="zo" title="Verkleinern (−)">−</button><button class="hb" id="zl" title="Zoom zurücksetzen (0)">100%</button><button class="hb" id="zi" title="Vergrößern (+)">+</button><button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFull" title="Nur das Bild, so groß wie möglich (V)">Vollbild</button><button class="hb" id="bFs" title="Browser-Vollbild">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
+<div id="fbar"><div class="btn" data-b="SELECT">SEL</div><div class="btn" data-b="START">START</div><div class="btn" id="fSide" title="Leiste auf die andere Seite">⇆</div><div class="btn" id="fExit" title="Vollbild beenden (V)">✕</div></div>
 <div id="stage">
  <div id="scr"><div id="cvw"><canvas id="cv" width="640" height="480" tabindex="0"></canvas><div id="lost"><div><div class="spin"></div><b>Verbindung verloren</b><br><span id="lostT">verbinde neu …</span><br><button id="lostR">Neu laden</button></div></div></div>
   <div class="mid" id="midL"><div class="row"><div class="btn" data-b="SELECT">SELECT</div><div class="btn" data-b="START">START</div></div></div></div>
@@ -341,7 +351,7 @@ body.nopad #scr{grid-column:1 !important}
 <div id="help"><div><b style="color:#fff">Tastatur</b><br>
 <kbd>←↑→↓</kbd> Steuerkreuz &nbsp; <kbd>Z</kbd>/<kbd>Leertaste</kbd> A &nbsp; <kbd>X</kbd>/<kbd>⌫</kbd> B &nbsp; <kbd>S</kbd> X &nbsp; <kbd>A</kbd> Y<br>
 <kbd>Q</kbd> L1 &nbsp; <kbd>W</kbd> R1 &nbsp; <kbd>1</kbd> L2 &nbsp; <kbd>2</kbd> R2 &nbsp; <kbd>Shift</kbd>/<kbd>Tab</kbd> SELECT &nbsp; <kbd>Enter</kbd> START (halten = FILL)<br>
-<kbd>T F G H</kbd> linker Stick &nbsp; <kbd>I J K L</kbd> rechter Stick &nbsp; <kbd>F11</kbd> Vollbild<br>
+<kbd>T F G H</kbd> linker Stick &nbsp; <kbd>I J K L</kbd> rechter Stick &nbsp; <kbd>V</kbd> Bild-Vollbild (nur das Bild, Leiste oben rechts: SEL, START, ⇆ Seite, ✕ beenden) &nbsp; <kbd>F11</kbd> Browser-Vollbild<br>
 <b style="color:#fff">Zoom</b>: zwei Finger gleichzeitig aufs Bild = vergrößern/verschieben, Knöpfe − 100% + oben, am PC Strg+Mausrad (Mausrad verschiebt), Tasten <kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd>.<br><b style="color:#fff">Touch aufs Bild</b>: Spur, Seite, Reiter, Kachel oder Step antippen. Auf einer Kachel ziehen (hoch/rechts = mehr) ändert den Wert. Step antippen = Trig an/aus, Step halten + mit zweitem Finger Kachel ziehen = P-Lock. Kachel nochmal antippen = Auswahlliste (Sample, LFO-Ziel, Engine). „Tasten“ blendet das Gamepad aus.<br><b style="color:#fff">Touch-Tasten</b>: mehrere Finger gleichzeitig, Wischen über das Steuerkreuz geht auch.<br>
 <b style="color:#fff">Gamepad</b>: am PC/Handy angeschlossenes Gamepad wird automatisch erkannt.<br>
 <span style="color:var(--dim)">Tippen zum Schließen</span></div></div>
@@ -467,7 +477,7 @@ function setTouch(id,list){const old=touches.get(id)||[];if(same(old,list))retur
  old.forEach(t=>{if(!list.some(n=>n[0]===t[0]&&n[1]===t[1]))release(t[0],t[1]);});
  list.forEach(t=>{if(!old.some(o=>o[0]===t[0]&&o[1]===t[1]))press(t[0],t[1]);});
  if(list.length)touches.set(id,list);else touches.delete(id);}
-const ctlArea=[$('ctl'),$('midL')];
+const ctlArea=[$('ctl'),$('midL'),$('fbar')];
 ctlArea.forEach(area=>{
  area.addEventListener('pointerdown',e=>{const l=targetsAt(e.clientX,e.clientY);if(!l.length)return;e.preventDefault();try{area.setPointerCapture(e.pointerId);}catch(_){}setTouch(e.pointerId,l);});
  area.addEventListener('pointermove',e=>{if(!touches.has(e.pointerId))return;e.preventDefault();setTouch(e.pointerId,targetsAt(e.clientX,e.clientY));});
@@ -475,7 +485,7 @@ ctlArea.forEach(area=>{
  area.addEventListener('pointerup',end);area.addEventListener('pointercancel',end);area.addEventListener('lostpointercapture',end);
 });
 document.addEventListener('contextmenu',e=>e.preventDefault());
-document.addEventListener('touchmove',e=>{if(e.touches.length>1||e.target.closest('#ctl,#midL'))e.preventDefault();},{passive:false});
+document.addEventListener('touchmove',e=>{if(e.touches.length>1||e.target.closest('#ctl,#midL,#fbar'))e.preventDefault();},{passive:false});
 // ---- Zoom: Bild bis 4x vergroessern, Ausschnitt verschieben (Transform auf dem Canvas; tPos rechnet ueber getBoundingClientRect weiter richtig)
 let zm=1,zx=0,zy=0,fw=640,fh=480;
 function applyZoom(){zm=Math.max(1,Math.min(4,zm));zx=Math.max(0,Math.min(fw*(zm-1),zx));zy=Math.max(0,Math.min(fh*(zm-1),zy));
@@ -490,7 +500,8 @@ $('cvw').addEventListener('wheel',e=>{const r=$('cvw').getBoundingClientRect();
 addEventListener('keydown',e=>{if(e.ctrlKey||e.metaKey||e.altKey)return;
  if(e.key==='+'||e.code==='NumpadAdd'||e.code==='Equal'){e.preventDefault();zoomStep(1.25);}
  else if(e.key==='-'||e.code==='NumpadSubtract'||e.code==='Minus'){e.preventDefault();zoomStep(0.8);}
- else if(e.code==='Digit0'||e.code==='Numpad0'){e.preventDefault();zm=1;zx=zy=0;applyZoom();}});
+ else if(e.code==='Digit0'||e.code==='Numpad0'){e.preventDefault();zm=1;zx=zy=0;applyZoom();}
+ else if(e.code==='KeyV'){e.preventDefault();setFull(!document.body.classList.contains('full'));}});
 // Zwei Finger, die fast gleichzeitig (< 150 ms) aufs Bild kommen = Zoomen/Verschieben; spaeter dazukommender Finger = normale
 // Bedienung (Step halten + Kachel ziehen). Dafuer wird der erste Touch-Finger bis zu 150 ms zurueckgehalten.
 const pend=new Map();let gest=null;
@@ -552,6 +563,16 @@ $('bSt').onclick=()=>{document.body.classList.toggle('sticks');try{localStorage.
 try{if(localStorage.sticks)document.body.classList.add('sticks');}catch(e){}
 let wl=null;async function wake(){try{if(navigator.wakeLock&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>wl=null);}}catch(e){}}
 document.addEventListener('pointerdown',wake);document.addEventListener('keydown',wake);
+// Bild-Vollbild: Kopfzeile und Tasten weg, Bild fuellt den Bildschirm (4:3), wo moeglich auch Browser-Vollbild
+function setFull(on){document.body.classList.toggle('full',on);try{localStorage.full=on?1:'';}catch(e){}
+ const d=document.documentElement,fs=document.fullscreenElement||document.webkitFullscreenElement;
+ try{if(on&&!fs&&(d.requestFullscreen||d.webkitRequestFullscreen)){const r=(d.requestFullscreen||d.webkitRequestFullscreen).call(d);if(r&&r.catch)r.catch(()=>{});}
+  else if(!on&&fs)(document.exitFullscreen||document.webkitExitFullscreen).call(document);}catch(e){}
+ setTimeout(fit,60);setTimeout(fit,400);}
+$('bFull').onclick=()=>setFull(true);
+$('fExit').addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();setFull(false);});
+$('fSide').addEventListener('pointerdown',e=>{e.stopPropagation();e.preventDefault();document.body.classList.toggle('fleft');});
+try{if(localStorage.full)document.body.classList.add('full');}catch(e){}
 $('bFs').onclick=()=>{const d=document.documentElement;if(document.fullscreenElement||document.webkitFullscreenElement){(document.exitFullscreen||document.webkitExitFullscreen).call(document);}
  else{(d.requestFullscreen||d.webkitRequestFullscreen).call(d);try{screen.orientation.lock('landscape').catch(()=>{});}catch(e){}}};
 </script></body></html>)HTML";
