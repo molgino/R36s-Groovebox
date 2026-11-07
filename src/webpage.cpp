@@ -317,7 +317,7 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padd
 #cvw{position:relative;flex:none;touch-action:none;overflow:hidden;border-radius:6px}
 #cv{transform-origin:0 0}
 #zl{min-width:46px;text-align:center}
-.rip{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid var(--cy);pointer-events:none;animation:rip .45s ease-out forwards}
+#lost{position:absolute;inset:0;display:none;align-items:center;justify-content:center;text-align:center;background:rgba(8,4,18,.78);color:#fff;font-size:15px;line-height:1.6;z-index:5;backdrop-filter:grayscale(1)}#lost.on{display:flex}#lost b{color:#ff4fa3;font-size:18px}#lostT{color:var(--dim);font-size:12px}#lost button{margin-top:10px;padding:6px 16px;border-radius:6px;border:1px solid var(--cy);background:transparent;color:var(--cy);font:inherit}.spin{width:34px;height:34px;margin:0 auto 8px;border-radius:50%;border:3px solid rgba(255,255,255,.15);border-top-color:var(--cy);animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.rip{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid var(--cy);pointer-events:none;animation:rip .45s ease-out forwards}
 .rip.hold{border-color:var(--acc);animation:none;opacity:.8}
 @keyframes rip{from{transform:scale(.4);opacity:1}to{transform:scale(1.6);opacity:0}}
 body.nopad #ctl{display:none}
@@ -327,7 +327,7 @@ body.nopad #scr{grid-column:1 !important}
 <header><span id="dot"></span><h1>SYNTH CITY</h1><span id="stat">…</span><span class="sp"></span>
 <button class="hb" id="bAud" title="Ton im Browser">🔈 Ton</button><input id="vol" type="range" min="0" max="100" value="80" style="width:70px;display:none"><button class="hb" id="zo" title="Verkleinern (−)">−</button><button class="hb" id="zl" title="Zoom zurücksetzen (0)">100%</button><button class="hb" id="zi" title="Vergrößern (+)">+</button><button class="hb" id="bPad">Tasten</button><button class="hb" id="bSt">Sticks</button><button class="hb" id="bHelp">?</button><button class="hb" id="bFs">⛶</button><a href="/" class="hb" style="text-decoration:none">Dateien</a></header>
 <div id="stage">
- <div id="scr"><div id="cvw"><canvas id="cv" width="640" height="480" tabindex="0"></canvas></div>
+ <div id="scr"><div id="cvw"><canvas id="cv" width="640" height="480" tabindex="0"></canvas><div id="lost"><div><div class="spin"></div><b>Verbindung verloren</b><br><span id="lostT">verbinde neu …</span><br><button id="lostR">Neu laden</button></div></div></div>
   <div class="mid" id="midL"><div class="row"><div class="btn" data-b="SELECT">SELECT</div><div class="btn" data-b="START">START</div></div></div></div>
  <div id="ctl">
   <div class="side lside"><div class="shd"><div class="btn" data-b="L2">L2</div><div class="btn" data-b="L1">L1</div></div>
@@ -366,18 +366,34 @@ function fit(){const sc=$('scr'),r=sc.getBoundingClientRect(),mh=$('midL').offse
  if(w<=0||h<=0)return;if(w/h>4/3)w=h*4/3;else h=w*3/4;w=Math.floor(w);h=Math.floor(h);cv.style.width=w+'px';cv.style.height=h+'px';$('cvw').style.width=w+'px';$('cvw').style.height=h+'px';fw=w;fh=h;applyZoom();}
 addEventListener('resize',fit);if(window.ResizeObserver)new ResizeObserver(fit).observe($('scr'));setTimeout(fit,0);
 // ---- Verbindung: WebSocket (Bildstrom + Tasten), sonst Abfrage
-let ws=null,wsFails=0,pingT=0;
-function setStat(ok,txt){$('dot').style.background=ok?'var(--gr)':'#c33';if(txt)$('stat').textContent=txt;}
+let ws=null,wsFails=0,everWs=false,pingT=0,lastRx=performance.now(),lostAt=0,tries=0;
+// Verbindungsverlust sichtbar machen: Bild abdunkeln + Hinweis statt eingefrorenem Bild
+function setLost(on){const el=$('lost');if(on){if(!lostAt){lostAt=performance.now();tries=0;}el.classList.add('on');}
+ else{lostAt=0;el.classList.remove('on');}}
+function lostTick(){if(!lostAt)return;const s=Math.round((performance.now()-lostAt)/1000);
+ $('lostT').textContent='seit '+s+' s · Versuch '+tries+(navigator.onLine===false?' · Handy offline':' · WLAN/USB prüfen');}
+function setStat(ok,txt){$('dot').style.background=ok?'var(--gr)':'#c33';if(txt)$('stat').textContent=txt;setLost(!ok);}
+$('lostR').onclick=e=>{e.stopPropagation();location.reload();};
+// Watchdog: der R36S beantwortet den Ping jede Sekunde - kommt 5 s nichts (grosses Bild ueber langsames WLAN braucht etwas), ist die Leitung tot
+// (WLAN weg, Gerät aus, Handy aus dem Ruhezustand): Socket verwerfen und neu verbinden
+function wsKill(){if(!ws)return;const w=ws;ws=null;w.onclose=w.onmessage=w.onopen=null;try{w.close();}catch(e){}
+ if(mode==='ws')mode='';setStat(false,'getrennt – verbinde neu …');releaseAll();setTimeout(connect,300);
+ if(aws){const a=aws;aws=null;a.onclose=a.onmessage=null;try{a.close();}catch(e){}if(aOn)setTimeout(connectAudio,800);}}   // Ton-Socket haengt meist mit
+setInterval(()=>{lostTick();if(ws&&performance.now()-lastRx>5000)wsKill();},500);
 function connect(){
- if(wsFails>=3){mode='poll';pollLoop();return;}
+ if(wsFails>=3&&!everWs){mode='poll';pollLoop();return;}
+ tries++;
  try{ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');}catch(e){wsFails++;setTimeout(connect,500);return;}
  ws.binaryType='arraybuffer';
- ws.onopen=()=>{mode='ws';wsFails=0;setStat(true);};
- ws.onmessage=e=>{if(typeof e.data==='string'){if(e.data[0]==='P')lat=performance.now()-(+e.data.slice(2));}else decode(e.data);};
- ws.onclose=()=>{ws=null;if(mode==='ws')mode='';wsFails++;setStat(false,'getrennt – verbinde neu …');releaseAll();setTimeout(connect,600);};
+ const me=ws;lastRx=performance.now();
+ const to=setTimeout(()=>{if(ws===me&&me.readyState!==1)wsKill();},4000);   // Aufbau haengt (kein Netz)
+ ws.onopen=()=>{clearTimeout(to);mode='ws';everWs=true;wsFails=0;lastRx=performance.now();setStat(true);ws.send('f');};
+ ws.onmessage=e=>{lastRx=performance.now();if(typeof e.data==='string'){if(e.data[0]==='P')lat=performance.now()-(+e.data.slice(2));}else decode(e.data);};
+ ws.onclose=()=>{clearTimeout(to);if(ws!==me)return;ws=null;if(mode==='ws')mode='';wsFails++;setStat(false,'getrennt – verbinde neu …');releaseAll();setTimeout(connect,600);};
 }
 async function pollLoop(){
- for(;;){try{const r=await fetch('/api/screen?since='+seq,{cache:'no-store'});
+ for(;;){tries++;try{const ac=window.AbortController?new AbortController():null,tm=setTimeout(()=>{if(ac)ac.abort();},4000);
+   const r=await fetch('/api/screen?since='+seq,{cache:'no-store',signal:ac?ac.signal:undefined});clearTimeout(tm);
    if(r.status===200){decode(await r.arrayBuffer());}else if(r.status===204){await new Promise(z=>setTimeout(z,20));}else throw 0;
    setStat(true);}catch(e){setStat(false,'keine Verbindung …');seq=0;await new Promise(z=>setTimeout(z,800));}}
 }
@@ -416,7 +432,10 @@ setInterval(()=>{const now=performance.now(),s=(now-last)/1000;
  if(ws&&ws.readyState===1)ws.send('p '+now.toFixed(0));
  $('stat').textContent=(mode==='ws'?'Live':mode==='poll'?'Abfrage':'…')+' · '+Math.round(frames/s)+' fps · '+Math.round(bytes/1024/s)+' kB/s'+(mode==='ws'?' · '+Math.round(lat)+' ms':'')+(aOn&&aws?' · Ton '+Math.round(aBuf*1000)+' ms':'');
  frames=0;bytes=0;last=now;},1000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&ws&&ws.readyState===1)ws.send('f');else releaseAll();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){releaseAll();return;}
+ lastRx=performance.now();if(ws&&ws.readyState===1){ws.send('f');ws.send('p '+lastRx.toFixed(0));}});   // zurueck aus dem Hintergrund: Watchdog prueft sofort
+addEventListener('online',()=>{if(ws&&ws.readyState!==1)wsKill();});
+addEventListener('offline',()=>{if(ws)wsKill();});
 connect();
 // ---- Tasten senden (Zaehler je Taste: Touch + Tastatur + Gamepad duerfen sich ueberlappen)
 const cnt={},AX={LX:1,LY:1,RX:1,RY:1};
