@@ -228,9 +228,13 @@ static void fbListFiles(const char* dir, const char* ext, int idx) {
 }
 static bool ldestValid(int m, int pi) {   // pi = Parameterindex; nur echte Klangparameter als LFO-Ziel
     int k = paramDef(m, pi).kind;
-    return k != K_NONE && k != K_MACH && k != K_TLEN && k != K_TSPD;
+    return k != K_NONE && k != K_MACH && k != K_TLEN && k != K_TSPD && k != K_LDEST && k != K_EDEST;
 }
-static int ldestUiPage(int store) { for (int u = 0; u < NUI_PAGES; u++) if (PG_STORE[u] == store) return u; return -1; }
+static int ldestUiPage(int pi) {   // Spurseite, auf der Parameter pi liegt (-1 = keine)
+    for (int u = 0; u < NUI_PAGES; u++) for (int k = 0; k < uiSlots(u); k++) if (uiParam(u, k) == pi) return u;
+    return -1;
+}
+static bool fbEnvDest() { return fbMode == FB_LDEST && paramDef(curP().machine[track], fbParam).kind == K_EDEST; }
 static int fbCurValue() {   // aktueller Wert des Reglers, fuer den die Liste offen ist (Lock bei gehaltenem Step)
     if (fbMode == FB_MACH) return curP().machine[track];
     return aHeld && holdS().lock[fbParam] != NO_LOCK ? holdS().lock[fbParam] : curP().p[track][fbParam];
@@ -243,14 +247,15 @@ static void fbBuild() {
         int m = curP().machine[track];
         if (!fbDir[0]) {   // Wurzel: "kein Ziel" + ein Ordner je Seite in Bedien-Reihenfolge
             fbAdd("---", false, 0);
-            for (int u = 0; u < NUI_PAGES; u++) {
-                int st = PG_STORE[u]; if (st < 0) continue;
-                bool any = false; for (int k = 0; k < 8; k++) any |= ldestValid(m, st * 8 + k);
-                if (any) fbAdd(PAGE_NAMES[u], true, st);
+            if (fbEnvDest()) fbAdd("VCA", false, MOD_VCA);   // Huellkurve: Lautstaerke der Stimme
+            for (int r = 0; r < RING_TRK_N; r++) {
+                int u = RING_TRK[r];
+                bool any = false; for (int k = 0; k < uiSlots(u); k++) any |= uiParam(u, k) >= 0 && ldestValid(m, uiParam(u, k));
+                if (any && pageAvail(u)) fbAdd(PAGE_NAMES[u], true, u);
             }
         } else {
-            int st = -1; for (int u = 0; u < NUI_PAGES; u++) if (PG_STORE[u] >= 0 && !strncmp(fbDir, PAGE_NAMES[u], strlen(PAGE_NAMES[u])) && fbDir[strlen(PAGE_NAMES[u])] == '/') st = PG_STORE[u];
-            if (st >= 0) for (int k = 0; k < 8; k++) if (ldestValid(m, st * 8 + k)) fbAdd(paramDef(m, st * 8 + k).name, false, st * 8 + k + 1);
+            int u = -1; for (int i = 0; i < NUI_PAGES; i++) if (!strncmp(fbDir, PAGE_NAMES[i], strlen(PAGE_NAMES[i])) && fbDir[strlen(PAGE_NAMES[i])] == '/') u = i;
+            if (u >= 0) for (int k = 0; k < uiSlots(u); k++) { int pi = uiParam(u, k); if (pi >= 0 && ldestValid(m, pi)) fbAdd(paramDef(m, pi).name, false, pi + 1); }
         }
     }
     if (fbMode == FB_SAMPLE) {
@@ -316,7 +321,7 @@ static void openBrowser(int mode) {
         for (int i = 0; i < fbN; i++) if (fbEnt[i].idx == curP().machine[track]) fbSel = i;
     } else if (mode == FB_LDEST) {   // im Seitenordner des aktuellen Ziels starten
         int cur = fbCurValue();
-        int u = cur > 0 ? ldestUiPage((cur - 1) / 8) : -1;
+        int u = cur > 0 && cur <= NPARAMS ? ldestUiPage(cur - 1) : -1;
         if (u >= 0) snprintf(fbDir, sizeof fbDir, "%s/", PAGE_NAMES[u]);
         fbBuild();
         for (int i = 0; i < fbN; i++) if (!fbEnt[i].dir && fbEnt[i].idx == cur) fbSel = i;
@@ -421,7 +426,7 @@ static void drawBrowser() {
     rrect(x0 + 2, y0 + 2, w - 4, h - 4, 13, C_BG);
     const char* title = fbMode == FB_SAMPLE ? TR("SAMPLE WÄHLEN", "CHOOSE SAMPLE")
                       : fbMode == FB_PROJECT ? TR("PROJEKT LADEN", "LOAD PROJECT")
-                      : fbMode == FB_LDEST ? TR("LFO-ZIEL WÄHLEN", "CHOOSE LFO TARGET")
+                      : fbMode == FB_LDEST ? (fbEnvDest() ? TR("HÜLLKURVEN-ZIEL WÄHLEN", "CHOOSE ENVELOPE TARGET") : TR("LFO-ZIEL WÄHLEN", "CHOOSE LFO TARGET"))
                       : fbMode == FB_MACH ? TR("ENGINE WÄHLEN", "CHOOSE ENGINE") : TR("SOUND LADEN", "LOAD SOUND");
     text(x0 + 16, y0 + 10, title, C_CYAN, 2);
     // Pfad
@@ -450,8 +455,9 @@ static void drawBrowser() {
                    ((fbMode == FB_LDEST || fbMode == FB_MACH) && !e.dir && e.idx == fbCurValue());
         const char* info = nullptr;   // zweite Spalte: Langname bzw. Erklaerung
         if (fbMode == FB_MACH) info = MACHINE_LONG[e.idx];
-        else if (fbMode == FB_LDEST && e.dir) info = PAGE_LONG[ldestUiPage(e.idx)];
-        else if (fbMode == FB_LDEST) info = e.idx ? paramHelp(e.name) : TR("kein Ziel (LFO aus)", "no target (LFO off)");
+        else if (fbMode == FB_LDEST && e.dir) info = PAGE_LONG[e.idx];
+        else if (fbMode == FB_LDEST) info = e.idx == MOD_VCA ? TR("Lautstärke der Stimme (Verstärker)", "Voice volume (amplifier)")
+                                           : e.idx ? paramHelp(e.name) : TR("kein Ziel (aus)", "no target (off)");
         if (sel) rrect(x0 + 10, y - 2, w - 20, rh, 5, C_SEL);
         hitAdd(x0 + 10, y - 2, w - 20, rh, HK_FBROW, i);
         if (e.dir) {   // Ordnersymbol

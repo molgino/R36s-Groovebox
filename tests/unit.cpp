@@ -430,6 +430,34 @@ static void testSaveLoad() {
         CHECK(E.proj.bus[1][BX_TYPE] == BF_REVERB && E.proj.bus[1][BX_P1] == 100, "Reverb nicht auf Bus B");
         CHECK(E.proj.patMute[2] == 0x81 && E.proj.songLen == 1 && E.proj.row[0].pat[0] == 2, "v12: Mutes/Song verloren");
     }
+    // v13-Datei (128 Parameter): Werte/Locks bleiben, ENV1 -> VCA, ENV2 -> FREQ mit alter Filter-ENV-Tiefe
+    {
+        static Project src; memcpy(&src, &ref, sizeof(Project));
+        src.pat[2].p[5][P_FENV] = 100; src.pat[2].s[5][77].lock[P_FENV] = 20; src.pat[2].p[5][P_L1 + LF_DEST] = P_PAN + 1;
+        src.bus[1][BX_P2] = 33; src.songLen = 5;
+        static uint8_t old[PROJECT_V13_SIZE];
+        memset(old, 0, sizeof old);
+        memcpy(old, &src, 20); uint32_t v13 = 13; memcpy(old + 4, &v13, 4);
+        for (int pi = 0; pi < NPATTERNS; pi++) {
+            uint8_t* q = old + 20 + (long)pi * V13_PAT_SIZE; const Pattern& S = src.pat[pi];
+            memcpy(q, S.machine, 8); memcpy(q + 8, S.len, 8); memcpy(q + 16, S.speed, 8);
+            for (int t = 0; t < NTRACKS; t++) {
+                memcpy(q + 24 + t * V13_NPARAMS, S.p[t], V13_NPARAMS);
+                for (int st = 0; st < NSTEPS; st++) { uint8_t* sp = q + 24 + 8 * V13_NPARAMS + (t * NSTEPS + st) * (1 + V13_NPARAMS); sp[0] = S.s[t][st].on; memcpy(sp + 1, S.s[t][st].lock, V13_NPARAMS); }
+            }
+        }
+        uint8_t* r = old + 20 + (long)NPATTERNS * V13_PAT_SIZE;
+        memcpy(r, src.cmp, 8); memcpy(r + 8, src.bus, NBUS * 8); r[8 + NBUS * 8] = src.songLen;
+        memcpy(r + 12 + NBUS * 8, src.patMute, NPATTERNS); memcpy(r + 12 + NBUS * 8 + NPATTERNS, src.row, sizeof src.row);
+        FILE* f13 = fopen(path, "wb"); fwrite(old, 1, sizeof old, f13); fclose(f13);
+        CHECK(E.load(path), "Laden v13");
+        const Pattern& P = E.proj.pat[2];
+        CHECK(E.proj.version == PROJECT_VERSION, "v13: Version %u", E.proj.version);
+        CHECK(P.s[5][77].on == 2 && P.s[5][77].lock[P_FREQ] == 42 && P.s[5][77].lock[P_FENV] == 20 && P.len[5] == 99 && P.speed[5] == 6, "v13: Step/Locks verloren");
+        CHECK(P.p[5][P_FENV] == 100 && P.p[5][P_E2D1] == P_FREQ + 1 && P.p[5][P_E1D1] == MOD_VCA && P.p[5][P_E1A1] == 127, "v13: Huellkurven-Ziele falsch (%d %d %d)", P.p[5][P_E2D1], P.p[5][P_E1D1], P.p[5][P_E1A1]);
+        CHECK(P.p[5][P_L1 + LF_DEST] == P_PAN + 1 && P.p[5][P_L1D2] == 0 && P.s[5][77].lock[P_E3D1] == NO_LOCK, "v13: LFO-Ziel/neue Locks falsch");
+        CHECK(E.proj.bus[1][BX_P2] == 33 && E.proj.songLen == 5 && E.proj.patMute[4] == 0x81 && E.proj.row[1].mute == 0x30, "v13: Busse/Song verloren");
+    }
     // kaputte Datei darf nicht geladen werden
     FILE* f = fopen(path, "wb"); fwrite("GBX1xxxx", 1, 8, f); fclose(f);
     CHECK(!E.load(path), "kaputte Datei wurde geladen");
@@ -467,6 +495,44 @@ static void testMultiCore() {
 }
 
 // Routing: Spur 1 + Spur 2 auf dasselbe Paar = Summe der einzelnen Ausgaenge
+// Modulation v14: LFO mit 3 Zielen, Huellkurve 3 auf einen Parameter, VCA ohne Huellkurve (Gate)
+static void testModTargets() {
+    curTest = "Mod-Ziele";
+    static Engine X; static float out[512];
+    auto setup = [&]() {
+        X.init(44100); X.stop(); X.audioThreads = 1; X.defaultProject(false); X.proj.bpm = 120;
+        Pattern& P = X.proj.pat[0];
+        Engine::initTrack(P, 4, M_SYNTH);
+        for (int t = 0; t < NTRACKS; t++) for (int s2 = 0; s2 < 64; s2++) P.s[t][s2].on = 0;
+        P.s[4][0].on = 1; P.p[4][P_LEN] = 127;
+        return &P;
+    };
+    // LFO1: Ziel 1 aus, Ziel 2 = PAN, Ziel 3 = RESO
+    Pattern* P = setup();
+    P->p[4][P_L1 + LF_DEST] = 0; P->p[4][P_L1D2] = P_PAN + 1; P->p[4][P_L1A2] = 127; P->p[4][P_L1D3] = P_RESO + 1; P->p[4][P_L1A3] = 100; P->p[4][P_L1 + LF_RATE] = 100;
+    X.start();
+    int panMin = 999, panMax = -1, resMax = 0;
+    for (int i = 0; i < 44100; i += 256) { X.render(out, 256); if (X.v[4].active) { int pp = X.v[4].P(P_PAN); panMin = pp < panMin ? pp : panMin; panMax = pp > panMax ? pp : panMax; int r = X.v[4].P(P_RESO); resMax = r > resMax ? r : resMax; } }
+    printf("  LFO Ziel 2 PAN %d..%d, Ziel 3 RESO bis %d\n", panMin, panMax, resMax);
+    CHECK(panMax - panMin > 80 && resMax > 40, "LFO-Ziele 2/3 wirken nicht (PAN %d..%d RESO %d)", panMin, panMax, resMax);
+    // Huellkurve 3 -> VOL: Wert faellt mit der Huellkurve
+    P = setup();
+    P->p[4][P_VOL] = 20; P->p[4][P_E3D1] = P_VOL + 1; P->p[4][P_E3A1] = 127; P->p[4][P_E3ATK] = 0; P->p[4][P_E3DEC] = 80; P->p[4][P_E3SUS] = 0;
+    X.start();
+    int v0 = -1, v1 = -1;
+    for (int i = 0; i < 44100 / 2; i += 256) { X.render(out, 256); if (X.v[4].active) { int vv = X.v[4].P(P_VOL); if (vv > v0) v0 = vv; v1 = vv; } }
+    printf("  ENV3 -> VOL (Grundwert 20, Tiefe +63): hoechstens %d, nach 0,5 s %d\n", v0, v1);
+    CHECK(v0 > 100 && v1 < 30 && X.v[4].env3On, "ENV3 wirkt nicht auf VOL (%d -> %d)", v0, v1);
+    // VCA ohne Huellkurve: ENV1 Ziel aus -> Gate; Stimme endet kurz nach dem Gate
+    P = setup();
+    P->p[4][P_E1D1] = 0; P->p[4][P_LEN] = 16; P->p[4][P_AREL] = 127;   // lange REL wuerde sonst klingen
+    X.start();
+    float pk = 0; int lastActive = -1;
+    for (int i = 0; i < 44100; i += 256) { X.render(out, 256); for (int k = 0; k < 512; k++) pk = fmaxf(pk, fabsf(out[k])); if (X.v[4].active) lastActive = i; }
+    printf("  VCA als Gate: Spitze %.2f, klingt bis %.2f s\n", pk, lastActive / 44100.0);
+    CHECK(pk > 0.05f && lastActive >= 0 && lastActive < 44100 / 4, "Gate-VCA falsch (Spitze %.2f, Ende %d)", pk, lastActive);
+}
+
 // LFO laeuft frei weiter, auch wenn die Stimme zwischen kurzen Noten stumm ist
 static void testLfoFreeRun() {
     curTest = "LFO frei";
@@ -663,6 +729,7 @@ int main(int argc, char** argv) {
     testMultiOut8();
     testMultiRoute();
     testLfoFreeRun();
+    testModTargets();
     testPcm24(sdir);
     printf("%s: %d Pruefungen ok, %d Fehler\n", nFail ? "FEHLGESCHLAGEN" : "OK", nPass, nFail);
     return nFail ? 1 : 0;

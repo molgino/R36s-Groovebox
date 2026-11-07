@@ -9,17 +9,18 @@
 extern int g_lang;
 #define TR(de, en) (g_lang ? (en) : (de))
 
-enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 16, NPARAMS = NPAGES * 8, NLFO = 3, NBUS = 3 };
-enum { OLD_NPARAMS = 96 };   // bis Projektformat v12: 12 Seiten
+enum { NTRACKS = 8, NSTEPS = 128, NPATTERNS = 16, NPAGES = 21, NPARAMS = NPAGES * 8, NLFO = 3, NBUS = 3 };
+enum { OLD_NPARAMS = 96, V13_NPARAMS = 128 };   // bis Projektformat v12: 12 Seiten, v13: 16 Seiten
+enum { NENV = 3, NMODT = 3 };   // Huellkurven je Spur, Ziele je Huellkurve/LFO
 // Oberflaechen-Seiten (Reihenfolge = Navigation). Spurseiten zuerst.
 // neue Seiten nur hinten anfuegen (Nummern dienen auch als Screenshot-Seiten)
 enum UiPage { PG_TRG, PG_SEQ, PG_ARP, PG_SRC, PG_SRC2, PG_FLT, PG_FLT2, PG_AMP, PG_LFO1, PG_LFO2, PG_LFO3, PG_INS, PG_MIX, PG_FX, PG_CMP, PG_PRJ, PG_SONG, PG_MST, PG_SYS, PG_LIVE,
-              PG_SRC3, PG_SRC4, PG_SRC5, PG_SEND, PG_FXB, PG_FXC, NUI_PAGES };
+              PG_SRC3, PG_SRC4, PG_SRC5, PG_SEND, PG_FXB, PG_FXC, PG_ENV1, PG_ENV2, PG_ENV3, NUI_PAGES };
 enum { PG_LFO = PG_LFO1 };
 enum { PAGE_INS = PG_INS, PAGE_FX = PG_FX, PAGE_CMP = PG_CMP, PAGE_MST = PG_MST, PAGE_SYS = PG_SYS, PAGE_MIX = PG_MIX, PAGE_PRJ = PG_PRJ,
        FIRST_GLOBAL_PAGE = PG_MIX };
-static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1, -1, 12, 13, 14, 15, -1, -1};   // Spurseite -> Speicherseite
-static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 1, 1};
+static const int PG_STORE[NUI_PAGES] = {0, 9, 11, 1, 6, 2, 10, 3, 4, 7, 8, 5, -1, -1, -1, -1, -1, -1, -1, -1, 12, 13, 14, 15, -1, -1, 16, 17, 18};   // Spurseite -> (erste) Speicherseite; Regler: uiParam()
+static const int PG_GROUP[NUI_PAGES] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0};
 inline int busOfPage(int p) { return p == PG_FX ? 0 : (p == PG_FXB ? 1 : (p == PG_FXC ? 2 : -1)); }
 static const char* const GROUP_NAMES_DE[3] = {"SPUR", "LIVE, MIX & FX", "PROJEKT"};
 static const char* const GROUP_NAMES_EN[3] = {"TRACK", "LIVE, MIX & FX", "PROJECT"};
@@ -39,13 +40,15 @@ static const uint8_t MACHINE_ORDER[M_COUNT] = {M_KICK, M_SNARE, M_HAT, M_CLAP, M
 inline bool machineIsDrum(int m) { return m <= M_CLAP || m == M_TOM || m == M_RIM || m == M_SHKR; }
 inline bool machineUsesSample(int m) { return m == M_SAMPLE || m == M_CHOP || m == M_GRAN; }
 static const char* const PAGE_NAMES[NUI_PAGES] = {"TRG", "SEQ", "ARP", "SRC", "SR2", "FLT", "FL2", "AMP", "LF1", "LF2", "LF3", "INS", "MIX", "FX A", "CMP", "PRJ", "SNG", "MST", "SET", "LIVE",
-                                                  "SR3", "SR4", "SR5", "SND", "FX B", "FX C"};
-static const char* const PAGE_LONG_DE[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 + KURVEN", "VERSTÄRKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
+                                                  "SR3", "SR4", "SR5", "SND", "FX B", "FX C", "EN1", "EN2", "EN3"};
+static const char* const PAGE_LONG_DE[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "KLANG", "KLANG 2", "FILTER", "FILTER 2 (BASE-WIDTH)", "VERSTÄRKER", "LFO 1", "LFO 2", "LFO 3", "INSERT-FX",
                                                     "MIXER", "EFFEKT-BUS A", "KOMPRESSOR", "PROJEKT", "SONG", "MASTER", "EINSTELLUNGEN", "LIVE",
-                                                    "KLANG 3", "KLANG 4", "KLANG 5", "SENDS", "EFFEKT-BUS B", "EFFEKT-BUS C"};
-static const char* const PAGE_LONG_EN[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "SOUND", "SOUND 2", "FILTER", "FILTER 2 + CURVES", "AMPLIFIER", "LFO 1", "LFO 2", "LFO 3", "INSERT FX",
+                                                    "KLANG 3", "KLANG 4", "KLANG 5", "SENDS", "EFFEKT-BUS B", "EFFEKT-BUS C",
+                                                    "HÜLLKURVE 1", "HÜLLKURVE 2", "HÜLLKURVE 3"};
+static const char* const PAGE_LONG_EN[NUI_PAGES] = {"TRIG", "SEQUENCER", "ARPEGGIATOR", "SOUND", "SOUND 2", "FILTER", "FILTER 2 (BASE-WIDTH)", "AMPLIFIER", "LFO 1", "LFO 2", "LFO 3", "INSERT FX",
                                                     "MIXER", "EFFECT BUS A", "COMPRESSOR", "PROJECT", "SONG", "MASTER", "SETTINGS", "LIVE",
-                                                    "SOUND 3", "SOUND 4", "SOUND 5", "SENDS", "EFFECT BUS B", "EFFECT BUS C"};
+                                                    "SOUND 3", "SOUND 4", "SOUND 5", "SENDS", "EFFECT BUS B", "EFFECT BUS C",
+                                                    "ENVELOPE 1", "ENVELOPE 2", "ENVELOPE 3"};
 #define PAGE_LONG (g_lang ? PAGE_LONG_EN : PAGE_LONG_DE)
 
 // Filter-1-Typen (Werte nur hinten anfuegen: 0..2 = alte LP/BP/HP)
@@ -59,7 +62,7 @@ enum Kind {
     K_SMPL, K_SEMI, K_OFFON, K_DEV, K_BUFS, K_CLK, K_CHM, K_INFO, K_USB,
     K_ALGO, K_DECAY, K_ACT, K_SLOT, K_COND, K_LSYNC, K_LDEST, K_LMODE, K_FBK, K_DIR, K_TLEN, K_TSPD, K_RANGE, K_MTIM, K_WTAB, K_SLICE,
     K_SCALE, K_ROOT, K_INS, K_MS, K_MACH, K_THR, K_CRAT, K_CATK, K_CREL, K_CGAIN, K_SCSRC, K_GR,
-    K_ARPM, K_ACHD, K_ARAT, K_OCT, K_SUBO, K_FXT, K_WDRAW
+    K_ARPM, K_ACHD, K_ARAT, K_OCT, K_SUBO, K_FXT, K_WDRAW, K_EDEST
 };
 
 struct ParamDef { const char* name; Kind kind; uint8_t def; uint8_t max; };
@@ -79,6 +82,14 @@ enum {
     P_AMOD = 88, P_ACHD, P_AOCT, P_ARAT, P_AGAT, P_AACC,                   // ARP: Modus, Akkord, Oktaven, Tempo, Gate, Akzent
     P_Y0 = 96, P_Z0 = 104, P_W0 = 112,                                     // ab v13: Klangseiten 3-5 (FM: Operator 2-4)
     P_DLY = 120, P_REV, P_SNDC,                                            // ab v13: Sends an Effekt-Bus A/B/C
+    // ab v14: Huellkurven 1-3 mit je 3 Zielen (ENV1 = frueher AMP-, ENV2 = Filter-Huellkurve: ADSR/Kurve bleiben an ihrem Platz)
+    P_E1D1 = 128, P_E1A1, P_E1D2, P_E1A2, P_E1D3, P_E1A3, P_E1VEL,
+    P_E2D1 = 136, P_E2D2, P_E2A2, P_E2D3, P_E2A3, P_E2VEL,               // ENV2 Tiefe 1 = P_FENV (frueher Filter-ENV)
+    P_E3ATK = 144, P_E3DEC, P_E3SUS, P_E3REL, P_E3CRV, P_E3VEL, P_E3D1, P_E3A1,
+    P_E3D2 = 152, P_E3A2, P_E3D3, P_E3A3,
+    P_L1D2 = 156, P_L1A2, P_L1D3, P_L1A3,                                 // ab v14: LFO-Ziele 2 und 3
+    P_L2D2 = 160, P_L2A2, P_L2D3, P_L2A3,
+    P_L3D2 = 164, P_L3A2, P_L3D3, P_L3A3,
     OLD_P_DLY = 30, OLD_P_REV = 31                                         // bis v12
 };
 // FM: Operator k liegt auf einer eigenen Seite (OP1 = SRC2, OP2-4 = SRC3-5): RATIO FINE DETN LEVEL ATK DEC SUS REL
@@ -90,6 +101,34 @@ enum { MS_BPM = 0, MS_SWNG, MS_VOL, MS_DRIV, MS_SCALE, MS_ROOT };
 // LFO: Versatz innerhalb einer LFO-Seite
 enum { LF_RATE = 0, LF_SYNC, LF_DEST, LF_DEPTH, LF_WAVE, LF_MODE, LF_PHASE, LF_FADE };
 static const int LFO_BASE[NLFO] = {32, 56, 64};
+// Modulationsziele: Wert 0 = aus, 1..NPARAMS = Parameter + 1, MOD_VCA = Lautstaerke der Stimme (nur Huellkurven)
+enum { MOD_VCA = NPARAMS + 1 };
+static const int LFO_DST[NLFO][NMODT] = {{32 + LF_DEST, P_L1D2, P_L1D3}, {56 + LF_DEST, P_L2D2, P_L2D3}, {64 + LF_DEST, P_L3D2, P_L3D3}};
+static const int LFO_DEP[NLFO][NMODT] = {{32 + LF_DEPTH, P_L1A2, P_L1A3}, {56 + LF_DEPTH, P_L2A2, P_L2A3}, {64 + LF_DEPTH, P_L3A2, P_L3A3}};
+static const int ENV_ATK[NENV] = {P_AATK, P_FATK, P_E3ATK}, ENV_DEC[NENV] = {P_ADEC, P_FDEC, P_E3DEC},
+                 ENV_SUS[NENV] = {P_ASUS, P_FSUS, P_E3SUS}, ENV_REL[NENV] = {P_AREL, P_FREL, P_E3REL},
+                 ENV_CRV[NENV] = {P_ACRV, P_FCRV, P_E3CRV}, ENV_VEL[NENV] = {P_E1VEL, P_E2VEL, P_E3VEL};
+static const int ENV_DST[NENV][NMODT] = {{P_E1D1, P_E1D2, P_E1D3}, {P_E2D1, P_E2D2, P_E2D3}, {P_E3D1, P_E3D2, P_E3D3}};
+static const int ENV_DEP[NENV][NMODT] = {{P_E1A1, P_E1A2, P_E1A3}, {P_FENV, P_E2A2, P_E2A3}, {P_E3A1, P_E3A2, P_E3A3}};
+inline int envOfPage(int p) { return p == PG_ENV1 ? 0 : (p == PG_ENV2 ? 1 : (p == PG_ENV3 ? 2 : -1)); }
+inline int lfoOfPage(int p) { return p == PG_LFO1 ? 0 : (p == PG_LFO2 ? 1 : (p == PG_LFO3 ? 2 : -1)); }
+// Regler einer Spurseite: Anzahl (8, Huellkurven/LFO 12) und Parameterindex je Regler (-1 = leer)
+inline int uiSlots(int p) { return envOfPage(p) >= 0 || lfoOfPage(p) >= 0 ? 12 : 8; }
+inline int uiParam(int p, int k) {
+    if (k < 0 || k >= uiSlots(p) || p < 0 || p >= NUI_PAGES || PG_STORE[p] < 0) return -1;
+    int e = envOfPage(p), l = lfoOfPage(p);
+    if (e >= 0) {   // ATK DEC SUS REL | DEST1 DEPTH1 DEST2 DEPTH2 | DEST3 DEPTH3 CURVE VELO
+        static const int* const A[4] = {ENV_ATK, ENV_DEC, ENV_SUS, ENV_REL};
+        if (k < 4) return A[k][e];
+        if (k < 10) return ((k - 4) & 1) ? ENV_DEP[e][(k - 4) / 2] : ENV_DST[e][(k - 4) / 2];
+        return k == 10 ? ENV_CRV[e] : ENV_VEL[e];
+    }
+    if (l >= 0 && k >= 8) return ((k - 8) & 1) ? LFO_DEP[l][1 + (k - 8) / 2] : LFO_DST[l][1 + (k - 8) / 2];
+    if (p == PG_FLT) { static const int F[8] = {P_FREQ, P_RESO, P_FTYP, P_KEYT, P_VELF, -1, -1, -1}; return F[k]; }   // Huellkurve -> ENV2
+    if (p == PG_FLT2) return k < 2 ? P_BASE + k : -1;
+    if (p == PG_AMP) return k == 0 ? P_VOL : (k == 1 ? P_PAN : -1);                                            // Huellkurve -> ENV1
+    return PG_STORE[p] * 8 + k;
+}
 enum { LW_SIN, LW_TRI, LW_SAWUP, LW_SAWDN, LW_SQR, LW_EXPUP, LW_EXPDN, LW_SH, LW_RND, LW_COUNT };
 enum { LM_FREE, LM_TRIG, LM_HOLD, LM_ONE, LM_HALF };
 static const float LFO_SYNC_STEPS[12] = {0, 64, 32, 16, 8, 4, 2, 1, 0.5f, 8.f / 3, 4.f / 3, 2.f / 3};
@@ -116,8 +155,8 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     // SRC (maschinenabhaengig, siehe SRC_DEFS)
     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
     // FILT
-    {"FREQ", K_NUM, 127, 127}, {"RESO", K_NUM, 0, 127}, {"TYPE", K_FTYPE, 0, FT_COUNT - 1}, {"ENV", K_BIP, 64, 127},
-    {"F.ATK", K_NUM, 0, 127}, {"F.DEC", K_NUM, 60, 127}, {"F.SUS", K_NUM, 0, 127}, {"F.REL", K_NUM, 60, 127},
+    {"FREQ", K_NUM, 127, 127}, {"RESO", K_NUM, 0, 127}, {"TYPE", K_FTYPE, 0, FT_COUNT - 1}, {"DEPTH1", K_BIP, 64, 127},   // ab v14: Tiefe 1 von ENV2
+    {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 60, 127}, {"SUS", K_NUM, 0, 127}, {"REL", K_NUM, 60, 127},      // ENV2 (Filter-Huellkurve)
     // AMP
     {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 80, 127}, {"SUS", K_NUM, 127, 127}, {"REL", K_NUM, 50, 127},
     {"VOL", K_NUM, 100, 127}, {"PAN", K_BIP, 64, 127}, PDEF_NONE, PDEF_NONE,
@@ -140,7 +179,7 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     {"ROT", K_NUM, 0, 127}, {"DENS", K_PCT, 0, 100}, {"CHNG", K_PCT, 0, 100}, {"RANGE", K_RANGE, 0, 48},
     // FLT2: Base-Width-Filter (Hochpass BASE, Tiefpass BASE+WDTH), Key-Tracking und Velocity fuer Filter 1
     {"BASE", K_NUM, 0, 127}, {"WDTH", K_NUM, 127, 127}, {"KEYT", K_PCT, 0, 100}, {"VELF", K_BIP, 64, 127},
-    {"F.KRV", K_BIP, 64, 127}, {"A.KRV", K_BIP, 64, 127}, PDEF_NONE, PDEF_NONE,   // Huellkurvenform (ab v11)
+    {"CURVE", K_BIP, 64, 127}, {"CURVE", K_BIP, 64, 127}, PDEF_NONE, PDEF_NONE,   // Huellkurvenform ENV2/ENV1 (ab v11)
     // ARP: spielt waehrend der Trig-Laenge die Akkordtoene ueber OCT Oktaven im Tempo RATE
     {"MODE", K_ARPM, 0, 5}, {"CHRD", K_ACHD, 2, 9}, {"OCT", K_CNT, 0, 3}, {"RATE", K_ARAT, 2, 5},
     {"GATE", K_PCT, 60, 100}, {"ACCT", K_PCT, 0, 100}, PDEF_NONE, PDEF_NONE,
@@ -150,6 +189,20 @@ static const ParamDef COMMON_DEFS[NPARAMS] = {
     PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
     // SEND: Anteil an Effekt-Bus A/B/C (bis v12: DLY/REV auf der AMP-Seite)
     {"SND.A", K_NUM, 0, 127}, {"SND.B", K_NUM, 0, 127}, {"SND.C", K_NUM, 0, 127}, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE, PDEF_NONE,
+    // ab v14: ENV1-Ziele (Ziel 1 = Lautstaerke wie frueher die AMP-Huellkurve)
+    {"DEST1", K_EDEST, MOD_VCA, MOD_VCA}, {"DEPTH1", K_BIP, 127, 127}, {"DEST2", K_EDEST, 0, MOD_VCA}, {"DEPTH2", K_BIP, 64, 127},
+    {"DEST3", K_EDEST, 0, MOD_VCA}, {"DEPTH3", K_BIP, 64, 127}, {"VELO", K_PCT, 0, 100}, PDEF_NONE,
+    // ENV2-Ziele (Ziel 1 = Filterfrequenz, Tiefe 1 = P_FENV)
+    {"DEST1", K_EDEST, P_FREQ + 1, MOD_VCA}, {"DEST2", K_EDEST, 0, MOD_VCA}, {"DEPTH2", K_BIP, 64, 127}, {"DEST3", K_EDEST, 0, MOD_VCA},
+    {"DEPTH3", K_BIP, 64, 127}, {"VELO", K_PCT, 0, 100}, PDEF_NONE, PDEF_NONE,
+    // ENV3 (frei)
+    {"ATK", K_NUM, 0, 127}, {"DEC", K_NUM, 60, 127}, {"SUS", K_NUM, 0, 127}, {"REL", K_NUM, 60, 127},
+    {"CURVE", K_BIP, 64, 127}, {"VELO", K_PCT, 0, 100}, {"DEST1", K_EDEST, 0, MOD_VCA}, {"DEPTH1", K_BIP, 64, 127},
+    {"DEST2", K_EDEST, 0, MOD_VCA}, {"DEPTH2", K_BIP, 64, 127}, {"DEST3", K_EDEST, 0, MOD_VCA}, {"DEPTH3", K_BIP, 64, 127},
+    // LFO1-3: Ziele 2 und 3
+    {"DEST2", K_LDEST, 0, NPARAMS}, {"DEPTH2", K_BIP, 64, 127}, {"DEST3", K_LDEST, 0, NPARAMS}, {"DEPTH3", K_BIP, 64, 127},
+    {"DEST2", K_LDEST, 0, NPARAMS}, {"DEPTH2", K_BIP, 64, 127}, {"DEST3", K_LDEST, 0, NPARAMS}, {"DEPTH3", K_BIP, 64, 127},
+    {"DEST2", K_LDEST, 0, NPARAMS}, {"DEPTH2", K_BIP, 64, 127}, {"DEST3", K_LDEST, 0, NPARAMS}, {"DEPTH3", K_BIP, 64, 127},
 };
 // Arpeggiator: Akkord-Intervalle (Halbtoene), Tempo in Steps
 static const char* const ARP_MODES_DE[6] = {"AUS", "UP", "DOWN", "UPDN", "RAND", "AKKD"};   // AKKD = Akkordtoene gleichzeitig

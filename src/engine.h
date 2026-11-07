@@ -31,13 +31,17 @@ struct Project {
     uint8_t patMute[NPATTERNS];   // Mutes je Pattern (Bit je Spur)
     struct SongRow { uint8_t pat[NTRACKS]; uint8_t rep, mute, pad[2]; } row[64];   // Song als Clip-Matrix; pat = SONG_EMPTY: Spur schweigt
 };
-enum { PROJECT_VERSION = 13, SONG_MAX = 64, SONG_EMPTY = 255 };
+enum { PROJECT_VERSION = 14, SONG_MAX = 64, SONG_EMPTY = 255 };
 // Groessen der Formate v9-v12 (96 Parameter je Spur): danach steht ggf. die Sample-Namensliste
 enum { OLD_PAT_SIZE = 24 + 8 * OLD_NPARAMS + NTRACKS * NSTEPS * (1 + OLD_NPARAMS),
        PROJECT_V11_SIZE = 20 + NPATTERNS * OLD_PAT_SIZE + 8 + 8 + 128 + 4,
        PROJECT_V12_SIZE = PROJECT_V11_SIZE + NPATTERNS + 64 * 12 };
+// v13: 128 Parameter je Spur (danach ab v14 168)
+enum { V13_PAT_SIZE = 24 + 8 * V13_NPARAMS + NTRACKS * NSTEPS * (1 + V13_NPARAMS),
+       PROJECT_V13_SIZE = 20 + NPATTERNS * V13_PAT_SIZE + 8 + NBUS * 8 + 4 + NPATTERNS + 64 * 12 };
 static_assert(PROJECT_V11_SIZE == 1602088, "Layout v11 veraendert");
-inline long projectDataSize(uint32_t ver) { return ver >= 13 ? (long)sizeof(Project) : (ver == 12 ? (long)PROJECT_V12_SIZE : (long)PROJECT_V11_SIZE); }
+static_assert(PROJECT_V13_SIZE == 2131144, "Layout v13 veraendert");
+inline long projectDataSize(uint32_t ver) { return ver >= 14 ? (long)sizeof(Project) : (ver == 13 ? (long)PROJECT_V13_SIZE : (ver == 12 ? (long)PROJECT_V12_SIZE : (long)PROJECT_V11_SIZE)); }
 
 struct Rng {
     uint32_t s = 0x9E3779B9u;
@@ -103,7 +107,8 @@ struct Voice {
     int chopStep = 0, chopFade = 64;
     struct Grain { bool on; double pos; float inc, age, len; } gr[12];
     float grTimer = 0, grInterval = 1000, grLen = 2000, grPosF = 0, grSpray = 0, grPitch = 1, grPSpr = 0;
-    ADSR aenv, fenv;
+    ADSR aenv, fenv, env3;   // Huellkurven 1-3 (ENV1 = frueher AMP, ENV2 = frueher Filter)
+    ADSR gateEnv;            // VCA ohne volle Huellkurve: Gate mit kurzem Ausklang
     SVF filt, aux;
     SVF filt2, filt3;          // weitere Stufen (24 dB, Formant)
     // Filter 1: Typ (FT_*), Ladder-Zustaende, Kammfilter-Puffer, Formant-Pegel
@@ -114,9 +119,19 @@ struct Voice {
     float nzHp = 0, hatHp = 0;      // Hochpass-Zustaende (Snare-Rauschen, Hi-Hat)
     // 3 LFOs pro Stimme (Ziel = beliebiger Spurparameter)
     float lfPh[NLFO] = {0}, lfVal[NLFO] = {0}, lfSH[NLFO] = {0}, lfSHp[NLFO] = {0}, lfRun[NLFO] = {0}, lfFade[NLFO] = {1, 1, 1};
-    float lfHeld[NLFO] = {0}, lfOff[NLFO] = {0};
-    int lfDst[NLFO] = {-1, -1, -1}, lfMax[NLFO] = {127, 127, 127};
+    float lfHeld[NLFO] = {0};
+    // Modulation (LFO 1-3 und Huellkurven 1-3 mit je 3 Zielen): je Block neu berechnet
+    enum { NMOD = (NLFO + NENV) * NMODT };
+    int nMod = 0, mDst[NMOD], mMax[NMOD]; float mOff[NMOD];
     float noteMod = 0;
+    float envCrv[NENV] = {1, 1, 1};                 // Huellkurvenform: Wert^k
+    int fEnvN = 0, fEnvE[NENV * NMODT]; float fEnvAmt[NENV * NMODT];   // Huellkurve -> Filterfrequenz (je Block im Filter)
+    int vcaN = 0, vcaE[NENV * NMODT]; float vcaDep[NENV * NMODT];       // Huellkurve -> Lautstaerke (je Sample)
+    bool vcaFull = true, vcaSimple = true, env3On = false;             // vcaSimple: nur ENV1 voll -> schneller Weg wie frueher
+    float vcaVel = 1;                                                  // Anschlagdynamik der Lautstaerke
+    inline ADSR& envOf(int e) { return e == 0 ? aenv : (e == 1 ? fenv : env3); }
+    float envVal(int e);   // aktueller Wert mit Kurvenform
+    bool vcaDone();
     float stepSec = 0.125f;   // Laenge eines 16tels (fuer synchrone LFOs)
     float hold = 0; int holdC = 0;
     float glideCo = 0;
@@ -128,8 +143,7 @@ struct Voice {
     // pro Block berechnet
     float pitchHz = 100, gainL = 0, gainR = 0, snd[NBUS] = {0}, drive = 0, crushQ = 0;
     int srrN = 1, ftype = 0;
-    float fBase = 127, fEnv = 0, reso = 0;
-    float fCrvK = 1, aCrvK = 1;   // Huellkurvenform: Wert^k (k = 1 linear wie bisher)
+    float fBase = 127, reso = 0;
     SVF bwHp, bwLp;              // Base-Width-Filter
     float bwLo = 20, bwHi = 20000; bool bwOn = false;
     // Insert-Effekt
@@ -143,21 +157,28 @@ struct Voice {
     volatile float peakHold = 0;
 
     inline int PR(int i) const { return lk[i] != NO_LOCK ? lk[i] : base[i]; }   // ohne LFO
-    bool lfAny = false;   // mindestens ein LFO moduliert einen Parameter (sonst schneller Weg in P)
-    uint64_t lfMask[2] = {0, 0};   // Bit je modulierten Parameter
-    inline int P(int i) const {                                                   // mit LFO-Modulation
+    bool lfAny = false;   // mindestens ein Ziel moduliert einen Parameter (sonst schneller Weg in P)
+    uint64_t lfMask[(NPARAMS + 63) / 64] = {0};   // Bit je modulierten Parameter
+    inline int P(int i) const {                                                   // mit LFO-/Huellkurven-Modulation
         if (!lfAny || !((lfMask[i >> 6] >> (i & 63)) & 1)) return PR(i);
-        int r = PR(i);
-        for (int k = 0; k < NLFO; k++)
-            if (i == lfDst[k]) { r += (int)lfOff[k]; if (r < 0) r = 0; if (r > lfMax[k]) r = lfMax[k]; }
+        int r = PR(i); float off = 0; int mx = 127;
+        for (int k = 0; k < nMod; k++) if (i == mDst[k]) { off += mOff[k]; mx = mMax[k]; }
+        r += (int)off; if (r < 0) r = 0; if (r > mx) r = mx;
         return r;
     }
+    int seqMod(int i, int r) const {   // Sequencer-Parameter (PROB, LEN ...) mit Modulation
+        if (!lfAny || !((lfMask[i >> 6] >> (i & 63)) & 1)) return r;
+        float off = 0; int mx = 127;
+        for (int k = 0; k < nMod; k++) if (i == mDst[k]) { off += mOff[k]; mx = mMax[k]; }
+        r += (int)off; return r < 0 ? 0 : (r > mx ? mx : r);
+    }
+    void addMod(int dest, float out, float noteSemi);
     void lfoUpdate(int n, float sr);
     void lfoTrigger();
     void lfoStep(int k, int n, float sr);
     void lfoAdvance(int n, float sr);
     void noteOn(int machine, const uint8_t* base, const uint8_t* locks, float velScale, int gateSamples, float sr);
-    void noteOff() { aenv.off(); fenv.off(); for (int k = 0; k < 4; k++) if (fmSt[k]) fmSt[k] = 3; }
+    void noteOff() { aenv.off(); fenv.off(); env3.off(); gateEnv.off(); for (int k = 0; k < 4; k++) if (fmSt[k]) fmSt[k] = 3; }
     bool gated() const { return machine == M_SYNTH || machine == M_FM || machine == M_WTBL || machine == M_GRAN || (machine == M_SAMPLE && P(P_S5)); }
     void update(int n, float sr, float bpm);
     void render(float* L, float* R, float (*S)[32], int n, float sr);   // S = Sends an Bus A/B/C

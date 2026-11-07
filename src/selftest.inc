@@ -277,8 +277,8 @@ static void uiScenarios() {
     tap(BT_L1); UCHECK(slot == 0, "L1: Regler 1 erwartet (Regler %d)", slot + 1);
     tap(BT_L2); UCHECK(page == PG_LFO3, "L2 von TRIG: Ring -> LFO3 erwartet (Seite %d)", page);
     tap(BT_SELECT); UCHECK(menuOpen, "SELECT oeffnet die Seitenkarte nicht");
-    tap(BT_DOWN); tap(BT_RIGHT);   // LFO3 (Zeile Sequenz + Modulation) -> Zeile Quelle
-    { int r, c; mapPos(menuSel, r, c); UCHECK(r == 1, "Karte: Steuerkreuz runter erreicht die Quell-Zeile nicht (Zeile %d)", r); }
+    tap(BT_DOWN); tap(BT_RIGHT);   // LFO3 (Zeile Modulation) -> Zeile Quelle
+    { int r, c; mapPos(menuSel, r, c); UCHECK(r == 2, "Karte: Steuerkreuz runter erreicht die Quell-Zeile nicht (Zeile %d)", r); }
     tap(BT_A); UCHECK(!menuOpen && trackPage(page), "Karte: A oeffnet keine Spurseite");
     page = PG_TRG; slot = 0; simWait(32);
     flickL(1, 0); UCHECK(slot == 1, "Linker Stick: Kachel %d statt 1", slot);
@@ -609,7 +609,7 @@ static void uiScenarios() {
     curP().p[4][P_L1 + LF_DEST] = 0;
     tap(BT_X);
     UCHECK(fbOpen && fbMode == FB_LDEST && !fbDir[0] && fbN > 3 && !fbEnt[fbSel].dir && fbEnt[fbSel].idx == 0, "X auf DEST oeffnet keine Ziel-Liste");
-    for (int i = 0; i < fbN; i++) if (fbEnt[i].dir && fbEnt[i].idx == 2) fbSel = i;   // Speicherseite 2 = FLT
+    for (int i = 0; i < fbN; i++) if (fbEnt[i].dir && fbEnt[i].idx == PG_FLT) fbSel = i;   // Ordner = Bedienseite FLT
     tap(BT_A);
     UCHECK(fbDir[0] && fbN > 0, "Seitenordner FLT leer");
     for (int i = 0; i < fbN; i++) if (fbEnt[i].idx == P_FREQ + 1) fbSel = i;
@@ -620,7 +620,7 @@ static void uiScenarios() {
     tap(BT_B); tap(BT_B);
     UCHECK(!fbOpen && curP().p[4][P_L1 + LF_DEST] == P_FREQ + 1, "Zurueck/Abbruch aendert das Ziel");
     { bool ok = true; int m = curP().machine[4];   // Liste enthaelt nur gueltige Ziele
-      for (int st = 0; st < NPAGES; st++) for (int k = 0; k < 8; k++) if (ldestValid(m, st * 8 + k) && ldestUiPage(st) < 0) ok = false;
+      for (int pi = 0; pi < NPARAMS; pi++) if (ldestValid(m, pi) && ldestUiPage(pi) < 0) { ok = false; printf("  Parameter %d (%s) auf keiner Seite\n", pi, paramDef(m, pi).name); }
       UCHECK(ok, "Zielseite ohne Bedienseite"); }
 
     uiCase = "Sample-Pool";
@@ -771,7 +771,7 @@ static void uiMonkey(int frames) {
         if (confirmOpen && x % 3 == 0) { confirmOpen = false; }   // keine Abfragen bestaetigen (Laden/Loeschen)
         quitReq = false;
         simFrame();
-        if (page < 0 || page >= NUI_PAGES || track < 0 || track >= NTRACKS || slot < 0 || slot > 7 || cursor < 0 || cursor >= NSTEPS) {
+        if (page < 0 || page >= NUI_PAGES || track < 0 || track >= NTRACKS || slot < 0 || slot >= (trackPage(page) ? uiSlots(page) : 8) || cursor < 0 || cursor >= NSTEPS) {
             if (bad++ < 5) printf("  FEHLER Monkey Bild %d: page %d track %d slot %d cursor %d\n", i, page, track, slot, cursor);
         }
     }

@@ -206,6 +206,8 @@ void Voice::noteOn(int m, const uint8_t* b, const uint8_t* locks, float velScale
     update(0, sr, 120);
     aenv.on();
     fenv.on();
+    env3.on();
+    gateEnv.v = 1.f; gateEnv.on();
     switch (m) {
     case M_KICK: ph1 = 0; penv = 1; denv = 1; cenv = 1; aenv.v = 0; break;
     case M_SNARE: ph1 = ph2 = 0; denv = 1; nenv = 1; penv = 1; break;
@@ -272,20 +274,34 @@ void Voice::lfoStep(int k, int n, float sr) {
 void Voice::lfoAdvance(int n, float sr) {
     if (!base) return;
     for (int k = 0; k < NLFO; k++) {
-        int b = LFO_BASE[k];
-        if (PR(b + LF_DEST) == 0 || PR(b + LF_DEPTH) == 64) continue;
-        lfoStep(k, n, sr);
+        bool any = false;
+        for (int j = 0; j < NMODT; j++) if (PR(LFO_DST[k][j]) != 0 && PR(LFO_DEP[k][j]) != 64) any = true;
+        if (any) lfoStep(k, n, sr);
     }
 }
 
+void Voice::addMod(int dest, float out, float noteSemi) {
+    if (dest == P_NOTE) { noteMod += out * noteSemi; return; }
+    if (dest < 0 || dest >= NPARAMS || nMod >= NMOD) return;
+    int mx = paramDef(machine, dest).max;
+    mDst[nMod] = dest; mMax[nMod] = mx; mOff[nMod] = out * (mx < 1 ? 1 : mx); nMod++;
+    lfAny = true; lfMask[dest >> 6] |= 1ull << (dest & 63);
+}
+
+float Voice::envVal(int e) { float v = envOf(e).v; return envCrv[e] == 1.f || v <= 0.f ? v : fastPow01(v, envCrv[e]); }
+
+// Modulation je Block: LFO 1-3 und Huellkurven 1-3 mit je 3 Zielen
 void Voice::lfoUpdate(int n, float sr) {
-    noteMod = 0;
-    lfAny = false; lfMask[0] = lfMask[1] = 0;
+    noteMod = 0; nMod = 0;
+    lfAny = false; for (auto& m : lfMask) m = 0;
     for (int k = 0; k < NLFO; k++) {
         int b = LFO_BASE[k];
-        int dest = PR(b + LF_DEST) - 1;
-        float depth = (PR(b + LF_DEPTH) - 64) / 64.f;
-        if (dest < 0 || depth == 0.f) { lfDst[k] = -1; lfVal[k] = 0; continue; }
+        int dst[NMODT]; float dep[NMODT]; bool any = false;
+        for (int j = 0; j < NMODT; j++) {
+            dst[j] = PR(LFO_DST[k][j]) - 1; dep[j] = (PR(LFO_DEP[k][j]) - 64) / 64.f;
+            if (dst[j] >= 0 && dst[j] < NPARAMS && dep[j] != 0.f) any = true; else dst[j] = -1;
+        }
+        if (!any) { lfVal[k] = 0; continue; }
         int wave = PR(b + LF_WAVE) % LW_COUNT, mode = PR(b + LF_MODE);
         lfoStep(k, n, sr);
         float w = mode == LM_HOLD ? lfHeld[k] : Voice_lfoWave(*this, k, wave, lfPh[k]);
@@ -295,15 +311,50 @@ void Voice::lfoUpdate(int n, float sr) {
             float st = n / (ft * sr);
             lfFade[k] = fd < 0 ? fminf(1.f, lfFade[k] + st) : fmaxf(0.f, lfFade[k] - st);
         } else lfFade[k] = 1.f;
-        float out = w * depth * lfFade[k];
+        float out = w * lfFade[k];
         lfVal[k] = out;
-        if (dest == P_NOTE) { noteMod += out * 12.f; lfDst[k] = -1; }
-        else if (dest < NPARAMS) {
-            lfDst[k] = dest; lfAny = true; lfMask[dest >> 6] |= 1ull << (dest & 63);
-            lfMax[k] = paramDef(machine, dest).max;
-            lfOff[k] = out * (lfMax[k] < 1 ? 1 : lfMax[k]);
-        } else lfDst[k] = -1;
+        for (int j = 0; j < NMODT; j++) if (dst[j] >= 0) addMod(dst[j], out * dep[j], 12.f);
     }
+    // Huellkurven: Lautstaerke (je Sample im render), Filterfrequenz (je Block wie frueher), sonst wie ein LFO
+    fEnvN = 0; vcaN = 0; vcaFull = false; env3On = false;
+    float velAmp = 1.f;
+    for (int e = 0; e < NENV; e++) {
+        float vk = -1.f, ev = -1.f;
+        for (int j = 0; j < NMODT; j++) {
+            int d = PR(ENV_DST[e][j]);
+            if (d <= 0) continue;
+            float dep = (PR(ENV_DEP[e][j]) - 64) / 64.f;   // wie LFO-Tiefe und frueher Filter-ENV
+            if (dep == 0.f) continue;
+            if (vk < 0.f) {   // erst bei benutzter Huellkurve: Kurvenform und Anschlag
+                int cv = PR(ENV_CRV[e]); envCrv[e] = cv == 64 ? 1.f : fastExp2((cv - 64) / 32.f);
+                vk = 1.f - PR(ENV_VEL[e]) / 100.f * (1.f - vel);   // Anschlag skaliert die Tiefe
+            }
+            if (e == 2) env3On = true;
+            if (d == MOD_VCA) {
+                dep = (PR(ENV_DEP[e][j]) - 64) / 63.f; if (dep > 1.f) dep = 1.f;   // 127 = volle Huellkurve
+                vcaE[vcaN] = e; vcaDep[vcaN] = dep; vcaN++;
+                if (dep >= 0.999f) vcaFull = true;
+                velAmp *= vk;   // Lautstaerke: Anschlag wirkt auf den Pegel statt auf die Tiefe
+                continue;
+            }
+            if (d > NPARAMS) continue;
+            if (d - 1 == P_FREQ) { fEnvE[fEnvN] = e; fEnvAmt[fEnvN] = dep * vk * 128.f; fEnvN++; continue; }
+            if (ev < 0.f) ev = envVal(e);
+            addMod(d - 1, ev * dep * vk, 24.f);
+        }
+    }
+    vcaVel = velAmp;
+    vcaSimple = vcaN == 1 && vcaE[0] == 0 && vcaFull && velAmp == 1.f;
+}
+
+bool Voice::vcaDone() {   // Stimme ist verklungen (Lautstaerke kann nicht mehr steigen)
+    if (!vcaFull) return gateEnv.st == 0;
+    for (int i = 0; i < vcaN; i++) {
+        if (vcaDep[i] < 0.999f) continue;
+        const ADSR& a = vcaE[i] == 0 ? aenv : (vcaE[i] == 1 ? fenv : env3);
+        if (a.st == 0 || (a.st == 3 && a.s <= 0.f)) return true;
+    }
+    return false;
 }
 
 void Voice::update(int n, float sr, float bpm) {
@@ -323,6 +374,8 @@ void Voice::update(int n, float sr, float bpm) {
     lfoUpdate(n, sr);
     aenv.set(envT(P(P_AATK)), envT(P(P_ADEC)), P(P_ASUS) / 127.f, envT(P(P_AREL)), sr);
     fenv.set(envT(P(P_FATK)), envT(P(P_FDEC)), P(P_FSUS) / 127.f, envT(P(P_FREL)), sr);
+    gateEnv.set(0.f, 0.f, 1.f, 0.01f, sr);
+    if (env3On) env3.set(envT(P(P_E3ATK)), envT(P(P_E3DEC)), P(P_E3SUS) / 127.f, envT(P(P_E3REL)), sr);
     // Filter 1: Key-Tracking (100 % = eine Oktave pro Oktave) und Velocity
     fBase = (float)P(P_FREQ) + P(P_KEYT) / 100.f * (note - 60.f) * (127.f / 10.3f / 12.f)
             + (P(P_VELF) - 64) / 64.f * (vel - 0.5f) * 80.f;
@@ -334,9 +387,6 @@ void Voice::update(int n, float sr, float bpm) {
         bwHi = bwLo * fastExp2(wd * (10.f / 127.f));
         if (bwHi > 20000.f) bwHi = 20000.f;
     }
-    fEnv = (P(P_FENV) - 64) * 2.f;
-    fCrvK = fastExp2((P(P_FCRV) - 64) / 32.f);
-    aCrvK = fastExp2((P(P_ACRV) - 64) / 32.f);
     reso = clampf(P(P_RESO) / 127.f, 0.f, 1.f);
     ftype = P(P_FTYP) % FT_COUNT;
 
@@ -568,8 +618,8 @@ void Voice::render(float* L, float* R, float (*S)[32], int n, float sr) {
     static const float HAT_R[6] = {1.f, 1.4836f, 1.8016f, 2.5478f, 2.6321f, 3.8996f};
     const float inv = 1.f / sr;
     const float dcCo = fastExpE(-1.f / (0.002f * sr));   // Knackschutz klingt in ~2 ms aus
-    float fev = fCrvK == 1.f || fenv.v <= 0.f ? fenv.v : fastPow01(fenv.v, fCrvK);
-    float units = fBase + fEnv * fev;
+    float units = fBase;
+    for (int i = 0; i < fEnvN; i++) units += fEnvAmt[i] * envVal(fEnvE[i]);
     bool bypassF = (ftype == FT_LP12 && units >= 126.f && reso < 0.01f);
     if (!bypassF) {
         float fcHz = 16.f * fastExp2(units * (10.3f / 127.f));
@@ -812,13 +862,21 @@ void Voice::render(float* L, float* R, float (*S)[32], int n, float sr) {
         }
 
         fenv.tick();
+        if (env3On) env3.tick();
         if (!bypassF) s = filter1(s);
         if (bwOn) {   // Base-Width: Hochpass, dann Tiefpass
             float lo, bp, hp;
             bwHp.proc(s, lo, bp, hp); s = hp;
             bwLp.proc(s, lo, bp, hp); s = lo;
         }
-        { float av = aenv.tick(); s *= aCrvK == 1.f ? av : fastPow01(av, aCrvK); }
+        if (vcaSimple) { float av = aenv.tick(); s *= envCrv[0] == 1.f ? av : fastPow01(av, envCrv[0]); }
+        else {   // Lautstaerke aus beliebigen Huellkurven (volle Tiefe = Huellkurve, sonst Mischung), ohne volle: Gate
+            aenv.tick();
+            float g = vcaVel;
+            for (int j = 0; j < vcaN; j++) { float d = vcaDep[j], e = envVal(vcaE[j]); g *= d > 0.f ? 1.f - d + d * e : 1.f + d * e; }
+            if (!vcaFull) g *= gateEnv.tick();
+            s *= g;
+        }
         if (drive > 0.f) s = fastTanh(s * (1.f + drive * 6.f)) * (1.f - drive * 0.3f);
         if (srrN > 1) { if (holdC <= 0) { hold = s; holdC = srrN; } holdC--; s = hold; }
         if (crushQ > 0.f) s = floorf(s * crushQ + 0.5f) / crushQ;
@@ -903,12 +961,12 @@ void Voice::render(float* L, float* R, float (*S)[32], int n, float sr) {
     case M_KICK: case M_HAT: if (denv < 1e-4f) active = false; break;
     case M_SNARE: if (denv < 1e-4f && nenv < 1e-4f) active = false; break;
     case M_CLAP: if (clapTail && denv < 1e-4f && burst < 1e-4f) active = false; break;
-    case M_SAMPLE: case M_CHOP: if (sDone || aenv.st == 0) active = false; break;
+    case M_SAMPLE: case M_CHOP: if (sDone || vcaDone()) active = false; break;
     case M_TOM: case M_RIM: if (denv < 1e-4f) active = false; break;
     case M_SHKR: if (shkStage == 2 && shkLvl < 1e-4f) active = false; break;
-    default: if (aenv.st == 0) active = false; break;
+    default: if (vcaDone()) active = false; break;
     }
-    if (aenv.st == 3 && aenv.s <= 0.f) active = false;
+    if (vcaFull && vcaDone()) active = false;   // Haltepegel 0 erreicht (auch Drums)
 }
 
 // ---------------------------------------------------------------- Reverb
@@ -1370,11 +1428,7 @@ bool Engine::condOk(int t, int c) {
 }
 
 int Engine::seqP(int t, int i) {
-    int r = TP(t).p[t][i];
-    const Voice& vo = v[t];
-    for (int k = 0; k < NLFO; k++)
-        if (vo.lfDst[k] == i) { r += (int)vo.lfOff[k]; if (r < 0) r = 0; if (r > vo.lfMax[k]) r = vo.lfMax[k]; }
-    return r;
+    return v[t].seqMod(i, TP(t).p[t][i]);
 }
 
 void Engine::resetSeq(int t) {
@@ -1895,6 +1949,31 @@ bool Engine::load(const char* path) {
     Project* np = nullptr;
     if (ok && ver == PROJECT_VERSION && size >= (long)sizeof(Project)) {   // dahinter evtl. Sample-Namensliste
         memcpy(&proj, buf, sizeof(Project));
+    } else if (ok && ver == 13 && size >= (long)PROJECT_V13_SIZE) {   // v13: 128 Parameter -> 168 (Huellkurven, LFO-Ziele)
+        np = (Project*)calloc(1, sizeof(Project));
+        memcpy(np, buf, 20);
+        for (int pi = 0; pi < NPATTERNS; pi++) {
+            const uint8_t* q = buf + 20 + (long)pi * V13_PAT_SIZE;
+            Pattern& P = np->pat[pi];
+            memcpy(P.machine, q, 8); memcpy(P.len, q + 8, 8); memcpy(P.speed, q + 16, 8);
+            for (int t = 0; t < NTRACKS; t++) {
+                for (int i = 0; i < NPARAMS; i++) P.p[t][i] = paramDef(P.machine[t] % M_COUNT, i).def;
+                memcpy(P.p[t], q + 24 + t * V13_NPARAMS, V13_NPARAMS);
+                for (int st = 0; st < NSTEPS; st++) {
+                    const uint8_t* sp = q + 24 + 8 * V13_NPARAMS + (t * NSTEPS + st) * (1 + V13_NPARAMS);
+                    P.s[t][st].on = sp[0];
+                    memset(P.s[t][st].lock, NO_LOCK, NPARAMS);
+                    memcpy(P.s[t][st].lock, sp + 1, V13_NPARAMS);
+                }
+            }
+        }
+        const uint8_t* r = buf + 20 + (long)NPATTERNS * V13_PAT_SIZE;
+        memcpy(np->cmp, r, 8); memcpy(np->bus, r + 8, NBUS * 8); np->songLen = r[8 + NBUS * 8];
+        memcpy(np->patMute, r + 12 + NBUS * 8, NPATTERNS); memcpy(np->row, r + 12 + NBUS * 8 + NPATTERNS, sizeof np->row);
+        np->version = PROJECT_VERSION;
+        memcpy(&proj, np, sizeof(Project));
+        free(np); np = nullptr;
+        printf("Projekt von Version 13 auf %d umgestellt (Huellkurven/LFO-Ziele)\n", PROJECT_VERSION);
     } else if (ok && ver >= 5 && ver <= 12 && (ver <= 8 ? size == nSize : size >= nSize)) {
         np = (Project*)calloc(1, sizeof(Project));
         memcpy(np, buf, 20);

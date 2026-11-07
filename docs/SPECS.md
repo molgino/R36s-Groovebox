@@ -8,8 +8,8 @@
 | Stimmen | 1 je Spur, im Akkord-Modus bis 4 je Spur (32 gesamt) |
 | Filter 1 | 11 Typen: LP12, BP, HP12, LP24, Ladder (4-Pol, selbstoszillierend), HP24, Notch, Peak, Kamm +/−, Vokal (Formant A-E-I-O-U) |
 | Filter 2 | Base-Width (Hoch- + Tiefpass), Keytracking, Velocity → Cutoff |
-| Hüllkurven | 2 ADSR je Spur (Filter, Lautstärke) mit einstellbarer Kurvenform |
-| Modulation | 3 LFOs je Spur (9 Wellenformen, Sync, Fade, Trig-Modi), Ziel = jeder Spurparameter |
+| Hüllkurven | 3 freie ADSR je Spur mit je 3 Zielen (VCA, jeder Spurparameter, Tonhöhe), Kurvenform, Anschlag |
+| Modulation | 3 LFOs je Spur mit je 3 Zielen (9 Wellenformen, Sync, Fade, Trig-Modi), Ziel = jeder Spurparameter |
 | Effekte | Insert je Spur (Chorus, Phaser, Flanger, Drive, Ringmod, Auto-Pan) + Bitcrusher, Sample-Rate-Reduktion, Drive; Send-Delay (Ping-Pong, Band-Echo-Gleiten), Reverb; Bus-Kompressor mit Sidechain; DJ-Filter |
 | Audio | 44,1 kHz, 32 Bit Gleitkomma intern, DC-Sperre + Limiter in der Summe; WAV-Aufnahme/-Export und USB-Audio 24 Bit (mit Dither), Kopfhörer/Lautsprecher je nach Codec |
 

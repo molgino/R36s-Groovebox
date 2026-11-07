@@ -13,18 +13,18 @@ Sie startet als App aus dem Ports-Menü oder auf Wunsch direkt beim Booten statt
 * Unten im Bedienfeld steht zu jedem Regler eine kurze Erklärung.
 * Fertige Klänge: Seite PRJ → **PRESET** über Platz 32 hinaus drehen → **Werksklänge** (z. B. „NIGHT DRIVE BASS“, „PUNCH KICK“, „HAZE PAD“) → **P.LADEN**. Ein Werksklang setzt auch die Engine.
 * **Rave & Acid (Werksklänge):** „303 ACID“, „303 SQUARE ACID“, „ACID SCREAMER“, „ACID DEEP“ (Acid-Bässe im 303-Stil), „REESE BASS“, „REESE GROWL“ (Jungle/DnB), „HOOVER“, „HOOVER LEAD“, „RAVE STAB“ (Moll-Akkord auf einer Taste), „DUB CHORD“, „SUPERSAW“, „TRANCE PLUCK“, „WOBBLE BASS“, „JUNGLE SUB“, „HOUSE ORGAN“ (FM).
-  * **Acid spielen wie auf der 303:** Die Acid-Presets haben eine kurze Notenlänge (LEN 0.71). **Slide** = einen Trig mit LEN über 1 Step locken – die Note läuft dann zur nächsten hin (GLID bestimmt die Gleitzeit). **Akzent** = höhere Anschlagstärke (VEL-Lock): VELF öffnet dabei das Filter weiter. Am meisten passiert mit FREQ, RESO, ENV und F.DEC – am besten per LFO oder P-Lock bewegen.
+  * **Acid spielen wie auf der 303:** Die Acid-Presets haben eine kurze Notenlänge (LEN 0.71). **Slide** = einen Trig mit LEN über 1 Step locken – die Note läuft dann zur nächsten hin (GLID bestimmt die Gleitzeit). **Akzent** = höhere Anschlagstärke (VEL-Lock): VELF öffnet dabei das Filter weiter. Am meisten passiert mit FREQ, RESO und auf HÜLLKURVE 2 mit DEPTH1 und DEC – am besten per LFO oder P-Lock bewegen.
 * Vertan? **SELECT + B** macht die letzte Änderung rückgängig (12 Schritte), SET → „Wiederholen“ stellt sie wieder her.
 
 ## Oberfläche: Signalweg
 
 **Animationen:** Leere Flächen zeigen das echte Audiosignal: Oszilloskop, Spektrum und Takt-Ringe in freien Kacheln, eine Piano-Roll auf TRIG, die Oszillatoren auf der OSC-Seite, fließende Partikel zu den Effekt-Bussen auf SENDS, und je Effekt-Bus eine eigene Animation (Delay-Echos, Tonband-Spulen, Hall-Ringe, schwingende Feder, Chorus-Stimmen). Auch Einstellungen, Song, LIVE und Projekt haben passende Bilder. Jede Regler-Kachel zeigt oben Name und Wert und darunter ein bewegtes Bild des Werts (Hüllkurve, Welle, Oktav-Treppe, Akkord, Arp-Folge, Lautsprecher, Hall-Ringe …).
 
-Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke **QUELLE → FILTER → AMP → INSERT** (zusammengehörige Seiten untereinander: QUELLE/QUELLE 2, FILTER 1/FILTER 2), darunter die Reihe **SEQ**: TRIG · SEQ · ARP · LFO1–3. **L2/R2** gehen alle Spurseiten der Reihe nach durch (TRIG → SEQ → ARP → QUELLE → QUELLE 2 → FILTER 1 → FILTER 2 → AMP → INSERT → LFO 1–3, im Kreis), direkt springen über die Seitenkarte (SELECT). **L1/R1** wählen den Regler. Der gewählte Block zeigt Grafik, 8 Regler und eine Erklärung des gewählten Reglers, unten liegen die 16 Steps der Spur.
+Auf den Spurseiten zeigt die Oberfläche den Weg des Klangs: links alle 8 Spuren mit Mini-Steps und Pegel, oben die Blöcke **QUELLE → FILTER → AMP → INSERT** (zusammengehörige Seiten untereinander: QUELLE/QUELLE 2, FILTER 1/FILTER 2), darunter die Reihe **SEQ**: TRIG · SEQ · ARP, rechts die Modulation **ENV1–3 / LFO1–3** (Hüllkurve n und LFO n nebeneinander, hell = hat ein Ziel). **L2/R2** gehen alle Spurseiten der Reihe nach durch (TRIG → SEQ → ARP → QUELLE → QUELLE 2 → FILTER 1 → FILTER 2 → AMP → INSERT → SENDS → HÜLLKURVE 1–3 → LFO 1–3, im Kreis), direkt springen über die Seitenkarte (SELECT). **L1/R1** wählen den Regler. Der gewählte Block zeigt Grafik, 8 Regler (Hüllkurven und LFOs: 12) und eine Erklärung des gewählten Reglers, unten liegen die 16 Steps der Spur.
 
 * **SELECT + L1/R1** springt einen Schlag (4 Steps) – vier Kicks auf 1/5/9/13 sind so in wenigen Tastendrücken gesetzt.
 * **Rhythmus-Vorlagen** für die gewählte Spur: SET → „Rhythmus-Vorlage“ (Four on the Floor, Backbeat, Offbeat, Achtel, Sechzehntel, Breakbeat, Clave, Tresillo, Dembow …), mit ←/→ wählen, A setzt sie.
-* **Hüllkurvenform:** Seite FILTER 2 + KURVEN, Regler **F.KRV** (Filter) und **A.KRV** (Lautstärke): Minus = weich/rund, 0 = Standard, Plus = knackig/schnell abfallend. Die Grafiken zeigen die Form.
+* **Hüllkurvenform:** Regler **CURVE** auf jeder Hüllkurven-Seite: Minus = weich/rund, 0 = Standard, Plus = knackig/schnell abfallend. Die Grafik zeigt die Form.
 
 ## LIVE-Seite (Menü → LIVE)
 
@@ -92,7 +92,7 @@ Jede Spur hat diese Seiten:
   * bei SYNTH die tatsächlich klingende, gemischte Wellenform
   * bei FM das Algorithmus-Diagramm, in dem die Operatoren beim Spielen aufleuchten; auf den Operator-Seiten dessen Hüllkurve mit Ratio, Verstimmung und Rolle (Träger hörbar / moduliert OP n)
   * bei SMPL die Sample-Wellenform mit Start, Ende und Abspielposition
-* **FLT**: Filter 1 mit eigener ADSR-Hüllkurve. Oben siehst du die Filterkurve mit dem live modulierten Cutoff, unten die Hüllkurve. TYPE wählt den Filter (auch pro Step lockbar):
+* **FLT**: Filter 1: FREQ, RESO, TYPE, KEYT (Key-Tracking), VELF (Anschlag öffnet das Filter). Die Filter-Hüllkurve ist **HÜLLKURVE 2** (Ziel 1 = FREQ). Die Grafik zeigt die Filterkurve mit dem live modulierten Cutoff. TYPE wählt den Filter (auch pro Step lockbar):
 
   | TYPE | Filter |
   |---|---|
@@ -105,9 +105,10 @@ Jede Spur hat diese Seiten:
 
 * **FL2**: Base-Width-Filter hinter dem ersten Filter: **BASE** ist die untere Kante (Hochpass), **WDTH** die Breite des durchgelassenen Bandes (Tiefpass darüber). BASE 0 / WDTH 127 = aus. Dazu **KEYT** (Keytracking: Cutoff von Filter 1 folgt der Tonhöhe) und **VELF** (Anschlagstärke → Cutoff). Die Grafik zeigt Filter 1 (grau) und die Gesamtkurve mit dem Band.
 * **Symbole statt Balken**: Jede Kachel zeigt ein Symbol, das sich mit dem Wert verändert – Tastatur bei NOTE, Torte bei PROB, Hüllkurvenbogen bei Attack/Decay, Lautsprecher bei Lautstärke, Echos bei Delay, Ringe bei Reverb, Würfel bei CHNG usw.
-* **AMP**: ADSR (als Hüllkurve mit Live-Punkt dargestellt, Zeiten in ms/s), Lautstärke, Panorama
+* **AMP**: Lautstärke und Panorama; die Grafik zeigt HÜLLKURVE 1 (Standard-Ziel VCA = Lautstärke)
 * **SND** (Sends): **SND.A, SND.B, SND.C** – Anteil der Spur an den Effekt-Bussen A, B, C (bisher DLY/REV auf der AMP-Seite)
-* **LF1 / LF2 / LF3**: drei LFOs pro Spur (siehe unten)
+* **EN1 / EN2 / EN3**: drei Hüllkurven pro Spur mit je 3 Zielen (siehe unten)
+* **LF1 / LF2 / LF3**: drei LFOs pro Spur mit je 3 Zielen (siehe unten)
 * **INS**: Insert-Effekt der Spur. Zuerst unter TYPE den Effekt wählen, dann MIX aufdrehen:
 
   | TYPE | Regler |
@@ -227,6 +228,8 @@ Der Song ist eine **Matrix wie in einer Clip-Ansicht**: jede **Zeile** ist eine 
 **Song exportieren (WAV):** Unter der Matrix liegt die Leiste **EXPORT WAV** (in der letzten Zeile ↓ drücken). Mit ←/→ das Feld wählen, mit X/Y **VON** (Anfangszeile) und **BIS** (Schlusszeile) einstellen – Standard ist der ganze Song („ENDE“). Die gewählten Zeilen sind links mit einem cyanfarbenen Strich markiert, die Länge steht daneben. **A** startet den Export: Die Groovebox rechnet die Zeilen samt Wiederholungen offline (schneller als Echtzeit, die Wiedergabe stoppt dafür), lässt Hall und Delay ausklingen und speichert `samples/rec/<Projekt>-song-NN.wav` (Stereo, 44,1 kHz, 24 Bit). B bricht ab. Herunterladen im Browser unter Samples → rec.
 * Projekte ab Version 12 speichern Matrix und Mutes; ältere Songs (Pattern-Kette) werden beim Laden in Zeilen mit demselben Pattern auf allen Spuren umgestellt.
 
+**Projektformat v14** (21 Speicherseiten = 168 Parameter je Spur): Projekte und Sounds aus v13 werden beim Laden umgestellt – HÜLLKURVE 1 bekommt Ziel VCA (wie die bisherige AMP-Hüllkurve), HÜLLKURVE 2 Ziel FREQ mit der bisherigen Filter-ENV-Tiefe; alles klingt gleich, Locks bleiben.
+
 **Projektformat v13** (16 Seiten je Spur): Ältere Projekte und Sounds werden beim Laden umgestellt – Delay und Reverb landen auf Bus A und B mit den bisherigen Werten, die Sends DLY/REV werden zu SND.A/SND.B, FM-Sounds bekommen ihre Operatoren mit gleichem Klang (Ratio, Pegel, Abklingzeit; FINE wird zu DETN), Locks und LFO-Ziele ziehen mit. Gespeichert wird danach im neuen Format; ältere Versionen der Groovebox können es nicht mehr lesen.
 
 ## Pattern-Mutation (SET → PATTERN)
@@ -252,16 +255,33 @@ COND auf der TRG-Seite gilt für die Spur. Meist lockst du COND aber pro Step: A
 | `NEI` / `!NEI` | die letzte Bedingung der Nachbarspur (Spur davor) erfüllt war bzw. nicht |
 | `1ST` / `!1ST` | nur im ersten Durchlauf nach Start bzw. Pattern-Wechsel, bzw. in allen außer dem ersten |
 
+## Hüllkurven (EN1, EN2, EN3)
+
+Jede Spur hat drei freie ADSR-Hüllkurven mit je **3 Zielen** (eigene Tiefe je Ziel, bipolar). Sie starten bei jedem Trig neu.
+
+| Regler | Funktion |
+|---|---|
+| ATK, DEC, SUS, REL | Einschwingen, Abklingen, Haltepegel, Ausklingen (Zeiten in ms/s) |
+| ZIEL1–3 | Ziel: jeder Spurparameter, **VCA** (= Lautstärke der Stimme) oder NOTE (±24 Halbtöne bei voller Tiefe) |
+| DEPTH1–3 | Stärke je Ziel (+/−) |
+| CURVE | Form: weich/rund bis knackig |
+| VELO | Anschlag: leise Noten = weniger Hüllkurve (bei VCA: leiser) |
+
+* **Standard:** HÜLLKURVE 1 → VCA (volle Tiefe) = die klassische Lautstärke-Hüllkurve, HÜLLKURVE 2 → FREQ = die Filter-Hüllkurve (DEPTH1 = bisher ENV auf der FLT-Seite), HÜLLKURVE 3 ohne Ziel.
+* **VCA:** Zielt keine Hüllkurve mit voller Tiefe auf VCA, spielt die Stimme wie ein Orgel-Gate (an solange die Note läuft, kurzer Ausklang). Kleinere Tiefe = Mischung aus Dauerton und Hüllkurve.
+* Beispiele: HÜLLKURVE 3 → NOTE mit kurzem DEC = Pitch-Drop (Tom/Laser), → RESO = Resonanz-Zap, → POS bei WTBL = Wavetable-Sweep, → SND.B = Hall nur am Anfang.
+* **X** auf einem ZIEL öffnet die Auswahlliste (Wurzel: ---, VCA und ein Ordner je Seite).
+
 ## LFOs (LF1, LF2, LF3)
 
-Jede Spur hat drei LFOs. Jeder kann **jeden Parameter der Spur** modulieren, auch die Regler eines anderen LFOs.
+Jede Spur hat drei LFOs mit je **3 Zielen** (DEST/DEPTH, ZIEL2/DEPTH2, ZIEL3/DEPTH3 in der dritten Reihe). Jedes Ziel kann **jeder Parameter der Spur** sein, auch die Regler eines anderen LFOs oder einer Hüllkurve.
 
 | Regler | Funktion |
 |---|---|
 | RATE | Frequenz (frei, 0,05–25 Hz) |
 | SYNC | FREE oder taktsynchron: 4BAR, 2BAR, 1BAR, 1/2 … 1/32, 1/4T, 1/8T, 1/16T |
-| ZIEL | Zielparameter (NOTE = Tonhöhe, ±12 Halbtöne bei voller Tiefe) |
-| DEPTH | Tiefe, bipolar |
+| ZIEL, ZIEL2, ZIEL3 | Zielparameter (NOTE = Tonhöhe, ±12 Halbtöne bei voller Tiefe) |
+| DEPTH, DEPTH2, DEPTH3 | Tiefe je Ziel, bipolar |
 | WAVE | SIN, TRI, SAW+, SAW−, SQR, **EXP+**, **EXP−**, S&H, RND (weicher Zufall) |
 | MODE | **FREE** (läuft durch, auch zwischen den Noten), **TRIG** (Neustart bei jedem Trig), **HOLD** (Wert beim Trig festhalten), **ONE** (eine Periode, dann stehen bleiben), **HALF** (halbe Periode) |
 | PHASE | Startphase bei TRIG/ONE/HALF |
@@ -356,7 +376,7 @@ Erlaubt sind 8/16/24/32-Bit-PCM und 32-Bit-Float in jeder Samplerate. Stereo wir
 
 SET → **Samples** zeigt: Dateien in der Bibliothek, Samples im Projekt, fehlende Samples und Dateien in anderen Formaten.
 
-**Auswahllisten:** Wie beim Sample gibt es auch für das **LFO-Ziel** (Regler DEST auf LF1–LF3) eine Liste: **X** öffnet sie, die Wurzel zeigt „--- (kein Ziel)“ und einen Ordner je Seite (SRC, FLT, AMP …), darin die Parameter mit kurzer Erklärung. Sie startet beim aktuellen Ziel. Im Lock-Modus wird das Ziel als Lock gesetzt.
+**Auswahllisten:** Wie beim Sample gibt es auch für die **Ziele** der LFOs und Hüllkurven (ZIEL-Regler auf LF1–LF3 und EN1–EN3) eine Liste: **X** öffnet sie, die Wurzel zeigt „--- (kein Ziel)“ und einen Ordner je Seite (SRC, FLT, AMP …), darin die Parameter mit kurzer Erklärung. Sie startet beim aktuellen Ziel. Im Lock-Modus wird das Ziel als Lock gesetzt.
 
 **Sample-Explorer:** Auf dem Regler **SMPL** (Seite QUELLE von SMPL, CHOP, GRAN) öffnet **X** den Explorer mit allen Ordnern und Unterordnern (bis 8 Ebenen). Er startet im Ordner des aktuellen Samples. Steuerkreuz ↑/↓ wählt, **A** oder → öffnet einen Ordner bzw. übernimmt das Sample, **X** hört vorab hinein, **B** oder ← geht einen Ordner zurück, L1/R1 blättert seitenweise, SELECT bricht ab (das vorher eingestellte Sample bleibt). Im Lock-Modus (A lang halten) wird das gewählte Sample als **Lock auf den Step** gesetzt. Der rechte Stick blättert direkt durch die Samples des Projekts; „(leer)“ heißt, auf diesem Platz liegt kein Sample.
 
@@ -432,7 +452,7 @@ Technisch läuft MIDI über den ALSA-Sequencer. Fehlt der im Kernel, greift die 
 | B | Spur vorhören |
 | **L1 / R1** | **Regler wählen** (1–8, leere Felder werden übersprungen) |
 | **X / Y** | **Wert + / −** (halten = Wiederholung, bei großen Bereichen schneller) |
-| **L2 / R2** | **Seite zurück / vor** – Spurseiten im Kreis TRIG → SEQ → ARP → QUELLE → QUELLE 2 → FILTER 1 → FILTER 2 → AMP → INSERT → LFO 1–3; LIVE/Mix/FX und Projekt-Seiten jeweils unter sich |
+| **L2 / R2** | **Seite zurück / vor** – Spurseiten im Kreis TRIG → SEQ → ARP → QUELLE → QUELLE 2 → FILTER 1 → FILTER 2 → AMP → INSERT → SENDS → HÜLLKURVE 1–3 → LFO 1–3; LIVE/Mix/FX und Projekt-Seiten jeweils unter sich |
 | **SELECT kurz antippen** | **Seitenkarte**: alle Seiten auf einen Blick – Sequenz, Klang-Signalweg mit Pfeilen, Modulation, LIVE/Mix/FX, Projekt – mit Kurzwerten und einer Erklärung. Steuerkreuz wählt, A öffnet, X/Y kopiert/fügt die 8 Werte einer Spurseite ein |
 | SELECT halten | Hilfe-Einblendung |
 | START | Play / Stop. **Beim Spielen halten = FILL**, solange gedrückt |
