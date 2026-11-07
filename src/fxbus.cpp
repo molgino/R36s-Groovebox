@@ -49,7 +49,8 @@ void FxBus::reset() {
 static inline float rd(const float* b, int len, int pos, int filled, float d) {
     if (d >= (float)filled) return 0.f;
     float rp = pos - d; while (rp < 0) rp += len;
-    int i0 = (int)rp; float fr = rp - i0; int i1 = i0 + 1 >= len ? 0 : i0 + 1;
+    int i0 = (int)rp; if (i0 >= len) i0 -= len;   // Float-Rundung: -0,001 + len kann genau len ergeben
+    float fr = rp - (int)rp; int i1 = i0 + 1 >= len ? 0 : i0 + 1;
     return b[i0] + (b[i1] - b[i0]) * fr;
 }
 
@@ -148,7 +149,8 @@ void FxBus::process(const float* in, float* outL, float* outR, int n, const uint
                 if (k == 0) d += mDepth * fx_sin(ph1);
                 else if (k == 5) d += mDepth * fx_sin(ph1 + 0.37f);
                 float rp = fdnPos[k] - d; while (rp < 0) rp += fdnLen[k];
-                int i0 = (int)rp; float fr = rp - i0; int i1 = i0 + 1 >= fdnLen[k] ? 0 : i0 + 1;
+                int i0 = (int)rp; float fr = rp - i0; if (i0 >= fdnLen[k]) i0 -= fdnLen[k];
+                int i1 = i0 + 1 >= fdnLen[k] ? 0 : i0 + 1;
                 float v = fdn[k][i0] + (fdn[k][i1] - fdn[k][i0]) * fr;
                 fdnLp[k] += (v - fdnLp[k]) * dco;
                 o[k] = fdnLp[k] * g[k];
